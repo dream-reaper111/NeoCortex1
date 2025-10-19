@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<title>Neo Cortex AI Dashboard</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<style>
+		:root {
+			--bg: #0b0f14;
+			--panel: #121821;
+			--border: #1c2733;
+			--muted: #9fb8d6;
+			--text: #e8eef6;
+			--ink: #cfe2ff;
+			--link: #84a9ff;
+			--accent: #2a3b52;
+			--chip: #1d2a3a;
+			--ok: #34c759;
+			--warn: #ff9f0a;
+			--bad: #ff453a;
+		}
+
+		* {
+			box-sizing: border-box
+		}
+
+		body {
+			margin: 0;
+			padding: 20px;
+			background: var(--bg);
+			color: var(--text);
+			font: 14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif
+		}
+
+		a {
+			color: var(--link);
+			text-decoration: none
+		}
+
+		h1 {
+			margin: 0 0 10px;
+			font-weight: 700;
+			letter-spacing: .3px
+		}
+
+		h2 {
+			margin: 0 0 12px;
+			font-size: 18px;
+			color: #b9cee3
+		}
+
+		.row {
+			display: flex;
+			gap: 20px;
+			flex-wrap: wrap
+		}
+
+		.card {
+			background: var(--panel);
+			border: 1px solid var(--border);
+			border-radius: 12px;
+			padding: 16px;
+			box-shadow: 0 4px 14px rgba(0,0,0,.25)
+		}
+
+			.card.flex {
+				flex: 1 1 680px
+			}
+
+		.grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+			gap: 12px
+		}
+
+		label {
+			display: block;
+			font-size: 12px;
+			color: var(--muted);
+			margin-bottom: 4px
+		}
+
+		input, select, textarea {
+			width: 100%;
+			padding: 8px 10px;
+			border-radius: 8px;
+			border: 1px solid #223043;
+			background: var(--bg);
+			color: var(--text)
+		}
+
+		textarea {
+			resize: vertical
+		}
+
+		.btn {
+			padding: 10px 14px;
+			border-radius: 8px;
+			border: 1px solid var(--accent);
+			background: var(--chip);
+			color: var(--ink);
+			cursor: pointer
+		}
+
+			.btn:disabled {
+				opacity: .5;
+				cursor: not-allowed
+			}
+
+		.small {
+			font-size: 12px
+		}
+
+		.muted {
+			color: #7f96b2
+		}
+
+		.pill {
+			display: inline-flex;
+			gap: 8px;
+			align-items: center;
+			padding: 4px 10px;
+			border-radius: 999px;
+			background: var(--chip);
+			border: 1px solid var(--accent);
+			color: #c8d9ee;
+			font-size: 12px
+		}
+
+		.inline {
+			display: flex;
+			gap: 10px;
+			align-items: center;
+			flex-wrap: wrap
+		}
+
+		pre {
+			white-space: pre-wrap;
+			max-height: 260px;
+			overflow: auto;
+			background: var(--bg);
+			padding: 10px;
+			border-radius: 8px;
+			border: 1px solid #1f2a3a;
+			margin: 0
+		}
+
+		.mono {
+			font-family: ui-monospace,SFMono-Regular,Consolas,monospace
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse
+		}
+
+		td, th {
+			border-bottom: 1px solid #1f2a3a;
+			padding: 6px 8px
+		}
+
+		thead td, thead th {
+			color: var(--muted);
+			font-size: 12px
+		}
+
+		img.tile {
+			max-width: 100%;
+			border-radius: 8px;
+			border: 1px solid #1f2a3a;
+			background: var(--bg)
+		}
+
+		canvas {
+			display: block;
+			max-width: 100%
+		}
+
+		.topbar {
+			display: flex;
+			gap: 10px;
+			align-items: center;
+			justify-content: space-between;
+			margin-bottom: 12px
+		}
+
+		.kvs {
+			display: grid;
+			grid-template-columns: repeat(auto-fit,minmax(160px,1fr));
+			gap: 12px
+		}
+
+		.kv {
+			padding: 10px;
+			border: 1px solid var(--border);
+			border-radius: 8px;
+			background: #0f141c
+		}
+
+			.kv .k {
+				color: var(--muted);
+				font-size: 12px
+			}
+
+			.kv .v {
+				font-weight: 600
+			}
+
+		.danger {
+			color: var(--bad)
+		}
+
+		.warn {
+			color: var(--warn)
+		}
+
+		.ok {
+			color: var(--ok)
+		}
+
+		.two {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 20px
+		}
+
+		@media (max-width: 1100px) {
+			.two {
+				grid-template-columns: 1fr
+			}
+		}
+	</style>
+</head>
+<body>
+
+	<div class="topbar">
+		<div class="inline">
+			<h1 style="margin:0">Neo Cortex AI</h1>
+			<span id="gpu-pill" class="pill small">GPU: <em class="muted">loading…</em></span>
+			<span id="run-pill" class="pill small">Run: <span class="muted">-</span></span>
+		</div>
+		<div class="inline small">
+			<a href="/preflight" target="_blank">Preflight JSON</a>
+			<span class="muted">•</span>
+			<a href="#" id="refreshBtn">Refresh</a>
+		</div>
+	</div>
+
+	<div class="row">
+		<div class="card flex">
+			<h2>Train Model</h2>
+			<div class="grid">
+				<div><label>Ticker</label><input id="ticker" value="SPY" placeholder="e.g., SPY, AAPL, BTC-USD" /></div>
+				<div>
+					<label>Interval</label>
+					<select id="interval">
+						<option>1m</option>
+						<option>2m</option>
+						<option>5m</option>
+						<option>15m</option>
+						<option selected>1h</option>
+						<option>1d</option>
+					</select>
+				</div>
+				<div>
+					<label>Mode</label>
+					<select id="mode"><option selected>HFT</option><option>LFT</option></select>
+				</div>
+				<div>
+					<label>Pine Mode</label>
+					<select id="pine_mode"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
+				</div>
+				<div>
+					<label>Aggressiveness</label>
+					<select id="aggr"><option>chill</option><option selected>normal</option><option>spicy</option><option>insane</option></select>
+				</div>
+				<div>
+					<label>Sides</label>
+					<select id="sides"><option>LONG</option><option>SHORT</option><option selected>BOTH</option></select>
+				</div>
+				<div><label>Max Iter</label><input id="max_iter" type="number" value="300" min="50" step="50" /></div>
+				<div>
+					<label>Data Source</label>
+					<select id="source"><option value="yfinance">yfinance</option><option value="ingest">ingest</option><option value="both" selected>both</option></select>
+				</div>
+				<div class="inline"><input id="merge_sources" type="checkbox" checked /><label for="merge_sources">Merge Sources (prefer latest)</label></div>
+				<div class="inline"><input id="use_fa" type="checkbox" checked /><label for="use_fa">Use Fundamentals (from /ingest/fundamentals)</label></div>
+
+				<div>
+					<label>Range Mode</label>
+					<select id="rangeMode"><option value="period" selected>Period</option><option value="dates">Start/End</option></select>
+				</div>
+				<div id="periodWrap">
+					<label>Period</label>
+					<select id="period"><option>1mo</option><option>3mo</option><option selected>6mo</option><option>1y</option><option>2y</option><option>5y</option></select>
+				</div>
+				<div id="startWrap" style="display:none"><label>Start</label><input id="start" placeholder="YYYY-MM-DD" /></div>
+				<div id="endWrap" style="display:none"><label>End</label><input id="end" placeholder="YYYY-MM-DD" /></div>
+
+				<div><label>Entry Thr (opt)</label><input id="entry_thr" placeholder="auto" /></div>
+				<div><label>|Z| Thr (opt)</label><input id="z_thr" placeholder="auto" /></div>
+				<div><label>Vol k (opt)</label><input id="vol_k" placeholder="auto" /></div>
+			</div>
+			<div class="inline" style="margin-top:12px">
+				<button class="btn" id="trainBtn">Start Training</button>
+				<span class="muted small" id="trainHint">Streams log below</span>
+			</div>
+			<div id="trainResult" class="small muted" style="margin-top:8px"></div>
+		</div>
+
+		<div class="card">
+			<h2>Latest Metrics</h2>
+			<div class="inline" style="margin-bottom:8px">
+				<label>View Side</label>
+				<select id="sideSelect"><option value="long" selected>LONG</option><option value="short">SHORT</option></select>
+			</div>
+			<div id="metrics" class="kvs"></div>
+			<div class="small muted" id="updated">updated: -</div>
+			<div class="small muted" id="ingest">webhooks: -</div>
+		</div>
+	</div>
+
+	<div class="row">
+		<div class="card">
+			<h2>Price Preview</h2>
+			<img id="img_price" class="tile" src="" alt="Price Preview" onerror="this.style.display='none'" />
+		</div>
+		<div class="card">
+			<h2>Confusion Matrix</h2>
+			<img id="img_cm" class="tile" src="" alt="Confusion Matrix" onerror="this.style.display='none'" />
+		</div>
+		<div class="card">
+			<h2>ROC Curve</h2>
+			<img id="img_roc" class="tile" src="" alt="ROC" onerror="this.style.display='none'" />
+		</div>
+		<div class="card">
+			<h2>Feature Importance</h2>
+			<img id="img_feat" class="tile" src="" alt="Feature Importance" onerror="this.style.display='none'" />
+		</div>
+	</div>
+
+	<div class="two" style="margin-top:20px">
+		<div class="card">
+			<h2>Live P&L (Pred)</h2>
+			<canvas id="equityCanvas" width="800" height="210" style="background:#0b0f14;border:1px solid #1f2a3a;border-radius:8px"></canvas>
+			<div class="small muted">Streaming from <code class="mono">/stream/training</code></div>
+			<div id="pnlStats" class="small">-</div>
+			<h2 style="margin-top:16px">Trades (Live)</h2>
+			<table class="mono small" id="tradesTable">
+				<thead><tr><th>Time</th><th>Side</th><th>Price</th><th>PnL</th><th>Reason</th></tr></thead>
+				<tbody></tbody>
+			</table>
+		</div>
+		<div class="card">
+			<h2>Neural Net (Live)</h2>
+			<canvas id="nnCanvas" width="640" height="320" style="background:#0b0f14;border:1px solid #1f2a3a;border-radius:8px"></canvas>
+			<div class="small muted">Graph: <code class="mono">/nn/graph</code> • Stats: <code class="mono">/stream/nn</code></div>
+			<pre id="nnStats" class="mono small" style="max-height:140px;margin-top:8px"></pre>
+			<div class="inline small" style="margin-top:8px">
+				<button class="btn" id="reloadNNBtn">Reload Graph</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="row" style="margin-top:20px">
+		<div class="card flex">
+			<h2>Idle / Parallel Trainer</h2>
+			<div class="grid">
+				<div><label>Idle Name</label><input id="idle_name" value="nightly" /></div>
+				<div><label>Every (sec)</label><input id="idle_every" value="3600" /></div>
+				<div><label>Period</label><input id="idle_period" value="6mo" /></div>
+				<div>
+					<label>Interval</label>
+					<select id="idle_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
+				</div>
+				<div>
+					<label>Tickers JSON</label>
+					<textarea id="idle_tickers" rows="3">["AAPL","MSFT","SPY"]</textarea>
+				</div>
+				<div>
+					<label>Pine Mode</label>
+					<select id="idle_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
+				</div>
+				<div>
+					<label>Mode</label>
+					<select id="idle_mode"><option selected>HFT</option><option>LFT</option></select>
+				</div>
+				<div>
+					<label>Source</label>
+					<select id="idle_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
+				</div>
+				<div class="inline"><input id="idle_merge" type="checkbox" checked /><label for="idle_merge">Merge Sources</label></div>
+				<div class="inline"><input id="idle_fa" type="checkbox" checked /><label for="idle_fa">Use Fundamentals</label></div>
+			</div>
+			<div class="inline" style="margin-top:12px">
+				<button class="btn" id="idleStartBtn">Start Idle</button>
+				<button class="btn" id="idleStopBtn">Stop Idle</button>
+				<button class="btn" id="idleStatusBtn">Status</button>
+				<span id="idleStatus" class="muted small">-</span>
+			</div>
+		</div>
+
+		<div class="card">
+			<h2>Multi / Parallel Train (once)</h2>
+			<div class="grid">
+				<div><label>Tickers JSON</label><textarea id="multi_tickers" rows="4">["AAPL","MSFT","SPY"]</textarea></div>
+				<div>
+					<label>Interval</label>
+					<select id="multi_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
+				</div>
+				<div><label>Period</label><input id="multi_period" value="6mo" /></div>
+				<div><label>Max Iter</label><input id="multi_max" type="number" value="250" /></div>
+				<div>
+					<label>Pine Mode</label>
+					<select id="multi_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
+				</div>
+				<div>
+					<label>Source</label>
+					<select id="multi_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
+				</div>
+				<div class="inline"><input id="multi_merge" type="checkbox" checked /><label for="multi_merge">Merge Sources</label></div>
+				<div class="inline"><input id="multi_fa" type="checkbox" checked /><label for="multi_fa">Use Fundamentals</label></div>
+			</div>
+			<div class="inline" style="margin-top:12px">
+				<button class="btn" id="multiBtn">Run Multi-Train</button>
+			</div>
+			<pre id="multiOut" class="mono small" style="margin-top:8px;max-height:160px"></pre>
+		</div>
+	</div>
+
+	<div class="row" style="margin-top:20px">
+		<div class="card flex">
+			<h2>Live Training Log</h2>
+			<pre id="log" class="mono"></pre>
+			<div class="small muted">SSE: <code class="mono">/stream/training</code></div>
+		</div>
+	</div>
+
+	<script>
+		const $ = (id) => document.getElementById(id);
+		const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
+
+		// ---- Range mode toggle ----
+		function toggleRange() {
+			const m = $('rangeMode').value;
+			$('periodWrap').style.display = (m === 'period') ? 'block' : 'none';
+			$('startWrap').style.display = (m === 'dates') ? 'block' : 'none';
+			$('endWrap').style.display = (m === 'dates') ? 'block' : 'none';
+		}
+		$('rangeMode').addEventListener('change', toggleRange);
+		toggleRange();
+
+		// ---- GPU Pill ----
+		async function loadGPU() {
+			try {
+				const r = await fetch('/gpu-info', { cache: 'no-store' });
+				const j = await r.json();
+				const pill = $('gpu-pill');
+				if (j.cuda_available) {
+					pill.innerHTML = 'GPU: <span class="ok">ON</span> <span class="small mono">(' + (j.devices || []).join(', ') + ')</span>';
+				} else {
+					pill.innerHTML = 'GPU: <span class="danger">OFF</span> <span class="small mono">(' + (j.framework || 'none') + ')</span>';
+				}
+			} catch {
+				$('gpu-pill').innerHTML = 'GPU: <span class="warn">unknown</span>';
+			}
+		}
+
+		// ---- Metrics & artifacts ----
+		function sideSuffix() { return ($('sideSelect').value === 'short') ? '_short' : '_long'; }
+		function refreshArtifacts() {
+			const sfx = sideSuffix();
+			$('img_price').src = cb('/artifacts/file/yfinance_price.png');
+			$('img_cm').src = cb('/artifacts/file/cm' + sfx + '.png');
+			$('img_roc').src = cb('/artifacts/file/roc' + sfx + '.png');
+			$('img_feat').src = cb('/artifacts/file/feature_importance' + sfx + '.png');
+		}
+		$('sideSelect').addEventListener('change', () => {
+			refreshArtifacts();
+			fetchMetrics();
+		});
+
+		async function fetchMetrics() {
+			try {
+				const r = await fetch('/metrics/latest', { cache: 'no-store' });
+				const t = await r.text();
+				let m; try { m = JSON.parse(t); } catch (_) { throw new Error('metrics parse failed: ' + t.slice(0, 200)); }
+				if (!m.ok) throw new Error(m.reason || m.detail || 'no metrics');
+
+				$('run-pill').innerHTML = 'Run: <span class="mono small">' + (m.run_dir || '-') + '</span>';
+
+				const useShort = ($('sideSelect').value === 'short');
+				const acc = useShort ? (m.accuracy_short ?? m.accuracy) : (m.accuracy_long ?? m.accuracy);
+				const auc = useShort ? (m.roc_auc_short ?? m.roc_auc) : (m.roc_auc_long ?? m.roc_auc);
+				const cbalance = useShort ? (m.class_balance_short ?? m.class_balance) : (m.class_balance_long ?? m.class_balance);
+				const kvs = $('metrics');
+				const br = useShort ? (m.backtest_pred_short ?? m.backtest_pred) : (m.backtest_pred_long ?? m.backtest_pred);
+
+				const rows = [
+					['Run Dir', m.run_dir || '-'],
+					['Samples', (m.n_samples ?? '-')],
+					['Accuracy', (+acc || 0).toFixed(3)],
+					['ROC AUC', (+auc || 0).toFixed(3)],
+					['Class 0', cbalance ? (cbalance['NO(0)'] ?? cbalance['NO-ENTRY(0)'] ?? '-') : '-'],
+					['Class 1', cbalance ? (cbalance['YES(1)'] ?? cbalance['ENTRY(1)'] ?? '-') : '-'],
+					['Features', (m.features || []).join(', ') || '-'],
+					['Pred Return', (br?.return_pct ?? 0).toFixed(2) + '%'],
+					['Pred Win', (br?.win_rate_pct ?? 0).toFixed(1) + '%']
+				];
+				kvs.innerHTML = rows.map(([k, v]) => (
+					'<div class="kv"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'
+				)).join('');
+
+				$('updated').textContent = 'updated: ' + (m.time_utc || new Date().toISOString());
+				const s = m.ingest_stats || {};
+				$('ingest').textContent = 'webhooks: TV=' + (s.tradingview || 0) + ' • RH=' + (s.robinhood || 0) + ' • WB=' + (s.webull || 0) + ' • candles=' + (s.candles || 0) + ' • feat=' + (s.features || 0);
+
+				refreshArtifacts();
+			} catch (e) {
+				$('metrics').innerHTML = '<div class="muted small">No metrics yet or error: ' + (e.message || e) + '</div>';
+			}
+		}
+		$('refreshBtn').addEventListener('click', (e) => { e.preventDefault(); fetchMetrics(); loadGPU(); });
+
+		// ---- SSE Training Log & Equity Sparkline ----
+		const logEl = $('log');
+		const eqCanvas = $('equityCanvas');
+		const eqCtx = eqCanvas.getContext('2d');
+		const eqPoints = []; // {t: Date, v: Number}
+		let sseTrain = null;
+
+		function drawSparkline() {
+			const W = eqCanvas.width, H = eqCanvas.height;
+			eqCtx.clearRect(0, 0, W, H);
+			if (!eqPoints.length) return;
+			const minV = Math.min(...eqPoints.map(p => p.v));
+			const maxV = Math.max(...eqPoints.map(p => p.v));
+			const rng = (maxV - minV) || 1;
+			eqCtx.beginPath();
+			eqPoints.forEach((p, i) => {
+				const x = (i / Math.max(1, eqPoints.length - 1)) * (W - 20) + 10;
+				const y = H - 10 - ((p.v - minV) / rng) * (H - 20);
+				if (i === 0) eqCtx.moveTo(x, y); else eqCtx.lineTo(x, y);
+			});
+			eqCtx.lineWidth = 2;
+			eqCtx.strokeStyle = '#78d0ff';
+			eqCtx.stroke();
+		}
+
+		function addTradeRow(row) {
+			const body = document.querySelector('#tradesTable tbody');
+			const tr = document.createElement('tr');
+			const pnl = (row.type === 'trade_close' && typeof row.pnl === 'number') ? row.pnl.toFixed(2) : '';
+			tr.innerHTML = `<td>${row.t?.slice(0, 19) || '-'}</td>
+					  <td>${(row.side || '').toUpperCase() || (row.type === 'trade_open' ? 'OPEN' : 'CLOSE')}</td>
+					  <td>${(row.price ?? '').toFixed ? row.price.toFixed(2) : (row.price ?? '')}</td>
+					  <td>${pnl}</td>
+					  <td>${row.reason || ''}</td>`;
+			body.prepend(tr);
+		}
+
+		function wantsShort() { return ($('sideSelect').value === 'short'); }
+
+		function startTrainSSE() {
+			try { if (sseTrain) sseTrain.close(); } catch (_) { }
+			sseTrain = new EventSource('/stream/training');
+			sseTrain.onmessage = (e) => {
+				if (!e || !e.data) return;
+				try {
+					const row = JSON.parse(e.data);
+					// append raw
+					logEl.textContent += (row.phase ? ('[' + row.phase + '] ') : '') + JSON.stringify(row) + '\n';
+					logEl.scrollTop = logEl.scrollHeight;
+
+					const chosen = wantsShort() ? 'PredShort' : 'PredLong';
+					const matchesChosen = (row.entry_col === chosen) || (!row.entry_col && chosen === 'PredLong' && row.type === 'equity');
+
+					if (row.type === 'equity' && matchesChosen) {
+						const v = Number(row.equity);
+						if (Number.isFinite(v)) {
+							eqPoints.push({ t: new Date(row.t || Date.now()), v });
+							if (eqPoints.length > 800) eqPoints.shift();
+							drawSparkline();
+						}
+					}
+					if ((row.type === 'trade_open' || row.type === 'trade_close') && matchesChosen) {
+						addTradeRow(row);
+					}
+					if (row.phase === 'backtest:done') { fetchMetrics(); }
+				} catch {
+					// non-JSON line
+					logEl.textContent += e.data + '\n';
+				}
+			};
+			sseTrain.onerror = () => {/* browser auto-retries */ }
+		}
+
+		// ---- NN Graph & SSE ----
+		const nnCanvas = $('nnCanvas');
+		const nnCtx = nnCanvas.getContext('2d');
+		let nnGraph = null;
+		let sseNN = null;
+
+		function drawNN(graph, stats) {
+			nnCtx.clearRect(0, 0, nnCanvas.width, nnCanvas.height);
+			if (!graph || !graph.layers || !graph.layers.length) {
+				nnCtx.fillStyle = '#7f96b2';
+				nnCtx.font = '14px ui-monospace, monospace';
+				nnCtx.fillText('NN graph not available yet…', 12, 22);
+				return;
+			}
+			const W = nnCanvas.width, H = nnCanvas.height;
+			const L = graph.layers.length;
+			const xStep = (W - 60) / Math.max(1, L - 1);
+			const radius = 7;
+			const pos = [];
+			let maxNodes = Math.max(...graph.layers.map(l => l.size || 1));
+
+			graph.layers.forEach((layer, li) => {
+				const n = layer.size || 1;
+				const yStep = (H - 40) / Math.max(1, n - 1);
+				const xs = 30 + li * xStep;
+				for (let i = 0; i < n; i++) {
+					const ys = 20 + (n === 1 ? (H / 2 - 20) : i * yStep);
+					pos.push({ li, i, x: xs, y: ys });
+				}
+			});
+
+			nnCtx.globalAlpha = .25;
+			for (let li = 0; li < L - 1; li++) {
+				const from = pos.filter(p => p.li === li);
+				const to = pos.filter(p => p.li === li + 1);
+				from.forEach(f => {
+					to.forEach(t => {
+						nnCtx.beginPath();
+						nnCtx.moveTo(f.x, f.y);
+						nnCtx.lineTo(t.x, t.y);
+						nnCtx.strokeStyle = '#3a86ff';
+						nnCtx.stroke();
+					});
+				});
+			}
+			nnCtx.globalAlpha = 1.0;
+			pos.forEach(p => {
+				nnCtx.beginPath();
+				nnCtx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+				nnCtx.fillStyle = '#9bd0ff';
+				nnCtx.fill();
+				nnCtx.strokeStyle = '#1f2a3a';
+				nnCtx.stroke();
+			});
+
+			nnCtx.fillStyle = '#9fb8d6';
+			nnCtx.font = '12px ui-monospace, monospace';
+			nnCtx.fillText((graph.title || 'NN') + ' • ' + (graph.model || '-'), 8, 14);
+			if (stats) {
+				nnCtx.fillStyle = '#b9cee3';
+				nnCtx.fillText(`epoch ${stats.epoch ?? '-'}  loss ${stats.loss?.toFixed?.(4) ?? '-'}`, 8, H - 8);
+			}
+		}
+
+		async function loadNNGraph() {
+			try {
+				const r = await fetch('/nn/graph', { cache: 'no-store' });
+				const j = await r.json();
+				if (j.ok) {
+					nnGraph = j.graph;
+					drawNN(nnGraph, null);
+				} else {
+					nnGraph = null;
+					drawNN(null, null);
+				}
+			} catch (e) {
+				nnGraph = null; drawNN(null, null);
+			}
+		}
+		$('reloadNNBtn').addEventListener('click', loadNNGraph);
+
+		function startNNSSE() {
+			try { if (sseNN) sseNN.close(); } catch (_) { }
+			sseNN = new EventSource('/stream/nn');
+			sseNN.onmessage = (e) => {
+				if (!e || !e.data) return;
+				try {
+					const row = JSON.parse(e.data);
+					if (row.type === 'nn_stats') {
+						$('nnStats').textContent = JSON.stringify(row, null, 2);
+						drawNN(nnGraph, row);
+					}
+				} catch { }
+			};
+		}
+
+		// ---- Training actions ----
+		$('trainBtn').addEventListener('click', async () => {
+			const btn = $('trainBtn'); btn.disabled = true;
+			$('trainResult').textContent = 'Training…';
+			const payload = {
+				ticker: $('ticker').value.trim(),
+				interval: $('interval').value,
+				max_iter: parseInt($('max_iter').value || '300', 10),
+				mode: $('mode').value,
+				pine_mode: $('pine_mode').value,
+				aggressiveness: $('aggr').value,
+				sides: $('sides').value,
+				source: $('source').value,
+				merge_sources: $('merge_sources').checked,
+				use_fundamentals: $('use_fa').checked
+			};
+			const et = $('entry_thr').value.trim(); if (et) payload.entry_thr = parseFloat(et);
+			const zt = $('z_thr').value.trim(); if (zt) payload.z_thr = parseFloat(zt);
+			const vk = $('vol_k').value.trim(); if (vk) payload.vol_k = parseFloat(vk);
+
+			const rm = $('rangeMode').value;
+			if (rm === 'period') { payload.period = $('period').value; }
+			else { payload.start = $('start').value || null; payload.end = $('end').value || null; }
+
+			try {
+				const r = await fetch('/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+				const txt = await r.text(); let j;
+				try { j = JSON.parse(txt); } catch (_) { throw new Error(`HTTP ${r.status} ${r.statusText} - ${txt.slice(0, 200)}`); }
+				if (!r.ok || !j.ok) throw new Error(j.detail || j.reason || 'Train failed');
+				$('trainResult').textContent = `Done • acc=${j.train_acc} • n=${j.n}`;
+				refreshArtifacts(); fetchMetrics(); startTrainSSE(); startNNSSE();
+			} catch (err) {
+				$('trainResult').textContent = 'Error: ' + (err.message || err);
+			} finally {
+				btn.disabled = false;
+			}
+		});
+
+		// ---- Idle controls ----
+		$('idleStartBtn').addEventListener('click', async () => {
+			const name = $('idle_name').value.trim() || 'idle';
+			let tickers = []; try { tickers = JSON.parse($('idle_tickers').value.trim() || '[]'); } catch (_) { }
+			const body = {
+				name, tickers,
+				every_sec: parseInt($('idle_every').value || '3600', 10),
+				period: $('idle_period').value,
+				interval: $('idle_interval').value,
+				mode: $('idle_mode').value,
+				pine_mode: $('idle_pine').value,
+				source: $('idle_source').value,
+				merge_sources: $('idle_merge').checked,
+				use_fundamentals: $('idle_fa').checked
+			};
+			const r = await fetch('/idle/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+			$('idleStatus').textContent = await r.text();
+		});
+		$('idleStopBtn').addEventListener('click', async () => {
+			const name = $('idle_name').value.trim() || 'idle';
+			const r = await fetch('/idle/stop?name=' + encodeURIComponent(name), { method: 'POST' });
+			$('idleStatus').textContent = await r.text();
+		});
+		$('idleStatusBtn').addEventListener('click', async () => {
+			const r = await fetch('/idle/status', { cache: 'no-store' }); $('idleStatus').textContent = await r.text();
+		});
+
+		// ---- Multi train ----
+		$('multiBtn').addEventListener('click', async () => {
+			let tickers = []; try { tickers = JSON.parse($('multi_tickers').value.trim() || '[]'); } catch (_) { }
+			const body = {
+				tickers,
+				period: $('multi_period').value,
+				interval: $('multi_interval').value,
+				max_iter: parseInt($('multi_max').value || '250', 10),
+				pine_mode: $('multi_pine').value,
+				source: $('multi_source').value,
+				merge_sources: $('multi_merge').checked,
+				use_fundamentals: $('multi_fa').checked
+			};
+			const r = await fetch('/train/multi', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+			$('multiOut').textContent = await r.text();
+		});
+
+		// ---- Init ----
+		window.addEventListener('resize', () => { drawSparkline(); drawNN(nnGraph, null); });
+		loadGPU();
+		fetchMetrics();
+		refreshArtifacts();
+		startTrainSSE();
+		loadNNGraph();
+		startNNSSE();
+		setInterval(fetchMetrics, 4000);
+	</script>
+</body>
+</html>

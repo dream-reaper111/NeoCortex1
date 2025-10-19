@@ -1,0 +1,88 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>92726615-c45c-4155-8208-917016ba7dd4</ProjectGuid>
+    <ProjectHome>.</ProjectHome>
+    <StartupFile>
+    </StartupFile>
+    <SearchPath>
+    </SearchPath>
+    <WorkingDirectory>.</WorkingDirectory>
+    <OutputPath>.</OutputPath>
+    <Name>tensorflowtest</Name>
+    <RootNamespace>tensorflowtest</RootNamespace>
+    <InterpreterId>MSBuild|env|$(MSBuildProjectFullPath)</InterpreterId>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugSymbols>true</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="brokers\alpaca_adapter.py" />
+    <Compile Include="brokers\apex_adapter.py" />
+    <Compile Include="brokers\base.py" />
+    <Compile Include="brokers\bluesky_adapter.py" />
+    <Compile Include="brokers\e8_adapter.py" />
+    <Compile Include="brokers\tradelocker_adapter.py" />
+    <Compile Include="brokers\traderpost_adapter.py" />
+    <Compile Include="brokers\__init__.py" />
+    <Compile Include="run_with_ngrok.py" />
+    <Compile Include="Telemetry\lgbm_callbacks.py" />
+    <Compile Include="Telemetry\live_nn.py" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="brokers\" />
+    <Folder Include="Alerts\" />
+    <Folder Include="deploy\" />
+    <Folder Include="deploy\cloudflare\" />
+    <Folder Include="public\" />
+    <Folder Include="Telemetry\" />
+    <Folder Include="Project Root\" />
+    <Folder Include="Project Root\Data\" />
+    <Folder Include="Project Root\bars\" />
+    <Folder Include="Project Root\ledger\" />
+    <Folder Include="Project Root\model_store\" />
+    <Folder Include="Project Root\artifacts\" />
+    <Folder Include="ui\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Alerts\bar_close.json" />
+    <Content Include="Alerts\bar_close_with_tp_sl.json" />
+    <Content Include="Alerts\bulk_bars_example.json" />
+    <Content Include="Alerts\heartbeat.json" />
+    <Content Include="Alerts\readme.txt" />
+    <Content Include="deploy\Caddyfile" />
+    <Content Include="deploy\cloudflare\config.yml" />
+    <Content Include="deploy\nssm_install.ps1" />
+    <Content Include="deploy\run_server.bat" />
+    <Content Include="deploy\run_server.ps1" />
+    <Content Include="deploy\uvicorn_env.example.ps1" />
+    <Content Include="public\dashboard.html" />
+    <Content Include="ui\index.html" />
+  </ItemGroup>
+  <ItemGroup>
+    <Interpreter Include="env\">
+      <Id>env</Id>
+      <Version>3.9</Version>
+      <Description>env (Python 3.9 (64-bit))</Description>
+      <InterpreterPath>Scripts\python.exe</InterpreterPath>
+      <WindowsInterpreterPath>Scripts\pythonw.exe</WindowsInterpreterPath>
+      <PathEnvironmentVariable>PYTHONPATH</PathEnvironmentVariable>
+      <Architecture>X64</Architecture>
+    </Interpreter>
+  </ItemGroup>
+  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
+  <!-- Uncomment the CoreCompile target to enable the Build command in
+       Visual Studio and specify your pre- and post-build commands in
+       the BeforeBuild and AfterBuild targets below. -->
+  <!--<Target Name="CoreCompile" />-->
+  <Target Name="BeforeBuild">
+  </Target>
+  <Target Name="AfterBuild">
+  </Target>
+</Project>

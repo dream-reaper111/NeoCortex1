@@ -1,0 +1,7 @@
+tunnel: ai-trader
+credentials-file: C:\Users\YOUR_USER\.cloudflared\ai-trader.json
+
+ingress:
+  - hostname: trader.yourdomain.com
+    service: http://localhost:8000
+  - service: http_status:404

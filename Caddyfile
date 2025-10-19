@@ -1,0 +1,24 @@
+# replace with your domain
+trader.yourdomain.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8000
+
+    @preflight path /preflight
+    handle_path @preflight {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    # Optional: allow only TradingView IPs (keep list fresh) – comment out while testing
+    # @tvips remote_ip 52.89.214.238 34.212.180.131 54.218.53.128 52.32.178.7
+    # handle {
+    #     abort
+    # }
+    # handle @tvips {
+    #     reverse_proxy 127.0.0.1:8000
+    # }
+
+    log {
+        output file /var/log/caddy/trader_access.log
+        format console
+    }
+}
