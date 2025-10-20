@@ -46,15 +46,34 @@ def main() -> None:
     if auth_token:
         ngrok.set_auth_token(auth_token)
 
-    # open the tunnel
-    tunnel = ngrok.connect(port, "http")
+    connect_kwargs = {"bind_tls": True}
+    basic_auth = os.getenv("NGROK_BASIC_AUTH")
+    if basic_auth:
+        connect_kwargs["basic_auth"] = basic_auth
+    domain = os.getenv("NGROK_DOMAIN")
+    if domain:
+        connect_kwargs["domain"] = domain
+    allow_cidrs = [cidr.strip() for cidr in (os.getenv("NGROK_ALLOWED_CIDRS") or "").split(",") if cidr.strip()]
+    if allow_cidrs:
+        connect_kwargs["ip_restriction"] = {"allow_cidrs": allow_cidrs}
+
+    tunnel = ngrok.connect(port, "http", **connect_kwargs)
     public_url = tunnel.public_url
     print("* ngrok tunnel established: {} -> http://127.0.0.1:{}".format(public_url, port), flush=True)
+    if basic_auth:
+        print("  (basic auth enabled via NGROK_BASIC_AUTH)", flush=True)
+    if allow_cidrs:
+        print("  (IP allow list: {})".format(", ".join(allow_cidrs)), flush=True)
     print("* To test Alpaca webhooks, configure your Alpaca dashboard to use:")
     print(f"  {public_url}/alpaca/webhook", flush=True)
 
-    # run uvicorn server
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    finally:
+        try:
+            ngrok.disconnect(tunnel.public_url)
+        finally:
+            ngrok.kill()
 
 
 if __name__ == "__main__":
