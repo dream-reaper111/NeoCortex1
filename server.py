@@ -17,6 +17,7 @@ import psutil
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -29,6 +30,7 @@ import requests
 
 # ---- your model utils (import AFTER env guards) ----
 from model import build_features, train_and_save, latest_run_path
+from strategies import analyze_liquidity_session, StrategyError
 
 load_dotenv(override=False)
 
@@ -37,6 +39,12 @@ API_PORT   = int(os.getenv("API_PORT","8000"))
 RUNS_ROOT  = Path(os.getenv("RUNS_ROOT","artifacts")).resolve()
 STATIC_DIR = Path(os.getenv("STATIC_DIR","static")).resolve(); STATIC_DIR.mkdir(parents=True, exist_ok=True)
 PUBLIC_DIR = Path(os.getenv("PUBLIC_DIR","public")).resolve(); PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+LIQUIDITY_DIR = PUBLIC_DIR / "liquidity"
+LIQUIDITY_DIR.mkdir(parents=True, exist_ok=True)
+LIQUIDITY_ASSETS = LIQUIDITY_DIR / "assets"
+LIQUIDITY_ASSETS.mkdir(parents=True, exist_ok=True)
+ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
+ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
 
 # -----------------------------------------------------------------------------
 # Alpaca configuration
@@ -136,6 +144,8 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
+app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
+app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
 
 # ---------- normalizers ----------
 def standardize_ohlcv(raw: pd.DataFrame, ticker: Optional[str]=None) -> pd.DataFrame:
@@ -265,6 +275,17 @@ class AuthReq(BaseModel):
     username: str
     password: str
 
+
+class AlpacaWebhookTest(BaseModel):
+    symbol: str = "SPY"
+    quantity: float = 1.0
+    price: float = 0.0
+    side: str = "buy"
+    status: str = "filled"
+    event: str = "trade_update"
+    timestamp: Optional[str] = None
+    raw: Optional[Dict[str, Any]] = None
+
 @app.post("/register")
 async def register(req: AuthReq):
     """
@@ -390,6 +411,32 @@ async def get_pnl(account: str = "paper"):
     except Exception as e:
         return _json({"ok": False, "detail": f"Failed to compute P&L: {e}"}, 500)
 
+
+@app.get("/strategy/liquidity-sweeps")
+def strategy_liquidity_sweeps(ticker: str, session_date: Optional[str] = None, interval: str = "1m"):
+    ticker = (ticker or "").strip()
+    if not ticker:
+        return _json({"ok": False, "detail": "ticker query parameter is required"}, 400)
+    try:
+        analysis = analyze_liquidity_session(
+            ticker,
+            session_date=session_date,
+            interval=interval,
+            asset_dir=LIQUIDITY_ASSETS,
+        )
+    except StrategyError as exc:
+        return _json({"ok": False, "detail": str(exc)}, 400)
+    except Exception as exc:
+        return _json({"ok": False, "detail": f"{type(exc).__name__}: {exc}"}, 500)
+
+    heatmap_info = analysis.get("heatmap")
+    if heatmap_info:
+        filename = heatmap_info.get("relative_url")
+        if filename:
+            heatmap_info["public_url"] = f"/public/liquidity/assets/{filename}"
+    analysis["ok"] = True
+    return _json(analysis)
+
 # -----------------------------------------------------------------------------
 # Alpaca webhook handler
 #
@@ -434,6 +481,45 @@ async def alpaca_webhook(req: Request):
     # notify other services. Here we simply print it to stdout.
     print("[Alpaca webhook]", json.dumps(payload, indent=2), flush=True)
     return _json({"ok": True})
+
+
+@app.post("/alpaca/webhook/test")
+def alpaca_webhook_test(req: AlpacaWebhookTest):
+    payload = req.raw.copy() if isinstance(req.raw, dict) else {
+        "event": req.event,
+        "order": {
+            "symbol": req.symbol,
+            "qty": req.quantity,
+            "filled_avg_price": req.price,
+            "side": req.side,
+            "status": req.status,
+        },
+    }
+    payload.setdefault("event", req.event)
+    payload.setdefault("timestamp", req.timestamp or datetime.now(timezone.utc).isoformat())
+
+    body_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    signature = None
+    secret = os.getenv("ALPACA_WEBHOOK_SECRET")
+    if secret:
+        import hmac, hashlib, base64
+
+        digest = hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()
+        signature = base64.b64encode(digest).decode()
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    fname = f"test-{req.symbol.upper()}-{stamp}.json"
+    path = ALPACA_TEST_DIR / fname
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    return _json(
+        {
+            "ok": True,
+            "payload": payload,
+            "suggested_signature": signature,
+            "artifact": f"/public/{path.relative_to(PUBLIC_DIR)}",
+        }
+    )
 
 # --- ingestion: TradingView (signals + bars optional) ---
 @app.post("/webhook/tradingview")
@@ -725,6 +811,14 @@ def dashboard():
     html = PUBLIC_DIR / "dashboard.html"
     if not html.exists():
         return HTMLResponse("<h1>public/dashboard.html missing</h1>", status_code=404, headers=_nocache())
+    return FileResponse(html, media_type="text/html", headers=_nocache())
+
+
+@app.get("/liquidity")
+def liquidity_ui():
+    html = LIQUIDITY_DIR / "index.html"
+    if not html.exists():
+        return HTMLResponse("<h1>public/liquidity/index.html missing</h1>", status_code=404, headers=_nocache())
     return FileResponse(html, media_type="text/html", headers=_nocache())
 
 if __name__ == "__main__":

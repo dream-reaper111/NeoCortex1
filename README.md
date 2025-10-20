@@ -16,12 +16,16 @@ display account positions and unrealized P&L from Alpaca Markets.
   explanatory `ImportError` is raised.
 - `run_with_ngrok.py` – Helper script that starts an ngrok tunnel to your
   local API port and runs the FastAPI application via Uvicorn.
+- `strategies.py` – Liquidity sweep/footprint analytics shared by the API and
+  UI.
 - `requirements.txt` – Dependency list. Includes `pyngrok` for ngrok
   integration. **Important:** To use the GPU, install a PyTorch wheel that
   matches your CUDA version. See below.
 - `enduser_app/` – Self‑contained HTML/JS dashboard for viewing Alpaca
   positions, total P&L, and a watchlist. This is separate from the admin
   dashboard used by the training UI.
+- `public/liquidity/` – Mobile and desktop friendly Liquidity Sweep Radar UI
+  that consumes the `/strategy/liquidity-sweeps` API.
 
 ## Installation
 
@@ -87,6 +91,15 @@ The script prints a public URL (e.g. `https://1234.ngrok.io`). Use this URL
 to access your API externally. For Alpaca webhooks, append `/alpaca/webhook` to
 that URL and configure it in your Alpaca dashboard.
 
+Security hardening options:
+
+- `NGROK_BASIC_AUTH="user:pass"` enables HTTP basic authentication on the
+  public tunnel.
+- `NGROK_ALLOWED_CIDRS="198.51.100.0/24,203.0.113.5/32"` restricts inbound
+  IP ranges.
+- `NGROK_DOMAIN=custom.ngrok-free.app` requests a reserved domain (requires an
+  ngrok plan that supports it).
+
 ## Configuring Alpaca
 
 The API uses Alpaca Markets for positions and P&L. You must set the
@@ -116,6 +129,31 @@ for a given account type, the corresponding endpoint will return an error.
 
 If you supply `ALPACA_WEBHOOK_SECRET`, incoming webhook requests must include
 a matching `X-Webhook-Signature` header. A mismatch yields a 400 error.
+
+### Webhook test helper
+
+Use `POST /alpaca/webhook/test` to generate a signed sample payload. The
+endpoint writes the payload to `public/alpaca_webhook_tests/` and, when a
+secret is configured, returns a base64-encoded signature that mirrors what
+Alpaca would send.
+
+## Liquidity Sweep Radar (mobile + desktop)
+
+The `/strategy/liquidity-sweeps` endpoint analyses the New York morning session
+for a given ticker and interval, returning:
+
+- Detected liquidity sweeps with volume/range ratios.
+- Manipulation clusters (alternating sweeps within a 20-minute window).
+- Footprint totals (estimated buy/sell imbalance).
+- A volume heatmap stored under `public/liquidity/assets/`.
+
+You can interact with these analytics via the responsive UI in
+`public/liquidity/`:
+
+```powershell
+python -m http.server --directory public 8001
+# open http://localhost:8001/liquidity/ or use http://localhost:8000/liquidity when the API is running
+```
 
 ## End‑User Dashboard
 
