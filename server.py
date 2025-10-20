@@ -8,18 +8,31 @@ _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
 import os, json, time, shutil, asyncio, importlib
+import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
-import psutil
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
+
+
+def _load_optional_module(name: str):
+    spec = importlib.util.find_spec(name)
+    if spec is None:
+        return None
+    try:
+        return importlib.import_module(name)
+    except Exception:
+        return None
+
+
+psutil = _load_optional_module("psutil")
 
 import matplotlib
 matplotlib.use("Agg")
@@ -132,9 +145,21 @@ def run_preflight():
         except Exception:
             miss.append(name)
     total, used, free = shutil.disk_usage(os.getcwd())
-    vm = psutil.virtual_memory()
+    ram_avail_gb=None
+    if psutil is not None:
+        try:
+            ram_avail_gb=round(psutil.virtual_memory().available/1024**3,2)
+        except Exception:
+            ram_avail_gb=None
+    if ram_avail_gb is None:
+        try:
+            pages = os.sysconf("SC_AVPHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            ram_avail_gb = round(pages * page_size / 1024**3, 2)
+        except (AttributeError, ValueError, OSError):
+            ram_avail_gb = None
     return {"packages":{"ok":not miss,"missing":miss,"versions":vers},
-            "hardware":{"disk_free_gb":round(free/1024**3,2),"ram_avail_gb":round(vm.available/1024**3,2)},
+            "hardware":{"disk_free_gb":round(free/1024**3,2),"ram_avail_gb":ram_avail_gb},
             "gpu":_gpu_info(),
             "time_utc":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}
 
