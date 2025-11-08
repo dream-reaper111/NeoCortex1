@@ -147,6 +147,12 @@ hashed with a salted 2048-bit PBKDF2-SHA512 digest before being persisted.
 2. Log in with `POST /login` using the same payload to receive a bearer
    token. Supply this token to other endpoints via
    `Authorization: Bearer <token>`.
+
+
+   A browser-friendly login flow now lives at [`/login`](http://localhost:8000/login).
+   It issues the same bearer token and stores it alongside an HTTP-only session
+   cookie so the `/dashboard` UI can enforce authentication before loading.
+
 3. To save Alpaca API keys that are unique to the authenticated user, call
    `POST /alpaca/credentials` with:
 
@@ -163,6 +169,13 @@ hashed with a salted 2048-bit PBKDF2-SHA512 digest before being persisted.
    returned, secrets remain server-side). When the bearer token is supplied to
    `/positions` or `/pnl`, the API automatically prefers the stored credentials
    over environment defaults.
+
+You can customize how the browser session cookie is issued by setting:
+
+- `SESSION_COOKIE_NAME` – defaults to `session_token`.
+- `SESSION_COOKIE_MAX_AGE` – lifetime in seconds (default 7 days).
+- `SESSION_COOKIE_SAMESITE` – defaults to `lax`.
+- `AUTH_COOKIE_SECURE` – set to `1` to require HTTPS when sending the cookie.
 
 ### Webhook Verification
 

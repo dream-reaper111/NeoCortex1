@@ -15,6 +15,9 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+
+from fastapi import FastAPI, HTTPException, Request, Header, Cookie
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -60,6 +63,9 @@ LIQUIDITY_ASSETS = LIQUIDITY_DIR / "assets"
 LIQUIDITY_ASSETS.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
+
+LOGIN_PAGE = PUBLIC_DIR / "login.html"
+
 ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
 ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -152,6 +158,12 @@ NGROK_ENDPOINT_TEMPLATE = _load_ngrok_template(NGROK_ENDPOINT_TEMPLATE_PATH)
 
 DEFAULT_PUBLIC_BASE_URL = os.getenv("DEFAULT_PUBLIC_BASE_URL", "").rstrip("/")
 
+DEFAULT_PUBLIC_BASE_URL = os.getenv(
+    "DEFAULT_PUBLIC_BASE_URL",
+    "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
+).rstrip("/")
+
+
 # -----------------------------------------------------------------------------
 # Alpaca configuration
 #
@@ -191,6 +203,10 @@ IdleTasks: Dict[str, asyncio.Task] = {}
 # --- authentication and credential storage -------------------------------------------------------
 AUTH_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "auth.db")).resolve()
 AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session_token")
+SESSION_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes"}
+SESSION_COOKIE_MAX_AGE = int(os.getenv("SESSION_COOKIE_MAX_AGE", str(7 * 24 * 3600)))
+SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax") or "lax"
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -240,6 +256,119 @@ def _init_auth_db() -> None:
 
 
 _init_auth_db()
+
+
+def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    """Derive a 2048-bit PBKDF2-SHA512 digest and return ``(hash_hex, salt_hex)``."""
+    if salt is None:
+        salt = secrets.token_hex(32)
+    salt_bytes = bytes.fromhex(salt)
+    derived = hashlib.pbkdf2_hmac(
+        "sha512",
+        password.encode("utf-8"),
+        salt_bytes,
+        200_000,
+        dklen=256,
+    )
+    return derived.hex(), salt
+
+
+def _create_session_token(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    with _db_conn() as conn:
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
+            (token, user_id, datetime.now(timezone.utc).isoformat()),
+        )
+    return token
+
+
+def _delete_session_token(token: str) -> None:
+    if not token:
+        return
+    with _db_conn() as conn:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+def _authorization_token(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    header = authorization.strip()
+    if not header:
+        return None
+    parts = header.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return header
+
+
+def _user_from_token(token: str) -> Optional[sqlite3.Row]:
+    if not token:
+        return None
+    with _db_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id, u.username
+            FROM sessions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.token = ?
+            """,
+            (token,),
+        ).fetchone()
+    return row
+
+
+def _require_user(authorization: Optional[str], session_token: Optional[str] = None) -> sqlite3.Row:
+    token = _authorization_token(authorization)
+    if not token and session_token:
+        token = session_token
+    if not token:
+        raise HTTPException(status_code=401, detail="authorization required")
+    user = _user_from_token(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="invalid or expired token")
+    return user
+
+
+def _fetch_user_credentials(user_id: int, account_type: str) -> Optional[sqlite3.Row]:
+    with _db_conn() as conn:
+        return conn.execute(
+            """
+            SELECT api_key, api_secret, base_url
+            FROM alpaca_credentials
+            WHERE user_id = ? AND account_type = ?
+            """,
+            (user_id, account_type),
+        ).fetchone()
+
+
+def _save_user_credentials(
+    user_id: int,
+    account_type: str,
+    api_key: str,
+    api_secret: str,
+    base_url: Optional[str],
+) -> None:
+    with _db_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO alpaca_credentials (user_id, account_type, api_key, api_secret, base_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, account_type) DO UPDATE SET
+                api_key = excluded.api_key,
+                api_secret = excluded.api_secret,
+                base_url = excluded.base_url,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                account_type,
+                api_key,
+                api_secret,
+                base_url,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
 
 
 def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
@@ -440,7 +569,12 @@ app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True),
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
 
 
-@app.get("/ngrok/cloud-endpoint", response_class=HTMLResponse)
+@app.get("/ngrok/cloud-endpoint", res@router.get("/positions")
+async def get_positions(account: str = "paper", authorization: Optional[str] = Header(None)):
+    # your logic goes here
+    user = _auth_user(authorization)
+    positions = _get_positions_from_alpaca(user, account)
+    return _json({"ok": True, "positions": positions})ponse_class=HTMLResponse)
 def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
     """Serve a tiny HTML page that displays the tunnel webhook URL."""
 
@@ -662,6 +796,92 @@ async def login(req: AuthReq):
     if expected_hash != row["password_hash"]:
         return _json({"ok": False, "detail": "invalid credentials"}, 401)
     token = _create_session_token(row["id"])
+    resp = _json({"ok": True, "token": token, "username": uname, "session_cookie": SESSION_COOKIE_NAME})
+    resp.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=SESSION_COOKIE_SECURE,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        samesite=SESSION_COOKIE_SAMESITE,
+        path="/",
+    )
+    return resp
+
+
+@app.post("/logout")
+async def logout(
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    token = _authorization_token(authorization) or session_token
+    if token:
+        _delete_session_token(token)
+    resp = _json({"ok": True})
+    resp.delete_cookie(
+        SESSION_COOKIE_NAME,
+        path="/",
+        samesite=SESSION_COOKIE_SAMESITE,
+        secure=SESSION_COOKIE_SECURE,
+    )
+    return resp
+
+
+@app.get("/alpaca/credentials")
+async def list_alpaca_credentials(
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    """Return the Alpaca credential entries associated with the authenticated user."""
+    user = _require_user(authorization, session_token)
+    with _db_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT account_type, api_key, base_url, updated_at
+            FROM alpaca_credentials
+            WHERE user_id = ?
+            ORDER BY account_type
+            """,
+            (user["id"],),
+        ).fetchall()
+    credentials = [
+        {
+            "account_type": row["account_type"],
+            "api_key": row["api_key"],
+            "base_url": row["base_url"],
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
+    return _json({"ok": True, "credentials": credentials})
+
+
+@app.post("/alpaca/credentials")
+async def set_alpaca_credentials(
+    req: CredentialReq,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    """Create or update Alpaca API credentials for the authenticated user."""
+    user = _require_user(authorization, session_token)
+    acct_type = (req.account_type or "paper").strip().lower()
+    if acct_type not in {"paper", "funded"}:
+        return _json({"ok": False, "detail": "account_type must be 'paper' or 'funded'"}, 400)
+    api_key = req.api_key.strip()
+    api_secret = req.api_secret.strip()
+    if not api_key or not api_secret:
+        return _json({"ok": False, "detail": "api_key and api_secret are required"}, 400)
+    base_url = (req.base_url or "").strip()
+    if not base_url:
+        base_url = ALPACA_BASE_URL_FUND if acct_type == "funded" else ALPACA_BASE_URL_PAPER
+    _save_user_credentials(user["id"], acct_type, api_key, api_secret, base_url)
+    return _json({"ok": True, "account_type": acct_type, "base_url": base_url})
+
+        return _json({"ok": False, "detail": "invalid credentials"}, 401)
+    expected_hash, _ = _hash_password_sha2048(req.password, row["salt"])
+    if expected_hash != row["password_hash"]:
+        return _json({"ok": False, "detail": "invalid credentials"}, 401)
+    token = _create_session_token(row["id"])
     return _json({"ok": True, "token": token, "username": uname})
 
 
@@ -710,6 +930,12 @@ async def set_alpaca_credentials(req: CredentialReq, authorization: Optional[str
 
 # --- account data: positions and P&L ---
 @app.get("/positions")
+async def get_positions(
+    account: str = "paper",
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+
 async def get_positions(account: str = "paper", authorization: Optional[str] = Header(None)):
     """
     Fetch the current positions for the specified Alpaca account. The
@@ -722,6 +948,7 @@ async def get_positions(account: str = "paper", authorization: Optional[str] = H
     """
     acct_type = (account or "paper").lower()
     user = None
+    token = _authorization_token(authorization) or session_token
     token = _authorization_token(authorization)
     if token:
         user = _user_from_token(token)
@@ -746,6 +973,12 @@ async def get_positions(account: str = "paper", authorization: Optional[str] = H
         return _json({"ok": False, "detail": f"Failed to fetch positions: {e}"}, 500)
 
 @app.get("/pnl")
+async def get_pnl(
+    account: str = "paper",
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+
 async def get_pnl(account: str = "paper", authorization: Optional[str] = Header(None)):
     """
     Compute unrealized P&L for the positions held in an Alpaca account. This
@@ -757,6 +990,8 @@ async def get_pnl(account: str = "paper", authorization: Optional[str] = Header(
     """
     acct_type = (account or "paper").lower()
     user = None
+    token = _authorization_token(authorization) or session_token
+
     token = _authorization_token(authorization)
     if token:
         user = _user_from_token(token)
@@ -1233,7 +1468,19 @@ def nn_graph():
         return _json({"ok": True, "graph":{"title":"-","model":"-","layers":[{"size":16},{"size":16},{"size":2}]}})
     return _json({"ok": True, "graph": json.loads(p.read_text(encoding="utf-8", errors="ignore"))})
 
-# ---------- dashboard (no more NameError) ----------
+# ---------- login + dashboard UI ----------
+@app.get("/")
+def root():
+    return RedirectResponse(url="/login")
+
+
+@app.get("/login")
+def login_page():
+    if not LOGIN_PAGE.exists():
+        return HTMLResponse("<h1>public/login.html missing</h1>", status_code=404, headers=_nocache())
+    return FileResponse(LOGIN_PAGE, media_type="text/html", headers=_nocache())
+
+
 @app.get("/dashboard")
 def dashboard():
     html = PUBLIC_DIR / "dashboard.html"
