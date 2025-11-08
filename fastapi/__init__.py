@@ -6,7 +6,7 @@ import json
 import re
 from http import HTTPStatus
 from types import SimpleNamespace
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Pattern, Tuple, Type, Union
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Pattern, Tuple, Type, Union, get_type_hints
 from urllib.parse import parse_qs, urlsplit
 
 from .responses import JSONResponse, Response
@@ -236,11 +236,15 @@ class FastAPI:
     async def _call_endpoint(self, route: _Route, request: Request, path_params: Dict[str, str]) -> Any:
         endpoint = route.endpoint
         signature = inspect.signature(endpoint)
+        try:
+            type_hints = get_type_hints(endpoint)
+        except Exception:  # pragma: no cover - defensive fallback
+            type_hints = {}
         kwargs: Dict[str, Any] = {}
         json_body: Any = None
         json_loaded = False
         for name, param in signature.parameters.items():
-            annotation = param.annotation
+            annotation = type_hints.get(name, param.annotation)
             if annotation is Request or annotation is inspect._empty and name == "request":
                 kwargs[name] = request
                 continue
