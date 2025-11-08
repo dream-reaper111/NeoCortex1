@@ -7,7 +7,7 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, shutil, asyncio, importlib, hashlib, sqlite3, secrets
+import os, json, time, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
@@ -36,6 +36,8 @@ def _load_optional_module(name: str):
 
 
 psutil = _load_optional_module("psutil")
+
+logger = logging.getLogger("neocortex.server")
 
 import matplotlib
 matplotlib.use("Agg")
@@ -1100,7 +1102,7 @@ async def alpaca_webhook(req: Request):
             return _json({"ok": False, "detail": "invalid signature"}, 400)
     # In a production system you might persist the payload to a database or
     # notify other services. Here we simply print it to stdout.
-    print("[Alpaca webhook]", json.dumps(payload, indent=2), flush=True)
+    logger.info("[Alpaca webhook] %s", json.dumps(payload, indent=2))
     return _json({"ok": True})
 
 
