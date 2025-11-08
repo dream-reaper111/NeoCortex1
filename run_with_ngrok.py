@@ -26,6 +26,8 @@ Note: This script blocks until the server shuts down. To stop, press Ctrl+C.
 """
 
 import os
+
+from dotenv import load_dotenv
 from pyngrok import ngrok
 import uvicorn
 
@@ -40,6 +42,7 @@ except Exception as e:
     ) from e
 
 def main() -> None:
+    load_dotenv(override=False)
     # read port and auth token from environment
     port = int(os.getenv("API_PORT", "8000"))
     auth_token = os.getenv("NGROK_AUTH_TOKEN")
