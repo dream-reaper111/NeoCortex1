@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Neo Cortex – End User Console</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="brand">
+        <h1>Neo Cortex End User Console</h1>
+        <p class="subtitle">Manage Alpaca webhook integration and quick diagnostics.</p>
+      </div>
+      <nav class="nav-links">
+        <a href="#webhook" class="nav-link">Webhook</a>
+        <a href="#tests" class="nav-link">Test Payloads</a>
+        <a href="#faq" class="nav-link">FAQ</a>
+      </nav>
+    </header>
+
+    <main>
+      <section id="webhook" class="card">
+        <header class="card__header">
+          <h2>Alpaca Webhook Endpoint</h2>
+        </header>
+        <div class="card__body">
+          <p>
+            Share the following URL with Alpaca under <strong>API Settings → Webhook URL</strong>.
+            Alpaca will POST trade updates to this server, and you will see confirmations below.
+          </p>
+          <div class="webhook-url">
+            <code id="webhookUrl">https://example.com/alpaca/webhook</code>
+            <button type="button" id="copyWebhook" class="btn">Copy</button>
+          </div>
+          <p class="note">
+            If you are tunnelling the API through Ngrok, make sure you update Alpaca every time the public URL changes.
+          </p>
+        </div>
+      </section>
+
+      <section id="tests" class="card">
+        <header class="card__header">
+          <h2>Send a Test Payload</h2>
+          <p class="card__subtitle">Generate a mock trade update and verify the webhook is reachable.</p>
+        </header>
+        <div class="card__body">
+          <form id="testForm" class="form-grid">
+            <label>
+              <span>Symbol</span>
+              <input id="symbol" name="symbol" value="SPY" />
+            </label>
+            <label>
+              <span>Quantity</span>
+              <input id="quantity" name="quantity" type="number" min="0" step="0.01" value="1" />
+            </label>
+            <label>
+              <span>Fill Price</span>
+              <input id="price" name="price" type="number" min="0" step="0.01" value="0" />
+            </label>
+            <label>
+              <span>Side</span>
+              <select id="side" name="side">
+                <option value="buy">Buy</option>
+                <option value="sell">Sell</option>
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select id="status" name="status">
+                <option value="filled">Filled</option>
+                <option value="partially_filled">Partially Filled</option>
+                <option value="canceled">Canceled</option>
+              </select>
+            </label>
+            <label>
+              <span>Event Type</span>
+              <select id="event" name="event">
+                <option value="trade_update">Trade Update</option>
+                <option value="order_filled">Order Filled</option>
+                <option value="order_canceled">Order Canceled</option>
+              </select>
+            </label>
+            <label class="full-width">
+              <span>Timestamp (optional)</span>
+              <input id="timestamp" name="timestamp" placeholder="2024-01-01T15:04:05Z" />
+            </label>
+            <label class="full-width">
+              <span>Raw JSON Override (optional)</span>
+              <textarea id="raw" name="raw" rows="4" placeholder='{"event":"trade_update"}'></textarea>
+            </label>
+            <div class="form-actions full-width">
+              <button type="submit" class="btn primary" id="sendTest">Send Test</button>
+              <span id="testStatus" class="status"></span>
+            </div>
+          </form>
+
+          <details class="response-panel" open>
+            <summary>Latest Response</summary>
+            <pre id="responseOutput">Awaiting test…</pre>
+          </details>
+
+          <div class="artifact-list">
+            <header class="artifact-list__header">
+              <h3>Recent Test Artifacts</h3>
+              <button type="button" id="refreshTests" class="btn">Refresh</button>
+            </header>
+            <p class="note">Each test saves the payload under <code>public/alpaca_webhook_tests</code>. You can download the JSON files for auditing.</p>
+            <ul id="artifactList" class="artifact-list__items"></ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" class="card">
+        <header class="card__header">
+          <h2>Frequently Asked Questions</h2>
+        </header>
+        <div class="card__body faq">
+          <details open>
+            <summary>Why do I see a JSON response when visiting the webhook URL in a browser?</summary>
+            <p>
+              The webhook endpoint is designed for Alpaca to call via HTTP POST. When accessed directly in a browser (HTTP GET), the API returns a basic JSON message.
+              Use the form above to send a POST request that mirrors Alpaca&#39;s behaviour.
+            </p>
+          </details>
+          <details>
+            <summary>Where can I find the files produced by test payloads?</summary>
+            <p>
+              Tests are stored on disk inside <code>public/alpaca_webhook_tests</code>. The table above links to each file so that you can inspect the payload and share it with teammates.
+            </p>
+          </details>
+          <details>
+            <summary>How do I reset the Alpaca webhook URL?</summary>
+            <p>
+              Update the URL shown at the top of this page inside Alpaca&#39;s dashboard whenever your public endpoint changes (for example, when Ngrok rotates URLs).
+            </p>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <footer class="page-footer">
+      <small>&copy; <span id="year"></span> Neo Cortex. Built for the Alpaca webhook integration.</small>
+    </footer>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
