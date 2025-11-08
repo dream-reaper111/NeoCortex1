@@ -7,7 +7,7 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, shutil, asyncio, importlib, hashlib, sqlite3, secrets
+import os, json, time, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
@@ -33,6 +33,8 @@ def _load_optional_module(name: str):
 
 
 psutil = _load_optional_module("psutil")
+
+logger = logging.getLogger("neocortex.server")
 
 import matplotlib
 matplotlib.use("Agg")
@@ -148,15 +150,7 @@ def _load_ngrok_template(path: Path) -> str:
 
 NGROK_ENDPOINT_TEMPLATE = _load_ngrok_template(NGROK_ENDPOINT_TEMPLATE_PATH)
 
-DEFAULT_PUBLIC_BASE_URL = os.getenv(
-    "DEFAULT_PUBLIC_BASE_URL",
-    "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
-).rstrip("/")
-
-DEFAULT_PUBLIC_BASE_URL = os.getenv(
-    "DEFAULT_PUBLIC_BASE_URL",
-    "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
-).rstrip("/")
+DEFAULT_PUBLIC_BASE_URL = os.getenv("DEFAULT_PUBLIC_BASE_URL", "").rstrip("/")
 
 # -----------------------------------------------------------------------------
 # Alpaca configuration
@@ -185,14 +179,8 @@ ALPACA_KEY_PAPER = os.getenv("ALPACA_KEY_PAPER")
 ALPACA_SECRET_PAPER = os.getenv("ALPACA_SECRET_PAPER")
 ALPACA_BASE_URL_PAPER = os.getenv("ALPACA_BASE_URL_PAPER", "https://paper-api.alpaca.markets")
 
-ALPACA_KEY_FUND = os.getenv(
-    "ALPACA_KEY_FUND",
-    "AKCBWHC7VMDNP677TQ4S33FVPN",
-)
-ALPACA_SECRET_FUND = os.getenv(
-    "ALPACA_SECRET_FUND",
-    "F2ocEuxgNwjSQzM3b3oSftw5gbWrjoxSVWXHsdGSW6Td",
-)
+ALPACA_KEY_FUND = os.getenv("ALPACA_KEY_FUND")
+ALPACA_SECRET_FUND = os.getenv("ALPACA_SECRET_FUND")
 ALPACA_BASE_URL_FUND = os.getenv("ALPACA_BASE_URL_FUND", "https://api.alpaca.markets")
 
 Buffers: Dict[str, pd.DataFrame] = {}
@@ -587,6 +575,11 @@ async def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if not host:
+        if not DEFAULT_PUBLIC_BASE_URL:
+            raise HTTPException(
+                status_code=500,
+                detail="DEFAULT_PUBLIC_BASE_URL must be set when the application is served without Host headers.",
+            )
         base_url = DEFAULT_PUBLIC_BASE_URL
     else:
         base_url = f"{proto}://{host}".rstrip("/")
@@ -871,16 +864,20 @@ async def alpaca_webhook(req: Request):
         payload = None
     # optional signature verification
     secret = os.getenv("ALPACA_WEBHOOK_SECRET")
-    sig_header = req.headers.get("X-Webhook-Signature")
-    if secret and sig_header:
+    if secret:
+        sig_header = req.headers.get("X-Webhook-Signature")
+        if not sig_header:
+            return _json({"ok": False, "detail": "missing signature"}, 400)
+
         import hmac, hashlib, base64
+
         digest = hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()
         expected = base64.b64encode(digest).decode()
         if not hmac.compare_digest(expected, sig_header):
             return _json({"ok": False, "detail": "invalid signature"}, 400)
     # In a production system you might persist the payload to a database or
     # notify other services. Here we simply print it to stdout.
-    print("[Alpaca webhook]", json.dumps(payload, indent=2), flush=True)
+    logger.info("[Alpaca webhook] %s", json.dumps(payload, indent=2))
     return _json({"ok": True})
 
 
@@ -919,7 +916,7 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
             "payload": payload,
             "suggested_signature": signature,
             "artifact": f"/public/{path.relative_to(PUBLIC_DIR)}",
-            "default_webhook_url": f"{DEFAULT_PUBLIC_BASE_URL}/alpaca/webhook",
+            "default_webhook_url": f"{DEFAULT_PUBLIC_BASE_URL}/alpaca/webhook" if DEFAULT_PUBLIC_BASE_URL else None,
         }
     )
 

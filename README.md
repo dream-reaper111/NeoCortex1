@@ -79,51 +79,38 @@ environment variables (see below).
 
 ### With ngrok (external access)
 
-To expose your local API to the internet, run:
+To expose your local API to the internet, provide your ngrok token and set a
+strong username/password pair for HTTP basic authentication before running the
+helper script:
 
 ```powershell
 $env:NGROK_AUTH_TOKEN = "<your-ngrok-auth-token>"
+$env:NGROK_BASIC_AUTH_USER = "<strong-username>"
+$env:NGROK_BASIC_AUTH_PASS = "<strong-random-password>"
+# optional: request a reserved domain if your plan supports it
+$env:NGROK_DOMAIN = "trader.example.ngrok-free.dev"
 python run_with_ngrok.py
 ```
 
-The script prints a public URL (e.g. `https://1234.ngrok.io`). Use this URL
-to access your API externally. For Alpaca webhooks, append `/alpaca/webhook` to
-that URL and configure it in your Alpaca dashboard. By default the script
-requests the reserved domain `neocortex.internal`; if your ngrok account does
-not have that domain available the script automatically falls back to a random
-subdomain and prints a warning.
+The script prints a public URL (e.g. `https://1234.ngrok.io`). Use this URL to
+access your API externally. For Alpaca webhooks, append `/alpaca/webhook` to
+that URL and configure it in your Alpaca dashboard.
 
-By default the helper script attempts to use the reserved ngrok domain
-`tamara-unleavened-nonpromiscuously.ngrok-free.dev`. If that domain is not
-available for your ngrok account, the script automatically falls back to a
-randomly generated domain. The API also exposes this reserved domain as the
-default webhook URL (via `DEFAULT_PUBLIC_BASE_URL`) so tools such as
-`/alpaca/webhook/test` will include
-`https://tamara-unleavened-nonpromiscuously.ngrok-free.dev/alpaca/webhook` in
-their responses. To opt into a different reserved domain (or disable the
-default), set the `NGROK_DOMAIN` environment variable before running the
-script.
+If you want helper endpoints (such as `/ngrok/cloud-endpoint`) to advertise a
+fixed hostname, set `DEFAULT_PUBLIC_BASE_URL` to your external URL before
+starting the server.
 
+`run_with_ngrok.py` enforces HTTP basic authentication. Provide credentials via
+either `NGROK_BASIC_AUTH` (format `user:pass`) or the
+`NGROK_BASIC_AUTH_USER`/`NGROK_BASIC_AUTH_PASS` pair shown above. You can
+optionally restrict access to specific client networks via
+`NGROK_ALLOWED_CIDRS="198.51.100.0/24,203.0.113.5/32"`. If you have reserved a
+domain inside the ngrok dashboard, set `NGROK_DOMAIN` accordingly; otherwise
+leave it unset to allow ngrok to allocate a random hostname.
 
-Security hardening options:
-
-- `NGROK_BASIC_AUTH="user:pass"` enables HTTP basic authentication on the
-  public tunnel.
-- `NGROK_ALLOWED_CIDRS="198.51.100.0/24,203.0.113.5/32"` restricts inbound
-  IP ranges.
-
-- `NGROK_DOMAIN=custom.ngrok-free.app` overrides the default
-  `neocortex.internal` reservation (requires an ngrok plan that supports
-  reserved domains).
-
-
-- `NGROK_DOMAIN=custom.ngrok-free.app` overrides the default
-  `neocortex.internal` reservation (requires an ngrok plan that supports
-  reserved domains).
-- `NGROK_DOMAIN=custom.ngrok-free.app` requests a reserved domain (requires an
-  ngrok plan that supports it). Set it to an empty string to use a random
-
-
+Additional hardening guidance—including firewall, Fail2Ban, TLS, and DNS
+recommendations—is available in
+[`docs/security-hardening.md`](docs/security-hardening.md).
 ## Configuring Alpaca
 
 The API uses Alpaca Markets for positions and P&L. You must set the
@@ -141,8 +128,8 @@ appropriate credentials as environment variables before running the server.
 - **Live trading** (funded):
 
   ```powershell
-  $env:ALPACA_KEY_FUND    = "AKCBWHC7VMDNP677TQ4S33FVPN"
-  $env:ALPACA_SECRET_FUND = "F2ocEuxgNwjSQzM3b3oSftw5gbWrjoxSVWXHsdGSW6Td"
+  $env:ALPACA_KEY_FUND    = "YOUR_FUNDED_ACCOUNT_KEY"
+  $env:ALPACA_SECRET_FUND = "YOUR_FUNDED_ACCOUNT_SECRET"
   $env:ALPACA_BASE_URL_FUND = "https://api.alpaca.markets"  # optional when using the default
   ```
 
