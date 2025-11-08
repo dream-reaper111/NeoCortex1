@@ -163,6 +163,7 @@ DEFAULT_PUBLIC_BASE_URL = os.getenv(
     "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
 ).rstrip("/")
 
+
 # -----------------------------------------------------------------------------
 # Alpaca configuration
 #
@@ -568,7 +569,12 @@ app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True),
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
 
 
-@app.get("/ngrok/cloud-endpoint", response_class=HTMLResponse)
+@app.get("/ngrok/cloud-endpoint", res@router.get("/positions")
+async def get_positions(account: str = "paper", authorization: Optional[str] = Header(None)):
+    # your logic goes here
+    user = _auth_user(authorization)
+    positions = _get_positions_from_alpaca(user, account)
+    return _json({"ok": True, "positions": positions})ponse_class=HTMLResponse)
 def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
     """Serve a tiny HTML page that displays the tunnel webhook URL."""
 
@@ -1094,12 +1100,17 @@ async def alpaca_webhook(req: Request):
     # optional signature verification
     secret = os.getenv("ALPACA_WEBHOOK_SECRET")
     sig_header = req.headers.get("X-Webhook-Signature")
-    if secret and sig_header:
+    if secret:
+        if not sig_header:
+            return _json({"ok": False, "detail": "missing signature"}, 400)
+
         import hmac, hashlib, base64
+
         digest = hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()
         expected = base64.b64encode(digest).decode()
         if not hmac.compare_digest(expected, sig_header):
             return _json({"ok": False, "detail": "invalid signature"}, 400)
+
     # In a production system you might persist the payload to a database or
     # notify other services. Here we simply print it to stdout.
     logger.info("[Alpaca webhook] %s", json.dumps(payload, indent=2))
