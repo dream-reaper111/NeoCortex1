@@ -170,12 +170,55 @@ hashed with a salted 2048-bit PBKDF2-SHA512 digest before being persisted.
    `/positions` or `/pnl`, the API automatically prefers the stored credentials
    over environment defaults.
 
+   > **Encryption required:** set `CREDENTIALS_ENCRYPTION_KEY` to a
+   > base64-encoded 32-byte Fernet key (generate one with
+   > `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
+   > User-supplied API keys are stored encrypted at rest and cannot be persisted
+   > without this key.
+
 You can customize how the browser session cookie is issued by setting:
 
 - `SESSION_COOKIE_NAME` – defaults to `session_token`.
 - `SESSION_COOKIE_MAX_AGE` – lifetime in seconds (default 7 days).
 - `SESSION_COOKIE_SAMESITE` – defaults to `lax`.
 - `AUTH_COOKIE_SECURE` – set to `1` to require HTTPS when sending the cookie.
+
+### Whop membership onboarding
+
+If you sell access through [Whop](https://whop.com), the login screen now
+supports a "Continue with Whop" flow that verifies a member's license before
+allowing them to create local credentials and register their funding keys.
+
+1. Set the following environment variables for the API server:
+
+   - `WHOP_API_KEY` – a private token from the Whop dashboard.
+   - `WHOP_PORTAL_URL` – the URL Whop should send the user to when they need to
+     authenticate (for example your product portal). Include a `{callback}`
+     placeholder in this URL if you want the API to inject the callback URL
+     automatically, e.g. `https://whop.com/portal/your-product?redirect={callback}`.
+   - Optional: `WHOP_API_BASE` (defaults to `https://api.whop.com`) and
+     `WHOP_SESSION_TTL` (in seconds, default 900) to control how long the
+     onboarding link is valid.
+
+2. Configure Whop to redirect members back to
+   `https://<your-host>/auth/whop/callback` with a `license_key` query parameter
+   once they are authenticated. The server validates this license with Whop,
+   creates an onboarding session, and redirects the browser to the regular login
+   page with a short-lived `whop_token`.
+
+3. When the login page detects `whop_token`, it prompts the user to create a
+   username/password and provide their Alpaca funding keys in one step. The
+   backend exposes helper endpoints to support this flow:
+
+   - `GET /auth/whop/start` – sends the browser to Whop, filling in the
+     callback URL and optional `next` destination.
+   - `GET /auth/whop/session?token=...` – validates the onboarding session and
+     returns basic metadata (email and license).
+   - `POST /register/whop` – completes registration, saving encrypted API keys
+     and issuing a session cookie/bearer token.
+
+Session cookies continue to work through an ngrok tunnel so multiple clients can
+use the hosted console simultaneously.
 
 ### Webhook Verification
 

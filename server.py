@@ -8,7 +8,7 @@ _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
 import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote, urlencode
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
@@ -89,6 +89,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
 
 # added imports for Alpaca integration
 import requests
+from cryptography.fernet import Fernet, InvalidToken
 
 # ---- your model utils (import AFTER env guards) ----
 try:
@@ -411,6 +412,12 @@ SESSION_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "0").strip().lower() in 
 SESSION_COOKIE_MAX_AGE = int(os.getenv("SESSION_COOKIE_MAX_AGE", str(7 * 24 * 3600)))
 SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax") or "lax"
 
+CREDENTIALS_ENCRYPTION_KEY = (os.getenv("CREDENTIALS_ENCRYPTION_KEY") or "").strip() or None
+WHOP_API_KEY = (os.getenv("WHOP_API_KEY") or "").strip() or None
+WHOP_API_BASE = (os.getenv("WHOP_API_BASE") or "https://api.whop.com").rstrip("/")
+WHOP_PORTAL_URL = (os.getenv("WHOP_PORTAL_URL") or "").strip() or None
+WHOP_SESSION_TTL = int(os.getenv("WHOP_SESSION_TTL", "900"))
+
 
 def _db_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(str(AUTH_DB_PATH))
@@ -456,9 +463,162 @@ def _init_auth_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS whop_sessions (
+                token TEXT PRIMARY KEY,
+                license_key TEXT NOT NULL,
+                email TEXT,
+                metadata TEXT,
+                created_at TEXT NOT NULL,
+                consumed_at TEXT
+            )
+            """
+        )
 
 
 _init_auth_db()
+
+
+class CredentialEncryptionError(RuntimeError):
+    pass
+
+
+_CREDENTIALS_CIPHER: Optional[Fernet] = None
+
+
+def _credentials_cipher() -> Fernet:
+    global _CREDENTIALS_CIPHER
+    if _CREDENTIALS_CIPHER is not None:
+        return _CREDENTIALS_CIPHER
+    if not CREDENTIALS_ENCRYPTION_KEY:
+        raise CredentialEncryptionError(
+            "CREDENTIALS_ENCRYPTION_KEY must be set to store API credentials securely"
+        )
+    key = CREDENTIALS_ENCRYPTION_KEY.encode("utf-8")
+    try:
+        _CREDENTIALS_CIPHER = Fernet(key)
+    except Exception as exc:  # pragma: no cover - defensive
+        raise CredentialEncryptionError(f"Invalid CREDENTIALS_ENCRYPTION_KEY: {exc}") from exc
+    return _CREDENTIALS_CIPHER
+
+
+def _encrypt_secret(value: str) -> str:
+    if not value:
+        return value
+    cipher = _credentials_cipher()
+    token = cipher.encrypt(value.encode("utf-8")).decode("utf-8")
+    return f"enc:{token}"
+
+
+def _decrypt_secret(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    if value.startswith("enc:"):
+        token = value[4:]
+        cipher = _credentials_cipher()
+        try:
+            decrypted = cipher.decrypt(token.encode("utf-8")).decode("utf-8")
+        except InvalidToken as exc:  # pragma: no cover - data corruption safeguard
+            raise CredentialEncryptionError("Unable to decrypt stored credential") from exc
+        return decrypted
+    return value
+
+
+def _create_whop_session(license_key: str, email: Optional[str], metadata: Optional[Dict[str, Any]]) -> str:
+    token = secrets.token_urlsafe(32)
+    payload = json.dumps(metadata or {}, separators=(",", ":")) if metadata else None
+    with _db_conn() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO whop_sessions (token, license_key, email, metadata, created_at, consumed_at)
+            VALUES (?, ?, ?, ?, ?, NULL)
+            """,
+            (
+                token,
+                license_key,
+                email,
+                payload,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+    return token
+
+
+def _consume_whop_session(token: str) -> None:
+    if not token:
+        return
+    with _db_conn() as conn:
+        conn.execute(
+            "UPDATE whop_sessions SET consumed_at = ? WHERE token = ?",
+            (datetime.now(timezone.utc).isoformat(), token),
+        )
+
+
+def _get_whop_session(token: str) -> Optional[Dict[str, Any]]:
+    if not token:
+        return None
+    with _db_conn() as conn:
+        row = conn.execute(
+            "SELECT license_key, email, metadata, created_at, consumed_at FROM whop_sessions WHERE token = ?",
+            (token,),
+        ).fetchone()
+    if row is None:
+        return None
+    if row["consumed_at"]:
+        return None
+    try:
+        created_at = datetime.fromisoformat(row["created_at"])
+    except Exception:  # pragma: no cover - defensive parsing
+        return None
+    age = datetime.now(timezone.utc) - created_at
+    if age.total_seconds() > WHOP_SESSION_TTL:
+        return None
+    metadata: Dict[str, Any] = {}
+    if row["metadata"]:
+        try:
+            metadata = json.loads(row["metadata"])
+        except json.JSONDecodeError:  # pragma: no cover - defensive
+            metadata = {}
+    return {
+        "license_key": row["license_key"],
+        "email": row["email"],
+        "metadata": metadata,
+        "created_at": row["created_at"],
+    }
+
+
+def _verify_whop_license(license_key: str) -> Dict[str, Any]:
+    if not WHOP_API_KEY:
+        raise HTTPException(status_code=503, detail="Whop integration is not configured")
+    url = f"{WHOP_API_BASE}/api/v2/licenses/{license_key}"
+    headers = {
+        "Authorization": f"Bearer {WHOP_API_KEY}",
+        "Accept": "application/json",
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+    except requests.RequestException as exc:
+        logger.error("Whop license verification failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Failed to reach Whop API") from exc
+    if resp.status_code == 404:
+        raise HTTPException(status_code=401, detail="Invalid Whop license")
+    if resp.status_code >= 400:
+        logger.error("Whop API responded with %s: %s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail="Whop API rejected the request")
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="Malformed response from Whop API") from exc
+    status = str(data.get("status") or data.get("state") or "").lower()
+    if status not in {"active", "trialing", "paid"}:
+        raise HTTPException(status_code=403, detail="Whop license is not active")
+    email = (
+        data.get("email")
+        or data.get("user", {}).get("email")
+        or data.get("customer", {}).get("email")
+    )
+    return {"license_key": license_key, "email": email, "raw": data}
 
 
 def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
@@ -552,6 +712,8 @@ def _save_user_credentials(
     api_secret: str,
     base_url: Optional[str],
 ) -> None:
+    stored_key = _encrypt_secret(api_key)
+    stored_secret = _encrypt_secret(api_secret)
     with _db_conn() as conn:
         conn.execute(
             """
@@ -566,8 +728,8 @@ def _save_user_credentials(
             (
                 user_id,
                 account_type,
-                api_key,
-                api_secret,
+                stored_key,
+                stored_secret,
                 base_url,
                 datetime.now(timezone.utc).isoformat(),
             ),
@@ -656,6 +818,8 @@ def _save_user_credentials(
     api_secret: str,
     base_url: Optional[str],
 ) -> None:
+    stored_key = _encrypt_secret(api_key)
+    stored_secret = _encrypt_secret(api_secret)
     with _db_conn() as conn:
         conn.execute(
             """
@@ -670,8 +834,8 @@ def _save_user_credentials(
             (
                 user_id,
                 account_type,
-                api_key,
-                api_secret,
+                stored_key,
+                stored_secret,
                 base_url,
                 datetime.now(timezone.utc).isoformat(),
             ),
@@ -686,9 +850,15 @@ def _resolve_alpaca_credentials(account: str, user_id: Optional[int]) -> Dict[st
             base_url = row["base_url"] or (
                 ALPACA_BASE_URL_FUND if account_type == "funded" else ALPACA_BASE_URL_PAPER
             )
+            try:
+                key = _decrypt_secret(row["api_key"])
+                secret = _decrypt_secret(row["api_secret"])
+            except CredentialEncryptionError as exc:
+                logger.error("Failed to decrypt stored credentials for user %s", user_id)
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
             return {
-                "key": row["api_key"],
-                "secret": row["api_secret"],
+                "key": key,
+                "secret": secret,
                 "base_url": base_url,
             }
     if account_type == "funded":
@@ -980,6 +1150,16 @@ class CredentialReq(BaseModel):
     base_url: Optional[str] = None
 
 
+class WhopRegistrationReq(BaseModel):
+    token: str
+    username: str
+    password: str
+    api_key: str
+    api_secret: str
+    account_type: Literal["paper", "funded"] = "funded"
+    base_url: Optional[str] = None
+
+
 class AlpacaWebhookTest(BaseModel):
     symbol: str = "SPY"
     quantity: float = 1.0
@@ -1002,6 +1182,131 @@ class PaperTradeOrderRequest(BaseModel):
     strike: Optional[float] = Field(default=None, ge=0)
     future_month: Optional[str] = None
     future_year: Optional[int] = Field(default=None, ge=2000, le=2100)
+
+
+@app.get("/auth/whop/start")
+async def whop_start(request: Request, next: Optional[str] = None):
+    if not WHOP_PORTAL_URL:
+        raise HTTPException(status_code=404, detail="Whop integration is not configured")
+    callback_url = str(request.url_for("whop_callback"))
+    params: Dict[str, str] = {}
+    if next:
+        next = next.strip()
+        if next.startswith("/"):
+            params["next"] = next
+    if params:
+        callback_url = f"{callback_url}?{urlencode(params)}"
+    encoded_callback = quote(callback_url, safe="")
+    destination = WHOP_PORTAL_URL
+    if "{{callback}}" in destination:
+        destination = destination.replace("{{callback}}", encoded_callback)
+    if "{callback}" in destination:
+        destination = destination.replace("{callback}", encoded_callback)
+    if destination == WHOP_PORTAL_URL:
+        sep = "&" if "?" in destination else "?"
+        destination = f"{destination}{sep}callback={encoded_callback}"
+    return RedirectResponse(destination)
+
+
+@app.get("/auth/whop/callback")
+async def whop_callback(
+    request: Request,
+    license_key: Optional[str] = None,
+    state: Optional[str] = None,
+    next: Optional[str] = None,
+):
+    license_key = (license_key or "").strip()
+    if not license_key:
+        raise HTTPException(status_code=400, detail="license_key is required")
+    verification = _verify_whop_license(license_key)
+    metadata = {
+        "state": state,
+        "verification": verification.get("raw"),
+    }
+    token = _create_whop_session(license_key, verification.get("email"), metadata)
+    query: Dict[str, str] = {"whop_token": token}
+    next_param = (next or "").strip()
+    if next_param and next_param.startswith("/"):
+        query["next"] = next_param
+    redirect_url = str(request.url_for("login_page"))
+    redirect_url = f"{redirect_url}?{urlencode(query)}"
+    return RedirectResponse(redirect_url)
+
+
+@app.get("/auth/whop/session")
+async def whop_session(token: str):
+    session = _get_whop_session(token.strip())
+    if not session:
+        return _json({"ok": False, "detail": "Invalid or expired Whop session"}, 404)
+    return _json(
+        {
+            "ok": True,
+            "license_key": session["license_key"],
+            "email": session.get("email"),
+            "created_at": session["created_at"],
+        }
+    )
+
+
+@app.post("/register/whop")
+async def register_whop(req: WhopRegistrationReq):
+    token = (req.token or "").strip()
+    session = _get_whop_session(token)
+    if not session:
+        return _json({"ok": False, "detail": "Whop session expired or invalid"}, 400)
+    uname = req.username.strip().lower()
+    if not uname or not req.password:
+        return _json({"ok": False, "detail": "username and password required"}, 400)
+    api_key = req.api_key.strip()
+    api_secret = req.api_secret.strip()
+    if not api_key or not api_secret:
+        return _json({"ok": False, "detail": "api_key and api_secret are required"}, 400)
+    acct_type = (req.account_type or "funded").strip().lower()
+    if acct_type not in {"paper", "funded"}:
+        return _json({"ok": False, "detail": "account_type must be 'paper' or 'funded'"}, 400)
+    base_url = (req.base_url or "").strip()
+    if not base_url:
+        base_url = ALPACA_BASE_URL_FUND if acct_type == "funded" else ALPACA_BASE_URL_PAPER
+    pw_hash, salt = _hash_password_sha2048(req.password)
+    try:
+        with _db_conn() as conn:
+            cursor = conn.execute(
+                "INSERT INTO users (username, password_hash, salt, created_at) VALUES (?, ?, ?, ?)",
+                (uname, pw_hash, salt, datetime.now(timezone.utc).isoformat()),
+            )
+            user_id = cursor.lastrowid
+    except sqlite3.IntegrityError:
+        return _json({"ok": False, "detail": "username already exists"}, 400)
+    try:
+        _save_user_credentials(user_id, acct_type, api_key, api_secret, base_url)
+    except CredentialEncryptionError as exc:
+        logger.error("Failed to store credentials for new Whop user %s", user_id)
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return _json({"ok": False, "detail": str(exc)}, 500)
+    _consume_whop_session(token)
+    session_token = _create_session_token(user_id)
+    resp = _json(
+        {
+            "ok": True,
+            "token": session_token,
+            "username": uname,
+            "session_cookie": SESSION_COOKIE_NAME,
+            "account_type": acct_type,
+            "base_url": base_url,
+        }
+    )
+    resp.set_cookie(
+        SESSION_COOKIE_NAME,
+        session_token,
+        httponly=True,
+        secure=SESSION_COOKIE_SECURE,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        samesite=SESSION_COOKIE_SAMESITE,
+        path="/",
+    )
+    return resp
+
 
 @app.post("/register")
 async def register(request: Request):
@@ -1094,15 +1399,21 @@ async def list_alpaca_credentials(
             """,
             (user["id"],),
         ).fetchall()
-    credentials = [
-        {
-            "account_type": row["account_type"],
-            "api_key": row["api_key"],
-            "base_url": row["base_url"],
-            "updated_at": row["updated_at"],
-        }
-        for row in rows
-    ]
+    credentials = []
+    for row in rows:
+        try:
+            api_key = _decrypt_secret(row["api_key"])
+        except CredentialEncryptionError as exc:
+            logger.error("Failed to decrypt stored credentials for user %s", user["id"])
+            return _json({"ok": False, "detail": str(exc)}, 500)
+        credentials.append(
+            {
+                "account_type": row["account_type"],
+                "api_key": api_key,
+                "base_url": row["base_url"],
+                "updated_at": row["updated_at"],
+            }
+        )
     return _json({"ok": True, "credentials": credentials})
 
 
@@ -1124,7 +1435,11 @@ async def set_alpaca_credentials(
     base_url = (req.base_url or "").strip()
     if not base_url:
         base_url = ALPACA_BASE_URL_FUND if acct_type == "funded" else ALPACA_BASE_URL_PAPER
-    _save_user_credentials(user["id"], acct_type, api_key, api_secret, base_url)
+    try:
+        _save_user_credentials(user["id"], acct_type, api_key, api_secret, base_url)
+    except CredentialEncryptionError as exc:
+        logger.error("Failed to persist credentials for user %s", user["id"])
+        return _json({"ok": False, "detail": str(exc)}, 500)
     return _json({"ok": True, "account_type": acct_type, "base_url": base_url})
 
 # --- account data: positions and P&L ---
