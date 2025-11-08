@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 # ---- Torch compile guards (before any torch/model import) ----
@@ -15,8 +15,11 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -58,12 +61,108 @@ LIQUIDITY_ASSETS = LIQUIDITY_DIR / "assets"
 LIQUIDITY_ASSETS.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
+
 LOGIN_PAGE = PUBLIC_DIR / "login.html"
+
+ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
+ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
+
 NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
 try:
     NGROK_ENDPOINT_TEMPLATE = NGROK_ENDPOINT_TEMPLATE_PATH.read_text(encoding="utf-8")
 except FileNotFoundError:
-    NGROK_ENDPOINT_TEMPLATE = """<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: {{WEBHOOK_URL}}</p></body></html>"""
+    NGROK_ENDPOINT_TEMPLATE = (
+        "<!doctype html><html><body><h1>ngrok endpoint</h1>"
+        "<p>Webhook URL: {{WEBHOOK_URL}}</p></body></html>"
+    )
+# ---------
+
+NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
+try:
+    NGROK_ENDPOINT_TEMPLATE = NGROK_ENDPOINT_TEMPLATE_PATH.read_text(encoding="utf-8")
+except FileNotFoundError:
+    NGROK_ENDPOINT_TEMPLATE = (
+        "<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: {{WEBHOOK_URL}}</p></body></html>"
+    )
+
+ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
+ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
+
+ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
+ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
+
+NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
+
+
+def _load_ngrok_template(path: Path) -> str:
+    """Best-effort loader for the ngrok cloud endpoint HTML template."""
+
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # Fall back to a tiny inline page so the endpoint still renders
+        # something useful even if the repository asset is missing.
+        return (
+            "<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: "
+            "{{WEBHOOK_URL}}</p></body></html>"
+        )
+
+
+NGROK_ENDPOINT_TEMPLATE = _load_ngrok_template(NGROK_ENDPOINT_TEMPLATE_PATH)
+
+ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
+ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
+
+NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
+
+
+def _load_ngrok_template(path: Path) -> str:
+    """Best-effort loader for the ngrok cloud endpoint HTML template."""
+
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # Fall back to a tiny inline page so the endpoint still renders
+        # something useful even if the repository asset is missing.
+        return (
+            "<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: "
+            "{{WEBHOOK_URL}}</p></body></html>"
+        )
+
+
+NGROK_ENDPOINT_TEMPLATE = _load_ngrok_template(NGROK_ENDPOINT_TEMPLATE_PATH)
+
+ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
+ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
+
+NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
+
+
+def _load_ngrok_template(path: Path) -> str:
+    """Best-effort loader for the ngrok cloud endpoint HTML template."""
+
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # Fall back to a tiny inline page so the endpoint still renders
+        # something useful even if the repository asset is missing.
+        return (
+            "<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: "
+            "{{WEBHOOK_URL}}</p></body></html>"
+        )
+
+
+NGROK_ENDPOINT_TEMPLATE = _load_ngrok_template(NGROK_ENDPOINT_TEMPLATE_PATH)
+
+DEFAULT_PUBLIC_BASE_URL = os.getenv(
+    "DEFAULT_PUBLIC_BASE_URL",
+    "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
+).rstrip("/")
+
+DEFAULT_PUBLIC_BASE_URL = os.getenv(
+    "DEFAULT_PUBLIC_BASE_URL",
+    "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
+).rstrip("/")
 
 DEFAULT_PUBLIC_BASE_URL = os.getenv(
     "DEFAULT_PUBLIC_BASE_URL",
@@ -283,6 +382,110 @@ def _save_user_credentials(
         )
 
 
+def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    """Derive a 2048-bit PBKDF2-SHA512 digest and return ``(hash_hex, salt_hex)``."""
+    if salt is None:
+        salt = secrets.token_hex(32)
+    salt_bytes = bytes.fromhex(salt)
+    derived = hashlib.pbkdf2_hmac(
+        "sha512",
+        password.encode("utf-8"),
+        salt_bytes,
+        200_000,
+        dklen=256,
+    )
+    return derived.hex(), salt
+
+
+def _create_session_token(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    with _db_conn() as conn:
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
+            (token, user_id, datetime.now(timezone.utc).isoformat()),
+        )
+    return token
+
+
+def _authorization_token(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    header = authorization.strip()
+    if not header:
+        return None
+    parts = header.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return header
+
+
+def _user_from_token(token: str) -> Optional[sqlite3.Row]:
+    if not token:
+        return None
+    with _db_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id, u.username
+            FROM sessions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.token = ?
+            """,
+            (token,),
+        ).fetchone()
+    return row
+
+
+def _require_user(authorization: Optional[str]) -> sqlite3.Row:
+    token = _authorization_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="authorization required")
+    user = _user_from_token(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="invalid or expired token")
+    return user
+
+
+def _fetch_user_credentials(user_id: int, account_type: str) -> Optional[sqlite3.Row]:
+    with _db_conn() as conn:
+        return conn.execute(
+            """
+            SELECT api_key, api_secret, base_url
+            FROM alpaca_credentials
+            WHERE user_id = ? AND account_type = ?
+            """,
+            (user_id, account_type),
+        ).fetchone()
+
+
+def _save_user_credentials(
+    user_id: int,
+    account_type: str,
+    api_key: str,
+    api_secret: str,
+    base_url: Optional[str],
+) -> None:
+    with _db_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO alpaca_credentials (user_id, account_type, api_key, api_secret, base_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, account_type) DO UPDATE SET
+                api_key = excluded.api_key,
+                api_secret = excluded.api_secret,
+                base_url = excluded.base_url,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                account_type,
+                api_key,
+                api_secret,
+                base_url,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
 def _resolve_alpaca_credentials(account: str, user_id: Optional[int]) -> Dict[str, Optional[str]]:
     account_type = (account or "paper").strip().lower()
     if user_id is not None:
@@ -374,6 +577,21 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
+app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
+
+
+@app.get("/ngrok/cloud-endpoint", response_class=HTMLResponse)
+def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
+    """Serve a tiny HTML page that displays the tunnel webhook URL."""
+
+    base_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{base_url}/alpaca/webhook"
+
+    html = (
+        NGROK_ENDPOINT_TEMPLATE.replace("{{WEBHOOK_URL}}", webhook_url)
+        .replace("{{WEBHOOK_HOST}}", base_url)
+    )
+    return HTMLResponse(html, headers=_nocache())
 
 # ---------- normalizers ----------
 def standardize_ohlcv(raw: pd.DataFrame, ticker: Optional[str]=None) -> pd.DataFrame:
@@ -660,6 +878,57 @@ async def set_alpaca_credentials(
     _save_user_credentials(user["id"], acct_type, api_key, api_secret, base_url)
     return _json({"ok": True, "account_type": acct_type, "base_url": base_url})
 
+        return _json({"ok": False, "detail": "invalid credentials"}, 401)
+    expected_hash, _ = _hash_password_sha2048(req.password, row["salt"])
+    if expected_hash != row["password_hash"]:
+        return _json({"ok": False, "detail": "invalid credentials"}, 401)
+    token = _create_session_token(row["id"])
+    return _json({"ok": True, "token": token, "username": uname})
+
+
+@app.get("/alpaca/credentials")
+async def list_alpaca_credentials(authorization: Optional[str] = Header(None)):
+    """Return the Alpaca credential entries associated with the authenticated user."""
+    user = _require_user(authorization)
+    with _db_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT account_type, api_key, base_url, updated_at
+            FROM alpaca_credentials
+            WHERE user_id = ?
+            ORDER BY account_type
+            """,
+            (user["id"],),
+        ).fetchall()
+    credentials = [
+        {
+            "account_type": row["account_type"],
+            "api_key": row["api_key"],
+            "base_url": row["base_url"],
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
+    return _json({"ok": True, "credentials": credentials})
+
+
+@app.post("/alpaca/credentials")
+async def set_alpaca_credentials(req: CredentialReq, authorization: Optional[str] = Header(None)):
+    """Create or update Alpaca API credentials for the authenticated user."""
+    user = _require_user(authorization)
+    acct_type = (req.account_type or "paper").strip().lower()
+    if acct_type not in {"paper", "funded"}:
+        return _json({"ok": False, "detail": "account_type must be 'paper' or 'funded'"}, 400)
+    api_key = req.api_key.strip()
+    api_secret = req.api_secret.strip()
+    if not api_key or not api_secret:
+        return _json({"ok": False, "detail": "api_key and api_secret are required"}, 400)
+    base_url = (req.base_url or "").strip()
+    if not base_url:
+        base_url = ALPACA_BASE_URL_FUND if acct_type == "funded" else ALPACA_BASE_URL_PAPER
+    _save_user_credentials(user["id"], acct_type, api_key, api_secret, base_url)
+    return _json({"ok": True, "account_type": acct_type, "base_url": base_url})
+
 # --- account data: positions and P&L ---
 @app.get("/positions")
 async def get_positions(
@@ -667,6 +936,8 @@ async def get_positions(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
+
+async def get_positions(account: str = "paper", authorization: Optional[str] = Header(None)):
     """
     Fetch the current positions for the specified Alpaca account. The
     ``account`` parameter selects either the paper or funded account. Environment
@@ -679,6 +950,7 @@ async def get_positions(
     acct_type = (account or "paper").lower()
     user = None
     token = _authorization_token(authorization) or session_token
+    token = _authorization_token(authorization)
     if token:
         user = _user_from_token(token)
         if user is None:
@@ -707,6 +979,8 @@ async def get_pnl(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
+
+async def get_pnl(account: str = "paper", authorization: Optional[str] = Header(None)):
     """
     Compute unrealized P&L for the positions held in an Alpaca account. This
     endpoint fetches the open positions from Alpaca and sums the ``unrealized_pl``
@@ -718,6 +992,8 @@ async def get_pnl(
     acct_type = (account or "paper").lower()
     user = None
     token = _authorization_token(authorization) or session_token
+
+    token = _authorization_token(authorization)
     if token:
         user = _user_from_token(token)
         if user is None:
@@ -875,6 +1151,34 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
             "default_webhook_url": f"{DEFAULT_PUBLIC_BASE_URL}/alpaca/webhook",
         }
     )
+
+
+@app.get("/alpaca/webhook/tests")
+def alpaca_webhook_tests():
+    """Return recently generated Alpaca webhook test artifacts."""
+    tests = []
+    for file_path in sorted(ALPACA_TEST_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            payload = json.loads(file_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        symbol = (
+            (payload.get("order") or {}).get("symbol")
+            or payload.get("symbol")
+            or payload.get("ticker")
+            or ""
+        )
+        stat = file_path.stat()
+        tests.append(
+            {
+                "name": file_path.name,
+                "symbol": symbol,
+                "created": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                "size": stat.st_size,
+                "url": f"/public/{file_path.relative_to(PUBLIC_DIR)}",
+            }
+        )
+    return _json({"ok": True, "tests": tests})
 
 # --- ingestion: TradingView (signals + bars optional) ---
 @app.post("/webhook/tradingview")

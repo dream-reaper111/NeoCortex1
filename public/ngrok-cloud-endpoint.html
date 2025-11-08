@@ -1,4 +1,133 @@
 <!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Alpaca Webhook Endpoint</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 2.5rem 1.5rem 3rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 10% 20%, rgba(63,94,251,0.15), transparent 55%),
+                    radial-gradient(circle at 90% 10%, rgba(252,70,107,0.15), transparent 55%),
+                    radial-gradient(circle at 50% 80%, rgba(56,189,248,0.12), transparent 60%),
+                    #0f172a;
+        min-height: 100vh;
+      }
+      .card {
+        width: min(680px, 100%);
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 18px;
+        padding: 2.25rem;
+        box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.5);
+        backdrop-filter: blur(14px);
+        color: #e2e8f0;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: clamp(1.6rem, 4vw, 2.4rem);
+        letter-spacing: 0.02em;
+      }
+      p.description {
+        font-size: 1rem;
+        line-height: 1.55;
+        color: rgba(226, 232, 240, 0.8);
+        margin-bottom: 1.75rem;
+      }
+      .url-block {
+        background: rgba(15, 23, 42, 0.75);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 14px;
+        padding: 1.2rem 1.4rem;
+        margin-bottom: 1.6rem;
+        word-break: break-all;
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.95rem;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      .actions a {
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        color: #f8fafc;
+        padding: 0.75rem 1.3rem;
+        border-radius: 999px;
+        font-weight: 600;
+        box-shadow: 0 12px 25px -12px rgba(99, 102, 241, 0.6);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      .actions a:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 20px 35px -18px rgba(99, 102, 241, 0.75);
+      }
+      footer {
+        margin-top: 2rem;
+        font-size: 0.85rem;
+        color: rgba(148, 163, 184, 0.75);
+      }
+      @media (max-width: 540px) {
+        body {
+          padding: 1.5rem 1rem;
+        }
+        .card {
+          padding: 1.75rem;
+        }
+        .url-block {
+          font-size: 0.9rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Alpaca Webhook Ready</h1>
+      <p class="description">
+        Share this URL with the Alpaca dashboard so trade and account events are securely forwarded to your local service.
+      </p>
+      <div class="url-block" id="webhook-url">{{WEBHOOK_URL}}</div>
+      <div class="actions">
+        <a href="{{WEBHOOK_URL}}" target="_blank" rel="noopener noreferrer">Open Webhook Endpoint</a>
+        <a href="/ui/enduserapp/" target="_blank" rel="noopener noreferrer">Launch Webhook Console</a>
+      </div>
+      <footer>
+        Exposing a tunnel from <span id="webhook-host">{{WEBHOOK_HOST}}</span>. Keep this page private—anyone with the URL can reach your callback endpoint.
+      </footer>
+    </main>
+    <script>
+      const url = document.getElementById('webhook-url');
+      const host = document.getElementById('webhook-host');
+      if (url && url.textContent) {
+        url.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(url.textContent.trim());
+            url.style.boxShadow = '0 0 0 2px rgba(148, 163, 184, 0.5)';
+            setTimeout(() => (url.style.boxShadow = ''), 1200);
+          } catch (err) {
+            console.warn('clipboard copy failed', err);
+          }
+        });
+      }
+      if (host && host.textContent) {
+        const base = window.location.origin;
+        host.textContent = base;
+      }
+    </script>
+  </body>
+  
 <html>
 <head>
 <meta charset="UTF-8" />
@@ -188,5 +317,5 @@ p {
     </a>
   </div>
 </div>
-</body>
+  </body>
 </html>
