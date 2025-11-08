@@ -62,7 +62,9 @@
                 }
 
                 input[type="text"],
-                input[type="password"] {
+                input[type="password"],
+                input[type="url"],
+                select {
                         width: 100%;
                         padding: 10px 12px;
                         border-radius: 10px;
@@ -77,6 +79,19 @@
                 input:focus {
                         border-color: rgba(59, 130, 246, 0.85);
                         box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+                }
+
+                select {
+                        appearance: none;
+                        -webkit-appearance: none;
+                        -moz-appearance: none;
+                        background-image: linear-gradient(45deg, transparent 50%, rgba(230, 237, 246, 0.75) 50%),
+                                linear-gradient(135deg, rgba(230, 237, 246, 0.75) 50%, transparent 50%),
+                                linear-gradient(to right, rgba(7, 11, 19, 0.85), rgba(7, 11, 19, 0.85));
+                        background-position: calc(100% - 16px) calc(50% - 3px), calc(100% - 11px) calc(50% - 3px), 100% 0;
+                        background-size: 5px 5px, 5px 5px, 3.2rem 100%;
+                        background-repeat: no-repeat;
+                        padding-right: 42px;
                 }
 
                 button {
@@ -110,6 +125,13 @@
                         color: var(--text);
                 }
 
+                .secondary.whop {
+                        border-style: dashed;
+                        border-color: rgba(59, 130, 246, 0.55);
+                        background: rgba(16, 23, 38, 0.6);
+                        margin-top: 10px;
+                }
+
                 .message {
                         margin-top: 18px;
                         min-height: 24px;
@@ -118,6 +140,47 @@
 
                 .message.error { color: var(--danger); }
                 .message.success { color: var(--success); }
+
+                .notice {
+                        margin: 0 0 18px;
+                        padding: 12px 14px;
+                        border-radius: 10px;
+                        border: 1px solid rgba(59, 130, 246, 0.4);
+                        background: rgba(16, 23, 38, 0.8);
+                        color: var(--text);
+                        font-size: 13px;
+                        line-height: 1.45;
+                }
+
+                .notice.error {
+                        border-color: rgba(255, 77, 79, 0.55);
+                        background: rgba(130, 30, 40, 0.35);
+                }
+
+                .notice.success {
+                        border-color: rgba(46, 204, 113, 0.55);
+                        background: rgba(23, 88, 52, 0.4);
+                }
+
+                .whop-extras {
+                        margin-top: 8px;
+                        padding: 12px;
+                        border-radius: 12px;
+                        border: 1px solid rgba(59, 130, 246, 0.25);
+                        background: rgba(11, 17, 29, 0.85);
+                }
+
+                .whop-extras h2 {
+                        margin: 0 0 8px;
+                        font-size: 13px;
+                        letter-spacing: 0.4px;
+                        text-transform: uppercase;
+                        color: rgba(147, 167, 195, 0.95);
+                }
+
+                .whop-extras label {
+                        margin-top: 8px;
+                }
 
                 .fine-print {
                         margin-top: 24px;
@@ -131,14 +194,30 @@
         <div class="card">
                 <h1>Neo Cortex AI</h1>
                 <p class="subtitle">Sign in to access the trading dashboard and manage your Alpaca keys.</p>
+                <div id="whopNotice" class="notice" hidden></div>
                 <form id="loginForm">
                         <label for="username">Username</label>
                         <input id="username" name="username" type="text" autocomplete="username" placeholder="yourname" required />
                         <label for="password">Password</label>
                         <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+                        <div id="whopExtras" class="whop-extras" hidden>
+                                <h2>Funding Credentials</h2>
+                                <label for="accountType">Account Type</label>
+                                <select id="accountType" name="accountType">
+                                        <option value="funded">Funded (live)</option>
+                                        <option value="paper">Paper</option>
+                                </select>
+                                <label for="apiKey">Alpaca API Key</label>
+                                <input id="apiKey" name="apiKey" type="text" autocomplete="off" placeholder="PK..." />
+                                <label for="apiSecret">Alpaca API Secret</label>
+                                <input id="apiSecret" name="apiSecret" type="password" autocomplete="off" placeholder="SK..." />
+                                <label for="baseUrl">API Base URL (optional)</label>
+                                <input id="baseUrl" name="baseUrl" type="url" placeholder="https://api.alpaca.markets" />
+                        </div>
                         <button type="submit" id="loginBtn">Sign In</button>
                 </form>
                 <button type="button" class="secondary" id="registerBtn">Create Account</button>
+                <button type="button" class="secondary whop" id="whopBtn">Continue with Whop</button>
                 <div id="message" class="message"></div>
                 <div class="fine-print">Passwords are hashed with PBKDF2-SHA512 and never stored in plain text.</div>
         </div>
@@ -148,7 +227,21 @@
                 const USERNAME_KEY = 'nc_user';
                 const COOKIE_NAME_KEY = 'nc_cookie';
                 const params = new URLSearchParams(window.location.search);
-                const nextUrl = params.get('next') || '/dashboard';
+
+                function resolveNext(candidate) {
+                        if (!candidate) { return '/dashboard'; }
+                        try {
+                                const parsed = new URL(candidate, window.location.origin);
+                                if (parsed.origin !== window.location.origin) {
+                                        return '/dashboard';
+                                }
+                                return parsed.pathname + parsed.search + parsed.hash;
+                        } catch (_) {
+                                return '/dashboard';
+                        }
+                }
+
+                const nextUrl = resolveNext(params.get('next'));
 
                 if (localStorage.getItem(TOKEN_KEY)) {
                         window.location.replace(nextUrl);
@@ -163,10 +256,29 @@
                 const passwordEl = document.getElementById('password');
                 const loginBtn = document.getElementById('loginBtn');
                 const registerBtn = document.getElementById('registerBtn');
+                const whopBtn = document.getElementById('whopBtn');
+                const whopNotice = document.getElementById('whopNotice');
+                const whopExtras = document.getElementById('whopExtras');
+                const accountTypeEl = document.getElementById('accountType');
+                const apiKeyEl = document.getElementById('apiKey');
+                const apiSecretEl = document.getElementById('apiSecret');
+                const baseUrlEl = document.getElementById('baseUrl');
 
                 function setMessage(text, type) {
                         messageEl.textContent = text || '';
                         messageEl.className = 'message' + (type ? ' ' + type : '');
+                }
+
+                function showWhopNotice(text, type) {
+                        if (!text) {
+                                whopNotice.textContent = '';
+                                whopNotice.className = 'notice';
+                                whopNotice.hidden = true;
+                                return;
+                        }
+                        whopNotice.textContent = text;
+                        whopNotice.className = 'notice' + (type ? ' ' + type : '');
+                        whopNotice.hidden = false;
                 }
 
                 async function sendAuth(path, body) {
@@ -184,6 +296,52 @@
                                 throw new Error(data.detail || data.reason || 'Request failed');
                         }
                         return data;
+                }
+
+                const whopToken = params.get('whop_token');
+                let whopMode = false;
+                let whopSessionValid = true;
+
+                if (whopToken) {
+                        whopMode = true;
+                        whopExtras.hidden = false;
+                        registerBtn.textContent = 'Complete Whop Registration';
+                        registerBtn.dataset.mode = 'whop';
+                        registerBtn.disabled = true;
+                        if (whopBtn) { whopBtn.style.display = 'none'; }
+                        showWhopNotice('Verifying your Whop membership…');
+                        (async () => {
+                                try {
+                                        const resp = await fetch(`/auth/whop/session?token=${encodeURIComponent(whopToken)}`, {
+                                                credentials: 'include'
+                                        });
+                                        const data = await resp.json();
+                                        if (!resp.ok || !data.ok) {
+                                                whopSessionValid = false;
+                                                showWhopNotice(data.detail || 'Unable to verify your Whop session. Please restart from Whop.', 'error');
+                                                return;
+                                        }
+                                        const email = data.email || '';
+                                        const greeting = email ? `Welcome, ${email}!` : 'Whop membership verified!';
+                                        showWhopNotice(`${greeting} Complete your funding credentials to finish setup.`, 'success');
+                                        if (email && !usernameEl.value) {
+                                                usernameEl.value = email.split('@')[0];
+                                        }
+                                        whopSessionValid = true;
+                                        registerBtn.disabled = false;
+                                } catch (err) {
+                                        console.error(err);
+                                        whopSessionValid = false;
+                                        showWhopNotice('Unable to verify your Whop membership. Please restart from Whop.', 'error');
+                                }
+                        })();
+                }
+
+                if (whopBtn) {
+                        whopBtn.addEventListener('click', () => {
+                                const dest = '/auth/whop/start?next=' + encodeURIComponent(nextUrl);
+                                window.location.href = dest;
+                        });
                 }
 
                 document.getElementById('loginForm').addEventListener('submit', async (event) => {
@@ -208,7 +366,8 @@
                                 setMessage(err.message || 'Login failed', 'error');
                         } finally {
                                 loginBtn.disabled = false;
-                                registerBtn.disabled = false;
+                                const lockRegister = registerBtn.dataset.mode === 'whop' && !whopSessionValid;
+                                registerBtn.disabled = lockRegister;
                         }
                 });
 
@@ -219,6 +378,48 @@
                                 setMessage('Choose a username and password before creating an account.', 'error');
                                 return;
                         }
+                        if (registerBtn.dataset.mode === 'whop') {
+                                if (!whopSessionValid) {
+                                        setMessage('Your Whop session has expired. Start again from Whop.', 'error');
+                                        return;
+                                }
+                                const apiKey = apiKeyEl.value.trim();
+                                const apiSecret = apiSecretEl.value.trim();
+                                const baseUrl = baseUrlEl.value.trim();
+                                if (!apiKey || !apiSecret) {
+                                        setMessage('Enter your Alpaca API key and secret to continue.', 'error');
+                                        return;
+                                }
+                                registerBtn.disabled = true;
+                                loginBtn.disabled = true;
+                                setMessage('Linking your Whop membership…');
+                                try {
+                                        const payload = {
+                                                token: whopToken,
+                                                username,
+                                                password,
+                                                api_key: apiKey,
+                                                api_secret: apiSecret,
+                                                account_type: (accountTypeEl.value || 'funded').toLowerCase(),
+                                        };
+                                        if (baseUrl) {
+                                                payload.base_url = baseUrl;
+                                        }
+                                        const data = await sendAuth('/register/whop', payload);
+                                        localStorage.setItem(TOKEN_KEY, data.token);
+                                        localStorage.setItem(USERNAME_KEY, data.username || username);
+                                        localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
+                                        setMessage('Welcome aboard! Redirecting…', 'success');
+                                        window.location.replace(nextUrl);
+                                } catch (err) {
+                                        setMessage(err.message || 'Whop registration failed', 'error');
+                                } finally {
+                                        registerBtn.disabled = false;
+                                        loginBtn.disabled = false;
+                                }
+                                return;
+                        }
+
                         registerBtn.disabled = true;
                         loginBtn.disabled = true;
                         setMessage('Creating account…');

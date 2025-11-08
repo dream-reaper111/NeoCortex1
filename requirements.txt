@@ -16,6 +16,7 @@ python-dotenv
 python-dotenv>=1.0
 requests
 requests>=2.31
+cryptography
 scikit-learn
 torch
 uvicorn[standard]
