@@ -88,7 +88,10 @@ python run_with_ngrok.py
 
 The script prints a public URL (e.g. `https://1234.ngrok.io`). Use this URL
 to access your API externally. For Alpaca webhooks, append `/alpaca/webhook` to
-that URL and configure it in your Alpaca dashboard.
+that URL and configure it in your Alpaca dashboard. By default the script
+requests the reserved domain `neocortex.internal`; if your ngrok account does
+not have that domain available the script automatically falls back to a random
+subdomain and prints a warning.
 
 By default the helper script attempts to use the reserved ngrok domain
 `tamara-unleavened-nonpromiscuously.ngrok-free.dev`. If that domain is not
@@ -103,6 +106,10 @@ Security hardening options:
   public tunnel.
 - `NGROK_ALLOWED_CIDRS="198.51.100.0/24,203.0.113.5/32"` restricts inbound
   IP ranges.
+
+- `NGROK_DOMAIN=custom.ngrok-free.app` overrides the default
+  `neocortex.internal` reservation (requires an ngrok plan that supports
+  reserved domains).
 - `NGROK_DOMAIN=custom.ngrok-free.app` requests a reserved domain (requires an
   ngrok plan that supports it). Set it to an empty string to use a random
   ngrok hostname instead of the default reserved domain.
