@@ -26,6 +26,10 @@ Note: This script blocks until the server shuts down. To stop, press Ctrl+C.
 """
 
 import os
+from urllib.parse import urlparse
+
+DEFAULT_NGROK_AUTH_TOKEN = "33aDTBUq8xRsoeabQ5HE1rWk0U3_3hvYA6JV8MPegF1DyXMAT"
+DEFAULT_NGROK_DOMAIN = "http://neocortex.internal/"
 
 from dotenv import load_dotenv
 from pyngrok import ngrok
@@ -42,11 +46,32 @@ except Exception as e:
         f"Original error: {e}"
     ) from e
 
+def _normalize_domain(raw: str | None) -> str:
+    """Return an ngrok-compatible domain string without protocol or slashes."""
+
+    if not raw:
+        return ""
+
+    cleaned = raw.strip()
+    if not cleaned:
+        return ""
+
+    if "://" in cleaned:
+        parsed = urlparse(cleaned)
+        host = parsed.netloc or parsed.path
+    else:
+        host = cleaned
+
+    return host.strip().strip("/")
+
+
 def main() -> None:
     load_dotenv(override=False)
     # read port and auth token from environment
     port = int(os.getenv("API_PORT", "8000"))
     auth_token = os.getenv("NGROK_AUTH_TOKEN")
+    if not auth_token:
+        auth_token = DEFAULT_NGROK_AUTH_TOKEN
     if auth_token:
         ngrok.set_auth_token(auth_token)
 
@@ -54,7 +79,7 @@ def main() -> None:
     basic_auth = os.getenv("NGROK_BASIC_AUTH")
     if basic_auth:
         connect_kwargs["basic_auth"] = basic_auth
-    domain = os.getenv("NGROK_DOMAIN")
+    domain = _normalize_domain(os.getenv("NGROK_DOMAIN") or DEFAULT_NGROK_DOMAIN)
     if domain:
         connect_kwargs["domain"] = domain
     allow_cidrs = [cidr.strip() for cidr in (os.getenv("NGROK_ALLOWED_CIDRS") or "").split(",") if cidr.strip()]

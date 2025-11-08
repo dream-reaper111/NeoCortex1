@@ -21,9 +21,8 @@ display account positions and unrealized P&L from Alpaca Markets.
 - `requirements.txt` – Dependency list. Includes `pyngrok` for ngrok
   integration. **Important:** To use the GPU, install a PyTorch wheel that
   matches your CUDA version. See below.
-- `enduser_app/` – Self‑contained HTML/JS dashboard for viewing Alpaca
-  positions, total P&L, and a watchlist. This is separate from the admin
-  dashboard used by the training UI.
+- `public/enduserapp/` – Self‑contained End User Console with Alpaca webhook
+  tooling (copyable URL, test payload generator, and artifact viewer).
 - `public/liquidity/` – Mobile and desktop friendly Liquidity Sweep Radar UI
   that consumes the `/strategy/liquidity-sweeps` API.
 
@@ -89,7 +88,10 @@ python run_with_ngrok.py
 
 The script prints a public URL (e.g. `https://1234.ngrok.io`). Use this URL
 to access your API externally. For Alpaca webhooks, append `/alpaca/webhook` to
-that URL and configure it in your Alpaca dashboard.
+that URL and configure it in your Alpaca dashboard. By default the script
+requests the reserved domain `neocortex.internal`; if your ngrok account does
+not have that domain available the script automatically falls back to a random
+subdomain and prints a warning.
 
 Security hardening options:
 
@@ -97,8 +99,9 @@ Security hardening options:
   public tunnel.
 - `NGROK_ALLOWED_CIDRS="198.51.100.0/24,203.0.113.5/32"` restricts inbound
   IP ranges.
-- `NGROK_DOMAIN=custom.ngrok-free.app` requests a reserved domain (requires an
-  ngrok plan that supports it).
+- `NGROK_DOMAIN=custom.ngrok-free.app` overrides the default
+  `neocortex.internal` reservation (requires an ngrok plan that supports
+  reserved domains).
 
 ## Configuring Alpaca
 
@@ -155,25 +158,26 @@ python -m http.server --directory public 8001
 # open http://localhost:8001/liquidity/ or use http://localhost:8000/liquidity when the API is running
 ```
 
-## End‑User Dashboard
+## End‑User Console + Alpaca Webhook Tools
 
-The `enduser_app/` directory contains a simple HTML/JS dashboard that allows
-non‑technical users to view their Alpaca positions, total P&L, and manage a
-watchlist. To use it:
+The new **End User Console** lives under `public/enduserapp/` and is served
+directly by the FastAPI backend at `http://localhost:8000/ui/enduserapp/` (or
+your ngrok tunnel + `/ui/enduserapp/`). It packages a few handy utilities for
+teams who only need webhook management:
 
-1. Serve the directory or open ``enduser_app/index.html`` directly in a
-   browser (no build step required). For local testing, you can run:
+1. **Copy the webhook URL.** The console derives the correct
+   `https://<your-host>/alpaca/webhook` endpoint based on the current origin so
+   you can paste it into the Alpaca dashboard.
+2. **Send test payloads.** A form wraps the `POST /alpaca/webhook/test` helper
+   and shows the JSON response returned by the API. Optional overrides let you
+   paste a custom payload for regression testing.
+3. **Browse saved artifacts.** Every test call is written to
+   `public/alpaca_webhook_tests/`. The console lists the files via the new
+   `GET /alpaca/webhook/tests` endpoint and provides download links for quick
+   auditing or sharing with teammates.
 
-   ```powershell
-   python -m http.server --directory enduser_app 9000
-   ```
-
-2. Set the API URL in `enduser_app/app.js` if your backend is running on
-   a different host or port. When using ngrok, replace `'http://localhost:8000'`
-   with your tunnel URL.
-
-3. Click "Register" and "Login" to authenticate against the API. Use the
-   positions and P&L views to monitor your account.
+No build step or extra server is required—just run `python server.py` (or
+`python run_with_ngrok.py`) and open the UI in a browser.
 
 ## Notes
 
