@@ -139,9 +139,20 @@ code {
   transition: transform 0.2s ease, background 0.2s ease;
 }
 
+.btn.inline {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+}
+
 .btn:hover {
   background: rgba(56, 189, 248, 0.25);
   transform: translateY(-1px);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .btn.primary {
@@ -328,6 +339,10 @@ textarea:focus {
   color: var(--accent);
 }
 
+.status.success {
+  color: #4ade80;
+}
+
 .status.error {
   color: #f87171;
 }
@@ -356,6 +371,16 @@ pre {
 .note {
   color: var(--text-muted);
   margin: 0;
+}
+
+.position-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 8px 0 12px;
+}
+
+.position-actions .status {
+  font-size: 0.9rem;
 }
 
 .position-grid {
@@ -388,6 +413,12 @@ pre {
   text-align: left;
   border-bottom: 1px solid rgba(148, 163, 184, 0.15);
   font-size: 0.95rem;
+}
+
+.position-table th.actions-header,
+.position-table td.actions-cell {
+  text-align: right;
+  white-space: nowrap;
 }
 
 .position-table tbody tr:last-child td {

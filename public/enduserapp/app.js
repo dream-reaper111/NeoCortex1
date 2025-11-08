@@ -16,6 +16,7 @@ const pnlShortEl = document.getElementById('pnlShort');
 const pnlTimestampEl = document.getElementById('pnlTimestamp');
 const longTable = document.getElementById('longTable');
 const shortTable = document.getElementById('shortTable');
+const positionsStatus = document.getElementById('positionsStatus');
 const instrumentSelect = document.getElementById('paperInstrument');
 const optionFields = Array.from(document.querySelectorAll('.option-field'));
 const futureFields = Array.from(document.querySelectorAll('.future-field'));
@@ -108,7 +109,7 @@ function renderPositions(tableEl, orders) {
   if (!orders || !orders.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = 6;
+    cell.colSpan = 7;
     cell.className = 'empty';
     cell.textContent = 'No positions yet.';
     row.append(cell);
@@ -158,8 +159,76 @@ function renderPositions(tableEl, orders) {
       statusCell.append(detail);
     }
 
-    row.append(symbolCell, instrumentCell, entryCell, lastCell, pnlCell, statusCell);
+    const actionsCell = document.createElement('td');
+    actionsCell.className = 'actions-cell';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'btn inline';
+    closeBtn.textContent = 'Close';
+    const orderSymbol = (order.symbol || '').trim();
+    if (!orderSymbol) {
+      closeBtn.disabled = true;
+    } else {
+      closeBtn.addEventListener('click', () => closePosition(orderSymbol, closeBtn));
+    }
+    actionsCell.append(closeBtn);
+
+    row.append(symbolCell, instrumentCell, entryCell, lastCell, pnlCell, statusCell, actionsCell);
     tbody.append(row);
+  }
+}
+
+function updatePositionsStatus(message, type) {
+  if (!positionsStatus) return;
+  positionsStatus.textContent = message || '';
+  positionsStatus.classList.remove('error', 'success');
+  if (type) {
+    positionsStatus.classList.add(type);
+  }
+}
+
+async function closePosition(symbol, button) {
+  const normalizedSymbol = (symbol || '').trim();
+  if (!normalizedSymbol) {
+    updatePositionsStatus('Unable to close: missing symbol.', 'error');
+    return;
+  }
+
+  const btn = button || null;
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.originalText = btn.textContent;
+    btn.textContent = 'Closing…';
+  }
+
+  updatePositionsStatus(`Closing ${normalizedSymbol.toUpperCase()}…`);
+
+  try {
+    const res = await fetch(`/positions/${encodeURIComponent(normalizedSymbol)}/close`, {
+      method: 'POST',
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch (_err) {
+      body = null;
+    }
+    if (!res.ok || (body && body.ok === false)) {
+      const detail = (body && body.detail) || res.statusText || 'Unable to close position';
+      throw new Error(detail);
+    }
+    const detail = (body && body.detail) || `Closed ${normalizedSymbol.toUpperCase()} position.`;
+    updatePositionsStatus(detail, 'success');
+    await loadPaperDashboard();
+  } catch (err) {
+    console.error('[positions] close failed', err);
+    updatePositionsStatus(`Close failed: ${err.message}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.originalText || 'Close';
+      delete btn.dataset.originalText;
+    }
   }
 }
 
