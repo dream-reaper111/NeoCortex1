@@ -21,6 +21,82 @@ const instrumentSelect = document.getElementById('paperInstrument');
 const optionFields = Array.from(document.querySelectorAll('.option-field'));
 const futureFields = Array.from(document.querySelectorAll('.future-field'));
 
+function getAccountType() {
+  if (!paperForm) return 'paper';
+  const value = (paperForm.dataset.account || 'paper').trim().toLowerCase();
+  return value || 'paper';
+}
+
+function formatAccountLabel(accountType) {
+  const value = (accountType || 'paper').toString();
+  if (!value) return 'Paper';
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function describeAssetClass(assetClass) {
+  if (!assetClass) return 'Asset';
+  const normalized = String(assetClass).replace(/_/g, ' ').trim();
+  if (!normalized) return 'Asset';
+  return normalized.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function normalizeAlpacaPosition(position) {
+  if (!position) return null;
+  const rawQty = Number(position.qty ?? position.quantity ?? 0);
+  const qty = Number.isFinite(rawQty) ? rawQty : 0;
+  const sideRaw = (position.side || (qty < 0 ? 'short' : 'long') || 'long').toString().toLowerCase();
+  const side = sideRaw === 'short' ? 'short' : 'long';
+  const quantity = Math.abs(qty);
+  const entryPriceRaw = Number(
+    position.avg_entry_price ?? position.avg_entry ?? position.entry_price ?? position.price ?? 0,
+  );
+  const entryPrice = Number.isFinite(entryPriceRaw) ? entryPriceRaw : 0;
+  const currentPriceRaw = Number(
+    position.current_price ??
+      position.market_price ??
+      position.lastday_price ??
+      position.asset_current_price ??
+      position.price ??
+      0,
+  );
+  const currentPrice = Number.isFinite(currentPriceRaw) ? currentPriceRaw : 0;
+  const pnlRaw = Number(position.unrealized_pl ?? position.unrealized_intraday_pl ?? 0);
+  const pnl = Number.isFinite(pnlRaw) ? pnlRaw : 0;
+
+  return {
+    symbol: (position.symbol || '').toUpperCase(),
+    quantity,
+    instrument: describeAssetClass(position.asset_class),
+    entry_price: entryPrice,
+    current_price: currentPrice,
+    pnl,
+    cost_basis: Number(position.cost_basis ?? 0) || 0,
+    market_value: Number(position.market_value ?? 0) || 0,
+    side,
+    status: 'executed',
+  };
+}
+
+function computePnlTotals(positions) {
+  const totals = { total: 0, long: 0, short: 0 };
+  if (!Array.isArray(positions)) {
+    return totals;
+  }
+  for (const pos of positions) {
+    if (!pos) continue;
+    const value = Number(pos.pnl ?? 0);
+    if (!Number.isFinite(value)) continue;
+    const side = (pos.side || 'long').toLowerCase() === 'short' ? 'short' : 'long';
+    totals.total += value;
+    if (side === 'short') {
+      totals.short += value;
+    } else {
+      totals.long += value;
+    }
+  }
+  return totals;
+}
+
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -201,12 +277,19 @@ async function closePosition(symbol, button) {
     btn.textContent = 'Closing…';
   }
 
-  updatePositionsStatus(`Closing ${normalizedSymbol.toUpperCase()}…`);
+  const accountType = getAccountType();
+  const accountLabel = formatAccountLabel(accountType);
+  updatePositionsStatus(
+    `Closing ${normalizedSymbol.toUpperCase()} on the ${accountLabel} account…`,
+  );
 
   try {
-    const res = await fetch(`/positions/${encodeURIComponent(normalizedSymbol)}/close`, {
-      method: 'POST',
-    });
+    const res = await fetch(
+      `/positions/${encodeURIComponent(normalizedSymbol)}/close?account=${encodeURIComponent(accountType)}`,
+      {
+        method: 'POST',
+      },
+    );
     let body = null;
     try {
       body = await res.json();
@@ -217,12 +300,17 @@ async function closePosition(symbol, button) {
       const detail = (body && body.detail) || res.statusText || 'Unable to close position';
       throw new Error(detail);
     }
-    const detail = (body && body.detail) || `Closed ${normalizedSymbol.toUpperCase()} position.`;
+    const detail =
+      (body && body.detail) ||
+      `Closed ${normalizedSymbol.toUpperCase()} position on the ${accountLabel} account.`;
     updatePositionsStatus(detail, 'success');
     await loadPaperDashboard();
   } catch (err) {
     console.error('[positions] close failed', err);
-    updatePositionsStatus(`Close failed: ${err.message}`, 'error');
+    updatePositionsStatus(
+      `Close failed on the ${accountLabel} account: ${err.message}`,
+      'error',
+    );
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -357,8 +445,102 @@ async function loadArtifacts() {
   }
 }
 
-async function loadPaperDashboard() {
-  if (!paperForm) return;
+async function loadLiveDashboard(accountType) {
+  if (!paperForm) return null;
+  const query = accountType ? `?account=${encodeURIComponent(accountType)}` : '';
+  let positionsBody = null;
+  try {
+    const [positionsRes, pnlRes] = await Promise.all([
+      fetch(`/positions${query}`, { cache: 'no-store' }),
+      fetch(`/pnl${query}`, { cache: 'no-store' }),
+    ]);
+
+    try {
+      positionsBody = await positionsRes.json();
+    } catch (_err) {
+      positionsBody = null;
+    }
+
+    if (!positionsRes.ok || !positionsBody || positionsBody.ok === false) {
+      const detail =
+        (positionsBody && (positionsBody.detail || positionsBody.error)) ||
+        positionsRes.statusText ||
+        'Unable to load Alpaca positions';
+      throw new Error(detail);
+    }
+
+    const rawPositions = Array.isArray(positionsBody.positions)
+      ? positionsBody.positions
+      : [];
+    const normalizedPositions = rawPositions
+      .map((position) => normalizeAlpacaPosition(position))
+      .filter(Boolean);
+    const longPositions = normalizedPositions.filter((pos) => pos.side !== 'short');
+    const shortPositions = normalizedPositions.filter((pos) => pos.side === 'short');
+    renderPositions(longTable, longPositions);
+    renderPositions(shortTable, shortPositions);
+
+    let totals = computePnlTotals(normalizedPositions);
+    let timestamp = new Date().toISOString();
+
+    let pnlBody = null;
+    try {
+      pnlBody = await pnlRes.json();
+    } catch (_err) {
+      pnlBody = null;
+    }
+    if (pnlRes.ok && pnlBody && pnlBody.ok !== false) {
+      if (typeof pnlBody.total_pnl !== 'undefined') {
+        const totalValue = Number(pnlBody.total_pnl);
+        if (Number.isFinite(totalValue)) {
+          totals.total = totalValue;
+        }
+      }
+      if (Array.isArray(pnlBody.positions) && pnlBody.positions.length) {
+        const breakdownPositions = pnlBody.positions.map((position) => {
+          const qty = Number(position.quantity ?? position.qty ?? 0);
+          const pnlValue = Number(position.unrealized_pl ?? 0);
+          return {
+            pnl: Number.isFinite(pnlValue) ? pnlValue : 0,
+            side: qty < 0 ? 'short' : 'long',
+          };
+        });
+        const breakdown = computePnlTotals(breakdownPositions);
+        if (breakdown.long || breakdown.short) {
+          totals.long = breakdown.long;
+          totals.short = breakdown.short;
+          if (!totals.total) {
+            totals.total = breakdown.total;
+          }
+        }
+      }
+    } else if (!pnlRes.ok) {
+      console.warn('[pnl] refresh failed', pnlBody || pnlRes.statusText || pnlRes.status);
+    }
+
+    const label = formatAccountLabel(accountType);
+    updatePnlWidget(totals, timestamp);
+    if (normalizedPositions.length === 0) {
+      updatePositionsStatus(`No live Alpaca positions on the ${label} account.`, 'success');
+    } else {
+      updatePositionsStatus(
+        `Displaying live Alpaca positions for the ${label} account.`,
+        'success',
+      );
+    }
+
+    return { positions: normalizedPositions, pnl: totals };
+  } catch (err) {
+    console.warn('[positions] live refresh failed', err);
+    if (err && err.message) {
+      updatePositionsStatus(err.message, 'error');
+    }
+    return null;
+  }
+}
+
+async function loadMockDashboard(message, statusClass) {
+  if (!paperForm) return null;
   try {
     const res = await fetch('/papertrade/status');
     const body = await res.json();
@@ -371,6 +553,11 @@ async function loadPaperDashboard() {
       renderPositions(longTable, dashboard.orders.long || []);
       renderPositions(shortTable, dashboard.orders.short || []);
     }
+    if (typeof message === 'undefined') {
+      updatePositionsStatus('Showing simulated paper trading positions.', 'success');
+    } else if (message !== null) {
+      updatePositionsStatus(message, statusClass || 'success');
+    }
     return dashboard;
   } catch (err) {
     console.warn('[papertrade] refresh failed', err);
@@ -380,8 +567,22 @@ async function loadPaperDashboard() {
     if (aiStatusEl && !aiStatusEl.textContent) {
       aiStatusEl.textContent = 'Neo Cortex AI is awaiting connection…';
     }
+    updatePositionsStatus('Unable to load positions.', 'error');
     return null;
   }
+}
+
+async function loadPaperDashboard() {
+  if (!paperForm) return null;
+  const accountType = getAccountType();
+  const live = await loadLiveDashboard(accountType);
+  if (live) {
+    return live;
+  }
+  return loadMockDashboard(
+    'Live Alpaca positions unavailable. Showing simulated paper trading positions.',
+    'error',
+  );
 }
 
 function sanitizeOrderPayload(payload) {
