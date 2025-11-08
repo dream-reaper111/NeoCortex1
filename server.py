@@ -58,6 +58,11 @@ LIQUIDITY_ASSETS = LIQUIDITY_DIR / "assets"
 LIQUIDITY_ASSETS.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
+NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
+try:
+    NGROK_ENDPOINT_TEMPLATE = NGROK_ENDPOINT_TEMPLATE_PATH.read_text(encoding="utf-8")
+except FileNotFoundError:
+    NGROK_ENDPOINT_TEMPLATE = """<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: {{WEBHOOK_URL}}</p></body></html>"""
 
 # -----------------------------------------------------------------------------
 # Alpaca configuration
@@ -286,6 +291,22 @@ def _get_exog(sym: str, idx: pd.DatetimeIndex, include_fa: bool) -> pd.DataFrame
 @app.get("/")
 def root():
     return {"ok": True, "msg": "Neo Cortex AI API ready"}
+
+
+@app.get("/ngrok/cloud-endpoint", response_class=HTMLResponse)
+async def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
+    """Render a friendly landing page for ngrok Cloud Endpoints."""
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if not host:
+        host = f"localhost:{API_PORT}"
+    base_url = f"{proto}://{host}".rstrip("/")
+    webhook_url = f"{base_url}/alpaca/webhook"
+    html = (
+        NGROK_ENDPOINT_TEMPLATE.replace("{{WEBHOOK_URL}}", webhook_url)
+        .replace("{{BASE_URL}}", base_url)
+    )
+    return HTMLResponse(content=html, status_code=200)
 
 @app.get("/preflight")
 def preflight():
