@@ -29,11 +29,13 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
-from fastapi import FastAPI, HTTPException, Request, Header
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
+    def load_dotenv(*_args, **_kwargs):  # type: ignore
+        return False
 
 
 def _load_optional_module(name: str):
@@ -50,16 +52,67 @@ psutil = _load_optional_module("psutil")
 
 logger = logging.getLogger("neocortex.server")
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+try:
+    import matplotlib  # type: ignore
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
+    matplotlib = None  # type: ignore
+
+    class _MatplotlibStub:
+        def figure(self, *args, **kwargs):
+            return self
+
+        def plot(self, *args, **kwargs):
+            return None
+
+        def title(self, *args, **kwargs):
+            return None
+
+        def grid(self, *args, **kwargs):
+            return None
+
+        def tight_layout(self, *args, **kwargs):
+            return None
+
+        def savefig(self, *args, **kwargs):
+            path = kwargs.get("fname") or (args[0] if args else None)
+            if path:
+                Path(path).write_bytes(b"")
+            return None
+
+        def close(self, *args, **kwargs):
+            return None
+
+    plt = _MatplotlibStub()  # type: ignore
 
 # added imports for Alpaca integration
 import requests
 
 # ---- your model utils (import AFTER env guards) ----
-from model import build_features, train_and_save, latest_run_path
-from strategies import analyze_liquidity_session, StrategyError
+try:
+    from model import build_features, train_and_save, latest_run_path
+except Exception as exc:  # pragma: no cover - optional heavy dependency fallback
+    def _model_unavailable(*_args, **_kwargs):
+        raise RuntimeError(f"Model dependencies unavailable: {exc}")
+
+    def build_features(*args, **kwargs):  # type: ignore
+        return _model_unavailable(*args, **kwargs)
+
+    def train_and_save(*args, **kwargs):  # type: ignore
+        return _model_unavailable(*args, **kwargs)
+
+    def latest_run_path() -> Optional[str]:  # type: ignore
+        return None
+
+try:
+    from strategies import analyze_liquidity_session, StrategyError
+except Exception as exc:  # pragma: no cover - optional dependency fallback
+    class StrategyError(RuntimeError):
+        pass
+
+    def analyze_liquidity_session(*_args, **_kwargs):
+        raise StrategyError(f"Strategy module unavailable: {exc}")
 
 load_dotenv(override=False)
 
