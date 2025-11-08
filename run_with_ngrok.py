@@ -31,10 +31,15 @@ from urllib.parse import urlparse
 DEFAULT_NGROK_AUTH_TOKEN = "33aDTBUq8xRsoeabQ5HE1rWk0U3_3hvYA6JV8MPegF1DyXMAT"
 DEFAULT_NGROK_DOMAIN = "http://neocortex.internal/"
 
+DEFAULT_NGROK_AUTH_TOKEN = "33aDTBUq8xRsoeabQ5HE1rWk0U3_3hvYA6JV8MPegF1DyXMAT"
+
 from dotenv import load_dotenv
 from pyngrok import ngrok
 from pyngrok.exception import PyngrokNgrokHTTPError
 import uvicorn
+
+
+DEFAULT_RESERVED_DOMAIN = "tamara-unleavened-nonpromiscuously.ngrok-free.dev"
 
 try:
     # Import the FastAPI app from server.py
@@ -80,6 +85,13 @@ def main() -> None:
     if basic_auth:
         connect_kwargs["basic_auth"] = basic_auth
     domain = _normalize_domain(os.getenv("NGROK_DOMAIN") or DEFAULT_NGROK_DOMAIN)
+=======
+    domain_env = os.getenv("NGROK_DOMAIN")
+    if domain_env is None:
+        domain = DEFAULT_RESERVED_DOMAIN
+    else:
+        domain = domain_env.strip() or None
+
     if domain:
         connect_kwargs["domain"] = domain
     allow_cidrs = [cidr.strip() for cidr in (os.getenv("NGROK_ALLOWED_CIDRS") or "").split(",") if cidr.strip()]
@@ -93,7 +105,8 @@ def main() -> None:
         if domain and "ERR_NGROK_15013" in error_text:
             print(
                 "* Requested ngrok dev domain not found. Falling back to a random domain.\n"
-                "  To use a custom domain, reserve one in the ngrok dashboard and set NGROK_DOMAIN.",
+                "  To use a different domain, reserve one in the ngrok dashboard and set NGROK_DOMAIN.\n"
+                "  Set NGROK_DOMAIN=\"\" to skip requesting a reserved domain.",
                 flush=True,
             )
             fallback_kwargs = {k: v for k, v in connect_kwargs.items() if k != "domain"}
