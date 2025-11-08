@@ -8,6 +8,7 @@ _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
 import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging
+from urllib.parse import parse_qs
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
@@ -30,7 +31,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
@@ -922,6 +923,56 @@ class AuthReq(BaseModel):
     password: str
 
 
+async def _auth_req_from_request(request: Request) -> AuthReq:
+    """Parse an AuthReq from JSON, form-encoded, or query parameters."""
+
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    data: Dict[str, Any] = {}
+
+    if "multipart/form-data" in content_type:
+        try:
+            form = await request.form()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("failed to parse multipart auth payload: %s", exc)
+        else:
+            data = {k: v for k, v in form.items() if v is not None}
+    else:
+        body_bytes = await request.body()
+        parsed: Optional[Dict[str, Any]] = None
+        if body_bytes:
+            try:
+                candidate = json.loads(body_bytes)
+            except json.JSONDecodeError:
+                candidate = None
+            if isinstance(candidate, dict):
+                parsed = candidate
+            else:
+                parsed_qs = parse_qs(body_bytes.decode("utf-8", errors="ignore"))
+                if parsed_qs:
+                    parsed = {k: v[-1] for k, v in parsed_qs.items() if v}
+        if parsed:
+            data = parsed
+
+    if not data and request.query_params:
+        data = dict(request.query_params)
+
+    if not data:
+        raise HTTPException(status_code=400, detail="username and password required")
+
+    normalized: Dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, (list, tuple)):
+            value = value[-1]
+        if value is None:
+            continue
+        normalized[key] = value if isinstance(value, str) else str(value)
+
+    try:
+        return AuthReq(**normalized)
+    except ValidationError:
+        raise HTTPException(status_code=400, detail="username and password required")
+
+
 class CredentialReq(BaseModel):
     account_type: str = "paper"
     api_key: str
@@ -953,11 +1004,12 @@ class PaperTradeOrderRequest(BaseModel):
     future_year: Optional[int] = Field(default=None, ge=2000, le=2100)
 
 @app.post("/register")
-async def register(req: AuthReq):
+async def register(request: Request):
     """
     Create a new user account backed by the SQLite credential store. Passwords are
     hashed with a 2048-bit PBKDF2-SHA512 digest and salted prior to being persisted.
     """
+    req = await _auth_req_from_request(request)
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
@@ -973,12 +1025,13 @@ async def register(req: AuthReq):
     return _json({"ok": True, "created": uname})
 
 @app.post("/login")
-async def login(req: AuthReq):
+async def login(request: Request):
     """
     Authenticate a user and return a bearer token tied to the SQLite credential store.
     The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
     manage user-specific Alpaca credentials.
     """
+    req = await _auth_req_from_request(request)
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
