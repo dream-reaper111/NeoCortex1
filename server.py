@@ -71,6 +71,17 @@ except FileNotFoundError:
     )
 # ---------
 
+NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
+try:
+    NGROK_ENDPOINT_TEMPLATE = NGROK_ENDPOINT_TEMPLATE_PATH.read_text(encoding="utf-8")
+except FileNotFoundError:
+    NGROK_ENDPOINT_TEMPLATE = (
+        "<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: {{WEBHOOK_URL}}</p></body></html>"
+    )
+
+ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
+ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
+
 # -----------------------------------------------------------------------------
 # Alpaca configuration
 #
@@ -184,6 +195,22 @@ app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
+
+
+@app.get("/ngrok/cloud-endpoint", response_class=HTMLResponse)
+def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
+    """Serve a tiny HTML page that displays the tunnel webhook URL."""
+
+    base_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{base_url}/alpaca/webhook"
+
+    html = (
+        NGROK_ENDPOINT_TEMPLATE.replace("{{WEBHOOK_URL}}", webhook_url)
+        .replace("{{WEBHOOK_HOST}}", base_url)
+    )
+    return HTMLResponse(html, headers=_nocache())
+=======
+main
 
 # ---------- normalizers ----------
 def standardize_ohlcv(raw: pd.DataFrame, ticker: Optional[str]=None) -> pd.DataFrame:
