@@ -112,19 +112,23 @@ def main() -> None:
     connect_kwargs = {"bind_tls": True}
 
     basic_auth = os.getenv("NGROK_BASIC_AUTH")
+    basic_auth_applied = False
     if not basic_auth:
         username = os.getenv("NGROK_BASIC_AUTH_USER", "").strip()
         password = os.getenv("NGROK_BASIC_AUTH_PASS", "").strip()
         if username and password:
             basic_auth = f"{username}:{password}"
 
-    if not basic_auth or ":" not in basic_auth:
-        raise RuntimeError(
-            "NGROK_BASIC_AUTH (or NGROK_BASIC_AUTH_USER/NGROK_BASIC_AUTH_PASS) must be set "
-            "to protect the public tunnel with HTTP basic authentication."
+    if basic_auth and ":" in basic_auth:
+        connect_kwargs["basic_auth"] = basic_auth
+        basic_auth_applied = True
+    else:
+        print(
+            "* Warning: ngrok tunnel will be launched without HTTP basic auth.\n"
+            "  Set NGROK_BASIC_AUTH or NGROK_BASIC_AUTH_USER/NGROK_BASIC_AUTH_PASS to secure the tunnel.",
+            flush=True,
         )
-
-    connect_kwargs["basic_auth"] = basic_auth
+        basic_auth = ""
 
     domain_env = os.getenv("NGROK_DOMAIN")
     domain = _normalize_domain(domain_env)
@@ -155,7 +159,7 @@ def main() -> None:
             ) from error
     public_url = tunnel.public_url
     print("* ngrok tunnel established: {} -> http://127.0.0.1:{}".format(public_url, port), flush=True)
-    if basic_auth:
+    if basic_auth_applied:
         print("  (basic auth enabled via NGROK_BASIC_AUTH)", flush=True)
     if allow_cidrs:
         print("  (IP allow list: {})".format(", ".join(allow_cidrs)), flush=True)
