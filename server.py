@@ -14,7 +14,18 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
-import pandas as pd
+try:
+    import pandas as pd
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
+    class _PandasStub:
+        """Lazy stub that raises a helpful error when pandas is unavailable."""
+
+        def __getattr__(self, name: str) -> Any:
+            raise ModuleNotFoundError(
+                "pandas is required for data-processing endpoints. Install it with 'pip install pandas'."
+            )
+
+    pd = _PandasStub()  # type: ignore
 
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
@@ -570,24 +581,6 @@ app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True),
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
 
 
-@app.get("/ngrok/cloud-endpoint", res@router.get("/positions")
-async def get_positions(account: str = "paper", authorization: Optional[str] = Header(None)):
-    # your logic goes here
-    user = _auth_user(authorization)
-    positions = _get_positions_from_alpaca(user, account)
-    return _json({"ok": True, "positions": positions})ponse_class=HTMLResponse)
-def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
-    """Serve a tiny HTML page that displays the tunnel webhook URL."""
-
-    base_url = str(request.base_url).rstrip("/")
-    webhook_url = f"{base_url}/alpaca/webhook"
-
-    html = (
-        NGROK_ENDPOINT_TEMPLATE.replace("{{WEBHOOK_URL}}", webhook_url)
-        .replace("{{WEBHOOK_HOST}}", base_url)
-    )
-    return HTMLResponse(html, headers=_nocache())
-
 # ---------- normalizers ----------
 def standardize_ohlcv(raw: pd.DataFrame, ticker: Optional[str]=None) -> pd.DataFrame:
     if raw is None or raw.empty: raise ValueError("No data")
@@ -878,57 +871,6 @@ async def set_alpaca_credentials(
     _save_user_credentials(user["id"], acct_type, api_key, api_secret, base_url)
     return _json({"ok": True, "account_type": acct_type, "base_url": base_url})
 
-        return _json({"ok": False, "detail": "invalid credentials"}, 401)
-    expected_hash, _ = _hash_password_sha2048(req.password, row["salt"])
-    if expected_hash != row["password_hash"]:
-        return _json({"ok": False, "detail": "invalid credentials"}, 401)
-    token = _create_session_token(row["id"])
-    return _json({"ok": True, "token": token, "username": uname})
-
-
-@app.get("/alpaca/credentials")
-async def list_alpaca_credentials(authorization: Optional[str] = Header(None)):
-    """Return the Alpaca credential entries associated with the authenticated user."""
-    user = _require_user(authorization)
-    with _db_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT account_type, api_key, base_url, updated_at
-            FROM alpaca_credentials
-            WHERE user_id = ?
-            ORDER BY account_type
-            """,
-            (user["id"],),
-        ).fetchall()
-    credentials = [
-        {
-            "account_type": row["account_type"],
-            "api_key": row["api_key"],
-            "base_url": row["base_url"],
-            "updated_at": row["updated_at"],
-        }
-        for row in rows
-    ]
-    return _json({"ok": True, "credentials": credentials})
-
-
-@app.post("/alpaca/credentials")
-async def set_alpaca_credentials(req: CredentialReq, authorization: Optional[str] = Header(None)):
-    """Create or update Alpaca API credentials for the authenticated user."""
-    user = _require_user(authorization)
-    acct_type = (req.account_type or "paper").strip().lower()
-    if acct_type not in {"paper", "funded"}:
-        return _json({"ok": False, "detail": "account_type must be 'paper' or 'funded'"}, 400)
-    api_key = req.api_key.strip()
-    api_secret = req.api_secret.strip()
-    if not api_key or not api_secret:
-        return _json({"ok": False, "detail": "api_key and api_secret are required"}, 400)
-    base_url = (req.base_url or "").strip()
-    if not base_url:
-        base_url = ALPACA_BASE_URL_FUND if acct_type == "funded" else ALPACA_BASE_URL_PAPER
-    _save_user_credentials(user["id"], acct_type, api_key, api_secret, base_url)
-    return _json({"ok": True, "account_type": acct_type, "base_url": base_url})
-
 # --- account data: positions and P&L ---
 @app.get("/positions")
 async def get_positions(
@@ -936,31 +878,23 @@ async def get_positions(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
+    """Fetch the current positions for the specified Alpaca account."""
 
-async def get_positions(account: str = "paper", authorization: Optional[str] = Header(None)):
-    """
-    Fetch the current positions for the specified Alpaca account. The
-    ``account`` parameter selects either the paper or funded account. Environment
-    variables ALPACA_KEY_PAPER/ALPACA_SECRET_PAPER and ALPACA_KEY_FUND/ALPACA_SECRET_FUND
-    must be set accordingly. Returns the JSON response from the Alpaca API.
-
-    In this hosted assistant context, any network requests are not executed; the
-    code is provided for illustrative purposes only.
-    """
     acct_type = (account or "paper").lower()
-    user = None
     token = _authorization_token(authorization) or session_token
-    token = _authorization_token(authorization)
+    user = None
     if token:
         user = _user_from_token(token)
         if user is None:
             return _json({"ok": False, "detail": "invalid or expired token"}, 401)
+
     creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
     key = creds.get("key")
     secret = creds.get("secret")
     base_url = creds.get("base_url")
     if not key or not secret:
         return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
+
     url = f"{base_url}/v2/positions"
     headers = {
         "APCA-API-KEY-ID": key,
@@ -968,10 +902,9 @@ async def get_positions(account: str = "paper", authorization: Optional[str] = H
     }
     try:
         resp = requests.get(url, headers=headers)
-        # Alpaca returns a list of position objects for this endpoint
         return _json({"ok": True, "positions": resp.json()})
-    except Exception as e:
-        return _json({"ok": False, "detail": f"Failed to fetch positions: {e}"}, 500)
+    except Exception as exc:
+        return _json({"ok": False, "detail": f"Failed to fetch positions: {exc}"}, 500)
 
 @app.get("/pnl")
 async def get_pnl(
@@ -979,25 +912,16 @@ async def get_pnl(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
+    """Compute unrealized P&L for the authenticated user's Alpaca account."""
 
-async def get_pnl(account: str = "paper", authorization: Optional[str] = Header(None)):
-    """
-    Compute unrealized P&L for the positions held in an Alpaca account. This
-    endpoint fetches the open positions from Alpaca and sums the ``unrealized_pl``
-    for each position (or computes it from ``market_value`` minus ``cost_basis`` if
-    not provided). It returns both a total P&L and per‑position details. In this
-    hosted assistant context, external HTTP requests are not executed; the code is
-    provided for illustrative purposes only.
-    """
     acct_type = (account or "paper").lower()
-    user = None
     token = _authorization_token(authorization) or session_token
-
-    token = _authorization_token(authorization)
+    user = None
     if token:
         user = _user_from_token(token)
         if user is None:
             return _json({"ok": False, "detail": "invalid or expired token"}, 401)
+
     creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
     key = creds.get("key")
     secret = creds.get("secret")
@@ -1005,7 +929,6 @@ async def get_pnl(account: str = "paper", authorization: Optional[str] = Header(
     if not key or not secret:
         return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
 
-    # fetch positions
     pos_url = f"{base_url}/v2/positions"
     headers = {
         "APCA-API-KEY-ID": key,
@@ -1014,32 +937,35 @@ async def get_pnl(account: str = "paper", authorization: Optional[str] = Header(
     try:
         pos_resp = requests.get(pos_url, headers=headers)
         pos_list = pos_resp.json() or []
-        if not pos_list:
-            return _json({"ok": True, "total_pnl": 0.0, "positions": []})
-        results = []
-        total_pnl = 0.0
-        for p in pos_list:
-            # Alpaca returns quantity as a string; convert to float
-            qty = float(p.get("qty") or p.get("quantity") or 0)
-            cost_basis = float(p.get("cost_basis") or 0)
-            market_value = float(p.get("market_value") or 0)
-            # compute P&L: prefer unrealized_pl if provided
-            if p.get("unrealized_pl") is not None:
-                pnl = float(p.get("unrealized_pl"))
-            else:
-                pnl = market_value - cost_basis
-            total_pnl += pnl
-            results.append({
-                "symbol": p.get("symbol"),
+    except Exception as exc:
+        return _json({"ok": False, "detail": f"Failed to compute P&L: {exc}"}, 500)
+
+    if not pos_list:
+        return _json({"ok": True, "total_pnl": 0.0, "positions": []})
+
+    results = []
+    total_pnl = 0.0
+    for position in pos_list:
+        qty = float(position.get("qty") or position.get("quantity") or 0)
+        cost_basis = float(position.get("cost_basis") or 0)
+        market_value = float(position.get("market_value") or 0)
+        if position.get("unrealized_pl") is not None:
+            pnl = float(position.get("unrealized_pl"))
+        else:
+            pnl = market_value - cost_basis
+        total_pnl += pnl
+        results.append(
+            {
+                "symbol": position.get("symbol"),
                 "quantity": qty,
-                "avg_entry_price": float(p.get("avg_entry_price") or 0),
+                "avg_entry_price": float(position.get("avg_entry_price") or 0),
                 "market_value": market_value,
                 "cost_basis": cost_basis,
-                "unrealized_pl": pnl
-            })
-        return _json({"ok": True, "total_pnl": total_pnl, "positions": results})
-    except Exception as e:
-        return _json({"ok": False, "detail": f"Failed to compute P&L: {e}"}, 500)
+                "unrealized_pl": pnl,
+            }
+        )
+
+    return _json({"ok": True, "total_pnl": total_pnl, "positions": results})
 
 
 @app.get("/strategy/liquidity-sweeps")

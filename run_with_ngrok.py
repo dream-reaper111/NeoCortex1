@@ -28,10 +28,29 @@ Note: This script blocks until the server shuts down. To stop, press Ctrl+C.
 import os
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
-from pyngrok import ngrok
-from pyngrok.exception import PyngrokNgrokHTTPError
-import uvicorn
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
+    def load_dotenv(*_args, **_kwargs):  # type: ignore
+        """Fallback no-op when python-dotenv is unavailable."""
+
+        return False
+
+try:
+    from pyngrok import ngrok
+    from pyngrok.exception import PyngrokNgrokHTTPError
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
+    ngrok = None  # type: ignore
+
+    class PyngrokNgrokHTTPError(Exception):
+        """Placeholder error type when pyngrok is unavailable."""
+
+        pass
+
+try:
+    import uvicorn
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
+    uvicorn = None  # type: ignore
 
 try:
     # Import the FastAPI app from server.py
@@ -64,8 +83,21 @@ def _normalize_domain(raw: str | None) -> str:
 
 def main() -> None:
     load_dotenv(override=False)
-    # read port and auth token from environment
     port = int(os.getenv("API_PORT", "8000"))
+
+    if uvicorn is None:
+        raise RuntimeError(
+            "uvicorn is required to run the FastAPI server. Install it with 'pip install uvicorn'."
+        )
+
+    if ngrok is None:
+        print(
+            "* pyngrok is not installed. Starting the FastAPI app locally on port {} without an ngrok tunnel.".format(port),
+            flush=True,
+        )
+        print("  Install pyngrok to enable tunnelling: pip install pyngrok", flush=True)
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+        return
 
     auth_token = os.getenv("NGROK_AUTH_TOKEN")
     if not auth_token:
