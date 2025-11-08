@@ -13,6 +13,7 @@
         <p class="subtitle">Manage Alpaca webhook integration and quick diagnostics.</p>
       </div>
       <nav class="nav-links">
+        <a href="#papertrade" class="nav-link">Paper Trading</a>
         <a href="#webhook" class="nav-link">Webhook</a>
         <a href="#tests" class="nav-link">Test Payloads</a>
         <a href="#faq" class="nav-link">FAQ</a>
@@ -20,6 +21,140 @@
     </header>
 
     <main>
+      <section id="papertrade" class="card">
+        <header class="card__header">
+          <h2>Paper Trading Console</h2>
+          <p class="card__subtitle">Route simulated options and futures orders through the Neo Cortex AI trainer.</p>
+        </header>
+        <div class="card__body papertrade-body">
+          <div class="papertrade-grid">
+            <form id="paperForm" class="form-grid">
+              <label>
+                <span>Instrument Type</span>
+                <select id="paperInstrument" name="instrument">
+                  <option value="option">Option</option>
+                  <option value="future">Future</option>
+                </select>
+              </label>
+              <label>
+                <span>Symbol</span>
+                <input id="paperSymbol" name="symbol" placeholder="AAPL" required />
+              </label>
+              <label class="option-field">
+                <span>Expiration</span>
+                <input id="paperExpiry" name="expiry" type="date" />
+              </label>
+              <label class="option-field">
+                <span>Strike</span>
+                <input id="paperStrike" name="strike" type="number" step="0.01" min="0" />
+              </label>
+              <label class="option-field">
+                <span>Option Side</span>
+                <select id="paperOptionType" name="option_type">
+                  <option value="call">Call</option>
+                  <option value="put">Put</option>
+                </select>
+              </label>
+              <label class="future-field hidden">
+                <span>Contract Month</span>
+                <input id="paperFutureMonth" name="future_month" placeholder="DEC" />
+              </label>
+              <label class="future-field hidden">
+                <span>Contract Year</span>
+                <input id="paperFutureYear" name="future_year" type="number" min="2024" max="2100" />
+              </label>
+              <label>
+                <span>Quantity</span>
+                <input id="paperQuantity" name="quantity" type="number" min="0.01" step="0.01" value="1" />
+              </label>
+              <label>
+                <span>Limit Price</span>
+                <input id="paperPrice" name="price" type="number" min="0" step="0.01" value="1" />
+              </label>
+              <div class="full-width">
+                <span class="label">Position Bias</span>
+                <div class="side-toggle" role="radiogroup" aria-label="Position bias">
+                  <label class="toggle">
+                    <input type="radio" name="paperSide" value="long" checked />
+                    <span>Long</span>
+                  </label>
+                  <label class="toggle">
+                    <input type="radio" name="paperSide" value="short" />
+                    <span>Short</span>
+                  </label>
+                </div>
+              </div>
+              <div class="form-actions full-width">
+                <button type="submit" class="btn primary" id="sendPaperOrder">Send to AI Trader</button>
+                <span id="paperStatus" class="status"></span>
+              </div>
+            </form>
+            <div class="ai-panel">
+              <div class="pnl-widget">
+                <header class="pnl-header">
+                  <h3>Live P&amp;L</h3>
+                  <small id="pnlTimestamp" class="pnl-timestamp">--</small>
+                </header>
+                <div class="pnl-values">
+                  <div class="pnl-total" id="pnlTotal">$0.00</div>
+                  <div class="pnl-split">
+                    <span>Longs: <strong id="pnlLong">$0.00</strong></span>
+                    <span>Shorts: <strong id="pnlShort">$0.00</strong></span>
+                  </div>
+                </div>
+              </div>
+              <div class="ai-status" id="aiStatus">Neo Cortex AI standing by…</div>
+            </div>
+          </div>
+          <div class="position-grid">
+            <div class="position-column">
+              <header class="position-header">
+                <h3>Long Positions</h3>
+              </header>
+              <table class="position-table" id="longTable">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Instrument</th>
+                    <th>Entry</th>
+                    <th>Last</th>
+                    <th>P&amp;L</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td colspan="6" class="empty">No long positions yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="position-column">
+              <header class="position-header">
+                <h3>Short Positions</h3>
+              </header>
+              <table class="position-table" id="shortTable">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Instrument</th>
+                    <th>Entry</th>
+                    <th>Last</th>
+                    <th>P&amp;L</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td colspan="6" class="empty">No short positions yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="webhook" class="card">
         <header class="card__header">
           <h2>Alpaca Webhook Endpoint</h2>

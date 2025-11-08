@@ -7,12 +7,12 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging
+import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Literal
 
 try:
     import pandas as pd
@@ -30,7 +30,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
@@ -264,6 +264,143 @@ Buffers: Dict[str, pd.DataFrame] = {}
 Exog: Dict[str, pd.DataFrame] = {}          # features/fundamentals/signals aligned by timestamp
 IngestStats: Dict[str, Any] = {"tradingview":0, "robinhood":0, "webull":0, "features":0, "candles":0}
 IdleTasks: Dict[str, asyncio.Task] = {}
+
+PAPERTRADE_STATE_PATH = PUBLIC_DIR / "papertrade_state.json"
+PAPERTRADE_STATE_LOCK = asyncio.Lock()
+PaperTradeState: Dict[str, Any] = {"orders": []}
+PaperTradeLoaded = False
+
+
+def _load_papertrade_state() -> None:
+    global PaperTradeState, PaperTradeLoaded
+    if PaperTradeLoaded:
+        return
+    try:
+        if PAPERTRADE_STATE_PATH.exists():
+            data = json.loads(PAPERTRADE_STATE_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("orders"), list):
+                PaperTradeState["orders"] = data["orders"]
+    except Exception:
+        # fall back to empty state on read error
+        PaperTradeState["orders"] = []
+    PaperTradeLoaded = True
+
+
+def _save_papertrade_state() -> None:
+    try:
+        PAPERTRADE_STATE_PATH.write_text(
+            json.dumps({"orders": PaperTradeState.get("orders", [])}, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        logger.warning("[papertrade] unable to persist state", exc_info=True)
+
+
+def _papertrade_noise_seed(order: Dict[str, Any]) -> int:
+    seed_value = order.get("noise_seed")
+    if isinstance(seed_value, str):
+        try:
+            return int(seed_value, 16)
+        except ValueError:
+            pass
+    base = f"{order.get('symbol','')}-{order.get('timestamp','')}"
+    digest = hashlib.sha1(base.encode("utf-8", errors="ignore")).hexdigest()
+    return int(digest[:8], 16)
+
+
+def _papertrade_price(order: Dict[str, Any], now: Optional[float] = None) -> float:
+    entry_price = float(order.get("entry_price") or order.get("price") or 1.0)
+    entry_price = max(entry_price, 0.01)
+    ts = (now or time.time()) / 60.0
+    seed = _papertrade_noise_seed(order)
+    oscillation = math.sin(ts + (seed % 360)) * 0.05
+    price = entry_price * (1.0 + oscillation)
+    return round(max(price, 0.01), 2)
+
+
+def _papertrade_multiplier(order: Dict[str, Any]) -> float:
+    return 100.0 if (order.get("instrument") == "option") else 1.0
+
+
+def _papertrade_pnl(order: Dict[str, Any], current_price: float) -> float:
+    direction = 1.0 if order.get("side") == "long" else -1.0
+    qty = float(order.get("quantity") or 0.0)
+    entry = float(order.get("entry_price") or order.get("price") or current_price)
+    multiplier = _papertrade_multiplier(order)
+    pnl = (current_price - entry) * qty * direction * multiplier
+    return round(pnl, 2)
+
+
+def _papertrade_dashboard(now: Optional[float] = None) -> Dict[str, Any]:
+    orders = PaperTradeState.get("orders", [])
+    long_orders: List[Dict[str, Any]] = []
+    short_orders: List[Dict[str, Any]] = []
+    long_pnl = 0.0
+    short_pnl = 0.0
+    snapshot_time = now or time.time()
+
+    for raw in orders:
+        order = dict(raw)
+        order.pop("noise_seed", None)
+        status = order.get("status") or "executed"
+        if status == "executed":
+            current_price = _papertrade_price(raw, snapshot_time)
+            pnl = _papertrade_pnl(raw, current_price)
+        else:
+            current_price = float(order.get("entry_price") or order.get("price") or 0.0)
+            pnl = 0.0
+        order["current_price"] = round(current_price, 2)
+        order["pnl"] = round(pnl, 2)
+
+        if (order.get("side") or "long") == "long":
+            if status == "executed":
+                long_pnl += pnl
+            long_orders.append(order)
+        else:
+            if status == "executed":
+                short_pnl += pnl
+            short_orders.append(order)
+
+    total_pnl = round(long_pnl + short_pnl, 2)
+    return {
+        "pnl": {
+            "total": round(total_pnl, 2),
+            "long": round(long_pnl, 2),
+            "short": round(short_pnl, 2),
+        },
+        "orders": {
+            "long": long_orders,
+            "short": short_orders,
+        },
+        "generated_at": datetime.fromtimestamp(snapshot_time, tz=timezone.utc).isoformat(),
+    }
+
+
+def _run_ai_trainer(order: Dict[str, Any]) -> Dict[str, Any]:
+    symbol = (order.get("symbol") or "").upper()
+    digest = hashlib.sha1(f"{symbol}-{order.get('instrument')}-{order.get('side')}".encode("utf-8", errors="ignore")).hexdigest()
+    signal = int(digest[:6], 16) / float(0xFFFFFF)
+    bias = 0.08 if order.get("side") == "long" else -0.08
+    bias += 0.06 if order.get("instrument") == "option" else 0.04
+    confidence = max(0.0, min(1.0, 0.45 + (signal - 0.5) * 0.6 + bias))
+    action = "execute" if confidence >= 0.48 else "reject"
+    message = (
+        "Neo Cortex AI executed the paper order."
+        if action == "execute"
+        else "Neo Cortex AI parked the order for review."
+    )
+    return {
+        "trainer": "Neo Cortex AI Trainer",
+        "action": action,
+        "confidence": round(confidence, 3),
+        "message": message,
+    }
+
+
+try:
+    _load_papertrade_state()
+except Exception:
+    logger.warning("[papertrade] failed to load initial state", exc_info=True)
 
 # --- authentication and credential storage -------------------------------------------------------
 AUTH_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "auth.db")).resolve()
@@ -802,6 +939,19 @@ class AlpacaWebhookTest(BaseModel):
     timestamp: Optional[str] = None
     raw: Optional[Dict[str, Any]] = None
 
+
+class PaperTradeOrderRequest(BaseModel):
+    instrument: Literal["option", "future"] = "option"
+    symbol: str
+    side: Literal["long", "short"] = "long"
+    quantity: float = Field(default=1.0, gt=0)
+    price: float = Field(default=1.0, ge=0)
+    option_type: Optional[Literal["call", "put"]] = None
+    expiry: Optional[str] = None
+    strike: Optional[float] = Field(default=None, ge=0)
+    future_month: Optional[str] = None
+    future_year: Optional[int] = Field(default=None, ge=2000, le=2100)
+
 @app.post("/register")
 async def register(req: AuthReq):
     """
@@ -1175,6 +1325,85 @@ def alpaca_webhook_tests():
             }
         )
     return _json({"ok": True, "tests": tests})
+
+
+@app.get("/papertrade/status")
+async def papertrade_status():
+    async with PAPERTRADE_STATE_LOCK:
+        _load_papertrade_state()
+        dashboard = _papertrade_dashboard()
+    return _json({"ok": True, "dashboard": dashboard})
+
+
+@app.post("/papertrade/orders")
+async def papertrade_orders(req: PaperTradeOrderRequest):
+    symbol = (req.symbol or "").strip().upper()
+    if not symbol:
+        return _json({"ok": False, "detail": "symbol is required"}, 400)
+
+    instrument = req.instrument
+    side = req.side
+    quantity = float(req.quantity)
+    price = float(req.price)
+    if price <= 0:
+        price = 1.0
+
+    order_payload: Dict[str, Any] = {
+        "symbol": symbol,
+        "instrument": instrument,
+        "side": side,
+        "quantity": round(quantity, 4),
+        "price": round(price, 4),
+    }
+
+    if instrument == "option":
+        option_type = (req.option_type or "call").lower()
+        expiry = (req.expiry or "").strip()
+        strike = float(req.strike) if req.strike is not None else None
+        order_payload.update(
+            {
+                "option_type": option_type,
+                "expiry": expiry or None,
+                "strike": round(strike, 4) if strike is not None else None,
+            }
+        )
+    else:
+        month = (req.future_month or "").strip().upper()
+        year = int(req.future_year) if req.future_year is not None else None
+        order_payload.update(
+            {
+                "future_month": month or None,
+                "future_year": year,
+            }
+        )
+
+    ai_decision = _run_ai_trainer(order_payload)
+    status = "executed" if ai_decision.get("action") == "execute" else "review"
+
+    order_record = {
+        "id": secrets.token_hex(6),
+        **order_payload,
+        "status": status,
+        "ai": ai_decision,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "entry_price": round(price, 4),
+        "noise_seed": secrets.token_hex(6),
+    }
+
+    async with PAPERTRADE_STATE_LOCK:
+        _load_papertrade_state()
+        orders = PaperTradeState.setdefault("orders", [])
+        orders.append(order_record)
+        # keep history manageable
+        if len(orders) > 500:
+            del orders[:-500]
+        _save_papertrade_state()
+        dashboard = _papertrade_dashboard()
+
+    response_order = dict(order_record)
+    response_order.pop("noise_seed", None)
+
+    return _json({"ok": True, "order": response_order, "dashboard": dashboard})
 
 # --- ingestion: TradingView (signals + bars optional) ---
 @app.post("/webhook/tradingview")
