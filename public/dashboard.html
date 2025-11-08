@@ -233,18 +233,22 @@
 </head>
 <body>
 
-	<div class="topbar">
-		<div class="inline">
-			<h1 style="margin:0">Neo Cortex AI</h1>
-			<span id="gpu-pill" class="pill small">GPU: <em class="muted">loading…</em></span>
-			<span id="run-pill" class="pill small">Run: <span class="muted">-</span></span>
-		</div>
-		<div class="inline small">
-			<a href="/preflight" target="_blank">Preflight JSON</a>
-			<span class="muted">•</span>
-			<a href="#" id="refreshBtn">Refresh</a>
-		</div>
-	</div>
+        <div class="topbar">
+                <div class="inline">
+                        <h1 style="margin:0">Neo Cortex AI</h1>
+                        <span id="gpu-pill" class="pill small">GPU: <em class="muted">loading…</em></span>
+                        <span id="run-pill" class="pill small">Run: <span class="muted">-</span></span>
+                </div>
+                <div class="inline small">
+                        <span id="userBadge" class="pill small">Signed out</span>
+                        <span class="muted">•</span>
+                        <a href="#" id="logoutBtn">Log out</a>
+                        <span class="muted">•</span>
+                        <a href="/preflight" target="_blank">Preflight JSON</a>
+                        <span class="muted">•</span>
+                        <a href="#" id="refreshBtn">Refresh</a>
+                </div>
+        </div>
 
 	<div class="row">
 		<div class="card flex">
@@ -436,12 +440,68 @@
 		</div>
 	</div>
 
-	<script>
-		const $ = (id) => document.getElementById(id);
-		const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
+        <script>
+                const $ = (id) => document.getElementById(id);
+                const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
+                const TOKEN_KEY = 'nc_token';
+                const USERNAME_KEY = 'nc_user';
+                const COOKIE_NAME_KEY = 'nc_cookie';
 
-		// ---- Range mode toggle ----
-		function toggleRange() {
+                function authToken() {
+                        return localStorage.getItem(TOKEN_KEY);
+                }
+
+                function sessionCookieName() {
+                        return localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
+                }
+
+                (function ensureAuthenticated() {
+                        const token = authToken();
+                        if (!token) {
+                                const dest = encodeURIComponent(window.location.pathname + window.location.search);
+                                window.location.replace('/login?next=' + dest);
+                        }
+                })();
+
+                (function patchFetch() {
+                        const originalFetch = window.fetch.bind(window);
+                        window.fetch = (input, init = {}) => {
+                                const token = authToken();
+                                const headers = new Headers(init.headers || {});
+                                if (token && !headers.has('Authorization')) {
+                                        headers.set('Authorization', 'Bearer ' + token);
+                                }
+                                const finalInit = Object.assign({}, init, { headers });
+                                if (!finalInit.credentials) {
+                                        finalInit.credentials = 'include';
+                                }
+                                return originalFetch(input, finalInit);
+                        };
+                })();
+
+                function updateUserBadge() {
+                        const badge = $('userBadge');
+                        if (!badge) return;
+                        const username = localStorage.getItem(USERNAME_KEY) || 'unknown';
+                        badge.textContent = 'Signed in as ' + username;
+                }
+
+                updateUserBadge();
+
+                $('logoutBtn').addEventListener('click', async (event) => {
+                        event.preventDefault();
+                        try {
+                                await fetch('/logout', { method: 'POST' });
+                        } catch (_) { }
+                        localStorage.removeItem(TOKEN_KEY);
+                        localStorage.removeItem(USERNAME_KEY);
+                        const cookieName = sessionCookieName();
+                        document.cookie = cookieName + '=; Max-Age=0; path=/';
+                        window.location.replace('/login');
+                });
+
+                // ---- Range mode toggle ----
+                function toggleRange() {
 			const m = $('rangeMode').value;
 			$('periodWrap').style.display = (m === 'period') ? 'block' : 'none';
 			$('startWrap').style.display = (m === 'dates') ? 'block' : 'none';
