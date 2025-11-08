@@ -158,6 +158,7 @@ NGROK_ENDPOINT_TEMPLATE = _load_ngrok_template(NGROK_ENDPOINT_TEMPLATE_PATH)
 
 DEFAULT_PUBLIC_BASE_URL = os.getenv("DEFAULT_PUBLIC_BASE_URL", "").rstrip("/")
 
+
 DEFAULT_PUBLIC_BASE_URL = os.getenv(
     "DEFAULT_PUBLIC_BASE_URL",
     "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
@@ -1101,11 +1102,16 @@ async def alpaca_webhook(req: Request):
     secret = os.getenv("ALPACA_WEBHOOK_SECRET")
     sig_header = req.headers.get("X-Webhook-Signature")
     if secret:
+        import hmac, hashlib, base64
+
+        if not sig_header:
+            return _json({"ok": False, "detail": "missing signature"}, 400)
+
         if not sig_header:
             return _json({"ok": False, "detail": "missing signature"}, 400)
 
         import hmac, hashlib, base64
-
+      
         digest = hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()
         expected = base64.b64encode(digest).decode()
         if not hmac.compare_digest(expected, sig_header):
