@@ -194,6 +194,8 @@
         <div class="card">
                 <h1>Neo Cortex AI</h1>
                 <p class="subtitle">Members can sign in below. New access is available exclusively through Whop.</p>
+                <p class="subtitle">Sign in to access the trading dashboard and manage your Alpaca keys.</p>
+
                 <div id="whopNotice" class="notice" hidden></div>
                 <form id="loginForm">
                         <label for="username">Username</label>
@@ -216,8 +218,13 @@
                         </div>
                         <button type="submit" id="loginBtn">Sign In</button>
                 </form>
+
                 <button type="button" class="secondary whop" id="whopBtn">Continue with Whop</button>
                 <button type="button" class="secondary" id="registerBtn" hidden>Complete Whop Registration</button>
+
+                <button type="button" class="secondary" id="registerBtn">Create Account</button>
+                <button type="button" class="secondary whop" id="whopBtn">Continue with Whop</button>
+
                 <div id="message" class="message"></div>
                 <div class="fine-print">Passwords are hashed with PBKDF2-SHA512 and never stored in plain text.</div>
         </div>
@@ -257,10 +264,13 @@
                 const loginBtn = document.getElementById('loginBtn');
                 const registerBtn = document.getElementById('registerBtn');
                 const whopBtn = document.getElementById('whopBtn');
+
                 if (registerBtn) {
                         registerBtn.hidden = true;
                         registerBtn.dataset.mode = '';
                 }
+
+
                 const whopNotice = document.getElementById('whopNotice');
                 const whopExtras = document.getElementById('whopExtras');
                 const accountTypeEl = document.getElementById('accountType');
@@ -309,12 +319,18 @@
                 if (whopToken) {
                         whopMode = true;
                         whopExtras.hidden = false;
+
                         if (registerBtn) {
                                 registerBtn.hidden = false;
                                 registerBtn.textContent = 'Complete Whop Registration';
                                 registerBtn.dataset.mode = 'whop';
                                 registerBtn.disabled = true;
                         }
+
+                        registerBtn.textContent = 'Complete Whop Registration';
+                        registerBtn.dataset.mode = 'whop';
+                        registerBtn.disabled = true;
+
                         if (whopBtn) { whopBtn.style.display = 'none'; }
                         showWhopNotice('Verifying your Whop membership…');
                         (async () => {
@@ -335,7 +351,11 @@
                                                 usernameEl.value = email.split('@')[0];
                                         }
                                         whopSessionValid = true;
+
                                         if (registerBtn) { registerBtn.disabled = false; }
+
+                                        registerBtn.disabled = false;
+
                                 } catch (err) {
                                         console.error(err);
                                         whopSessionValid = false;
@@ -373,10 +393,15 @@
                                 setMessage(err.message || 'Login failed', 'error');
                         } finally {
                                 loginBtn.disabled = false;
+
                                 if (registerBtn && registerBtn.dataset.mode === 'whop') {
                                         const lockRegister = !whopSessionValid;
                                         registerBtn.disabled = lockRegister;
                                 }
+
+                                const lockRegister = registerBtn.dataset.mode === 'whop' && !whopSessionValid;
+                                registerBtn.disabled = lockRegister;
+
                         }
                 });
 
@@ -399,6 +424,47 @@
                         const baseUrl = baseUrlEl.value.trim();
                         if (!apiKey || !apiSecret) {
                                 setMessage('Enter your Alpaca API key and secret to continue.', 'error');
+                                return;
+                        }
+                        if (registerBtn.dataset.mode === 'whop') {
+                                if (!whopSessionValid) {
+                                        setMessage('Your Whop session has expired. Start again from Whop.', 'error');
+                                        return;
+                                }
+                                const apiKey = apiKeyEl.value.trim();
+                                const apiSecret = apiSecretEl.value.trim();
+                                const baseUrl = baseUrlEl.value.trim();
+                                if (!apiKey || !apiSecret) {
+                                        setMessage('Enter your Alpaca API key and secret to continue.', 'error');
+                                        return;
+                                }
+                                registerBtn.disabled = true;
+                                loginBtn.disabled = true;
+                                setMessage('Linking your Whop membership…');
+                                try {
+                                        const payload = {
+                                                token: whopToken,
+                                                username,
+                                                password,
+                                                api_key: apiKey,
+                                                api_secret: apiSecret,
+                                                account_type: (accountTypeEl.value || 'funded').toLowerCase(),
+                                        };
+                                        if (baseUrl) {
+                                                payload.base_url = baseUrl;
+                                        }
+                                        const data = await sendAuth('/register/whop', payload);
+                                        localStorage.setItem(TOKEN_KEY, data.token);
+                                        localStorage.setItem(USERNAME_KEY, data.username || username);
+                                        localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
+                                        setMessage('Welcome aboard! Redirecting…', 'success');
+                                        window.location.replace(nextUrl);
+                                } catch (err) {
+                                        setMessage(err.message || 'Whop registration failed', 'error');
+                                } finally {
+                                        registerBtn.disabled = false;
+                                        loginBtn.disabled = false;
+                                }
                                 return;
                         }
                         registerBtn.disabled = true;
