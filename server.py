@@ -7,15 +7,15 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, shutil, asyncio, importlib
+import os, json, time, shutil, asyncio, importlib, hashlib, sqlite3, secrets
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -153,6 +153,11 @@ DEFAULT_PUBLIC_BASE_URL = os.getenv(
     "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
 ).rstrip("/")
 
+DEFAULT_PUBLIC_BASE_URL = os.getenv(
+    "DEFAULT_PUBLIC_BASE_URL",
+    "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
+).rstrip("/")
+
 # -----------------------------------------------------------------------------
 # Alpaca configuration
 #
@@ -195,15 +200,188 @@ Exog: Dict[str, pd.DataFrame] = {}          # features/fundamentals/signals alig
 IngestStats: Dict[str, Any] = {"tradingview":0, "robinhood":0, "webull":0, "features":0, "candles":0}
 IdleTasks: Dict[str, asyncio.Task] = {}
 
-# --- simple user store for login/registration ---
-# WARNING: this is an in-memory placeholder implementation. For production, use a secure database and
-# proper password hashing (e.g. bcrypt). Do not use plain or weak hashing in production.
-import hashlib, uuid
+# --- authentication and credential storage -------------------------------------------------------
+AUTH_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "auth.db")).resolve()
+AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-Users: Dict[str, str] = {}  # username -> sha256 hashed password
 
-def _hash_pw(pw: str) -> str:
-    return hashlib.sha256(pw.encode('utf-8')).hexdigest()
+def _db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(AUTH_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def _init_auth_db() -> None:
+    with _db_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alpaca_credentials (
+                user_id INTEGER NOT NULL,
+                account_type TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                api_secret TEXT NOT NULL,
+                base_url TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, account_type),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+
+
+_init_auth_db()
+
+
+def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    """Derive a 2048-bit PBKDF2-SHA512 digest and return ``(hash_hex, salt_hex)``."""
+    if salt is None:
+        salt = secrets.token_hex(32)
+    salt_bytes = bytes.fromhex(salt)
+    derived = hashlib.pbkdf2_hmac(
+        "sha512",
+        password.encode("utf-8"),
+        salt_bytes,
+        200_000,
+        dklen=256,
+    )
+    return derived.hex(), salt
+
+
+def _create_session_token(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    with _db_conn() as conn:
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
+            (token, user_id, datetime.now(timezone.utc).isoformat()),
+        )
+    return token
+
+
+def _authorization_token(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    header = authorization.strip()
+    if not header:
+        return None
+    parts = header.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return header
+
+
+def _user_from_token(token: str) -> Optional[sqlite3.Row]:
+    if not token:
+        return None
+    with _db_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id, u.username
+            FROM sessions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.token = ?
+            """,
+            (token,),
+        ).fetchone()
+    return row
+
+
+def _require_user(authorization: Optional[str]) -> sqlite3.Row:
+    token = _authorization_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="authorization required")
+    user = _user_from_token(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="invalid or expired token")
+    return user
+
+
+def _fetch_user_credentials(user_id: int, account_type: str) -> Optional[sqlite3.Row]:
+    with _db_conn() as conn:
+        return conn.execute(
+            """
+            SELECT api_key, api_secret, base_url
+            FROM alpaca_credentials
+            WHERE user_id = ? AND account_type = ?
+            """,
+            (user_id, account_type),
+        ).fetchone()
+
+
+def _save_user_credentials(
+    user_id: int,
+    account_type: str,
+    api_key: str,
+    api_secret: str,
+    base_url: Optional[str],
+) -> None:
+    with _db_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO alpaca_credentials (user_id, account_type, api_key, api_secret, base_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, account_type) DO UPDATE SET
+                api_key = excluded.api_key,
+                api_secret = excluded.api_secret,
+                base_url = excluded.base_url,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                account_type,
+                api_key,
+                api_secret,
+                base_url,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
+def _resolve_alpaca_credentials(account: str, user_id: Optional[int]) -> Dict[str, Optional[str]]:
+    account_type = (account or "paper").strip().lower()
+    if user_id is not None:
+        row = _fetch_user_credentials(user_id, account_type)
+        if row is not None:
+            base_url = row["base_url"] or (
+                ALPACA_BASE_URL_FUND if account_type == "funded" else ALPACA_BASE_URL_PAPER
+            )
+            return {
+                "key": row["api_key"],
+                "secret": row["api_secret"],
+                "base_url": base_url,
+            }
+    if account_type == "funded":
+        return {
+            "key": ALPACA_KEY_FUND,
+            "secret": ALPACA_SECRET_FUND,
+            "base_url": ALPACA_BASE_URL_FUND,
+        }
+    return {
+        "key": ALPACA_KEY_PAPER,
+        "secret": ALPACA_SECRET_PAPER,
+        "base_url": ALPACA_BASE_URL_PAPER,
+    }
 
 def _nocache() -> Dict[str,str]:
     return {"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0", "Pragma":"no-cache", "Expires":"0"}
@@ -433,6 +611,13 @@ class AuthReq(BaseModel):
     password: str
 
 
+class CredentialReq(BaseModel):
+    account_type: str = "paper"
+    api_key: str
+    api_secret: str
+    base_url: Optional[str] = None
+
+
 class AlpacaWebhookTest(BaseModel):
     symbol: str = "SPY"
     quantity: float = 1.0
@@ -446,38 +631,93 @@ class AlpacaWebhookTest(BaseModel):
 @app.post("/register")
 async def register(req: AuthReq):
     """
-    Create a new user account. Stores the username and a hashed password in memory.
-    This is a very basic implementation and should not be used in production without
-    proper security measures. For a real application, store users in a persistent database
-    and use a strong password hashing algorithm (e.g. bcrypt).
+    Create a new user account backed by the SQLite credential store. Passwords are
+    hashed with a 2048-bit PBKDF2-SHA512 digest and salted prior to being persisted.
     """
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
-    if uname in Users:
+    pw_hash, salt = _hash_password_sha2048(req.password)
+    try:
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, salt, created_at) VALUES (?, ?, ?, ?)",
+                (uname, pw_hash, salt, datetime.now(timezone.utc).isoformat()),
+            )
+    except sqlite3.IntegrityError:
         return _json({"ok": False, "detail": "username already exists"}, 400)
-    Users[uname] = _hash_pw(req.password)
     return _json({"ok": True, "created": uname})
 
 @app.post("/login")
 async def login(req: AuthReq):
     """
-    Authenticate a user. On success, returns a simple session token. This token is not
-    persisted and is intended solely for demonstration. A real implementation should
-    issue a JWT or session cookie and validate it on subsequent requests.
+    Authenticate a user and return a bearer token tied to the SQLite credential store.
+    The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
+    manage user-specific Alpaca credentials.
     """
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
-    if Users.get(uname) != _hash_pw(req.password):
+    with _db_conn() as conn:
+        row = conn.execute(
+            "SELECT id, password_hash, salt FROM users WHERE username = ?",
+            (uname,),
+        ).fetchone()
+    if row is None:
         return _json({"ok": False, "detail": "invalid credentials"}, 401)
-    token = str(uuid.uuid4())
-    # in this demo, we do not maintain session state beyond returning the token
+    expected_hash, _ = _hash_password_sha2048(req.password, row["salt"])
+    if expected_hash != row["password_hash"]:
+        return _json({"ok": False, "detail": "invalid credentials"}, 401)
+    token = _create_session_token(row["id"])
     return _json({"ok": True, "token": token, "username": uname})
+
+
+@app.get("/alpaca/credentials")
+async def list_alpaca_credentials(authorization: Optional[str] = Header(None)):
+    """Return the Alpaca credential entries associated with the authenticated user."""
+    user = _require_user(authorization)
+    with _db_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT account_type, api_key, base_url, updated_at
+            FROM alpaca_credentials
+            WHERE user_id = ?
+            ORDER BY account_type
+            """,
+            (user["id"],),
+        ).fetchall()
+    credentials = [
+        {
+            "account_type": row["account_type"],
+            "api_key": row["api_key"],
+            "base_url": row["base_url"],
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
+    return _json({"ok": True, "credentials": credentials})
+
+
+@app.post("/alpaca/credentials")
+async def set_alpaca_credentials(req: CredentialReq, authorization: Optional[str] = Header(None)):
+    """Create or update Alpaca API credentials for the authenticated user."""
+    user = _require_user(authorization)
+    acct_type = (req.account_type or "paper").strip().lower()
+    if acct_type not in {"paper", "funded"}:
+        return _json({"ok": False, "detail": "account_type must be 'paper' or 'funded'"}, 400)
+    api_key = req.api_key.strip()
+    api_secret = req.api_secret.strip()
+    if not api_key or not api_secret:
+        return _json({"ok": False, "detail": "api_key and api_secret are required"}, 400)
+    base_url = (req.base_url or "").strip()
+    if not base_url:
+        base_url = ALPACA_BASE_URL_FUND if acct_type == "funded" else ALPACA_BASE_URL_PAPER
+    _save_user_credentials(user["id"], acct_type, api_key, api_secret, base_url)
+    return _json({"ok": True, "account_type": acct_type, "base_url": base_url})
 
 # --- account data: positions and P&L ---
 @app.get("/positions")
-async def get_positions(account: str = "paper"):
+async def get_positions(account: str = "paper", authorization: Optional[str] = Header(None)):
     """
     Fetch the current positions for the specified Alpaca account. The
     ``account`` parameter selects either the paper or funded account. Environment
@@ -488,14 +728,16 @@ async def get_positions(account: str = "paper"):
     code is provided for illustrative purposes only.
     """
     acct_type = (account or "paper").lower()
-    if acct_type == "funded":
-        key = ALPACA_KEY_FUND
-        secret = ALPACA_SECRET_FUND
-        base_url = ALPACA_BASE_URL_FUND
-    else:
-        key = ALPACA_KEY_PAPER
-        secret = ALPACA_SECRET_PAPER
-        base_url = ALPACA_BASE_URL_PAPER
+    user = None
+    token = _authorization_token(authorization)
+    if token:
+        user = _user_from_token(token)
+        if user is None:
+            return _json({"ok": False, "detail": "invalid or expired token"}, 401)
+    creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
+    key = creds.get("key")
+    secret = creds.get("secret")
+    base_url = creds.get("base_url")
     if not key or not secret:
         return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
     url = f"{base_url}/v2/positions"
@@ -511,7 +753,7 @@ async def get_positions(account: str = "paper"):
         return _json({"ok": False, "detail": f"Failed to fetch positions: {e}"}, 500)
 
 @app.get("/pnl")
-async def get_pnl(account: str = "paper"):
+async def get_pnl(account: str = "paper", authorization: Optional[str] = Header(None)):
     """
     Compute unrealized P&L for the positions held in an Alpaca account. This
     endpoint fetches the open positions from Alpaca and sums the ``unrealized_pl``
@@ -521,14 +763,16 @@ async def get_pnl(account: str = "paper"):
     provided for illustrative purposes only.
     """
     acct_type = (account or "paper").lower()
-    if acct_type == "funded":
-        key = ALPACA_KEY_FUND
-        secret = ALPACA_SECRET_FUND
-        base_url = ALPACA_BASE_URL_FUND
-    else:
-        key = ALPACA_KEY_PAPER
-        secret = ALPACA_SECRET_PAPER
-        base_url = ALPACA_BASE_URL_PAPER
+    user = None
+    token = _authorization_token(authorization)
+    if token:
+        user = _user_from_token(token)
+        if user is None:
+            return _json({"ok": False, "detail": "invalid or expired token"}, 401)
+    creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
+    key = creds.get("key")
+    secret = creds.get("secret")
+    base_url = creds.get("base_url")
     if not key or not secret:
         return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
 

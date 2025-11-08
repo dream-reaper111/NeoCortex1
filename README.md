@@ -149,6 +149,34 @@ appropriate credentials as environment variables before running the server.
 Set only the environment variables you need. If a key/secret pair is missing
 for a given account type, the corresponding endpoint will return an error.
 
+### Per-user credential storage and login
+
+The API now ships with a lightweight SQLite database (`auth.db` by default)
+that stores user accounts and optional Alpaca credentials. Passwords are
+hashed with a salted 2048-bit PBKDF2-SHA512 digest before being persisted.
+
+1. Register a user with `POST /register` and a JSON body of
+   `{ "username": "alice", "password": "<strong-password>" }`.
+2. Log in with `POST /login` using the same payload to receive a bearer
+   token. Supply this token to other endpoints via
+   `Authorization: Bearer <token>`.
+3. To save Alpaca API keys that are unique to the authenticated user, call
+   `POST /alpaca/credentials` with:
+
+   ```json
+   {
+     "account_type": "paper",  // or "funded"
+     "api_key": "YOUR_KEY",
+     "api_secret": "YOUR_SECRET",
+     "base_url": "https://paper-api.alpaca.markets"  // optional
+   }
+   ```
+
+   Calling `GET /alpaca/credentials` returns the stored metadata (API keys are
+   returned, secrets remain server-side). When the bearer token is supplied to
+   `/positions` or `/pnl`, the API automatically prefers the stored credentials
+   over environment defaults.
+
 ### Webhook Verification
 
 If you supply `ALPACA_WEBHOOK_SECRET`, incoming webhook requests must include
