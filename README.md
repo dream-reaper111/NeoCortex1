@@ -94,8 +94,12 @@ that URL and configure it in your Alpaca dashboard.
 By default the helper script attempts to use the reserved ngrok domain
 `tamara-unleavened-nonpromiscuously.ngrok-free.dev`. If that domain is not
 available for your ngrok account, the script automatically falls back to a
-randomly generated domain. To opt into a different reserved domain (or disable
-the default), set the `NGROK_DOMAIN` environment variable before running the
+randomly generated domain. The API also exposes this reserved domain as the
+default webhook URL (via `DEFAULT_PUBLIC_BASE_URL`) so tools such as
+`/alpaca/webhook/test` will include
+`https://tamara-unleavened-nonpromiscuously.ngrok-free.dev/alpaca/webhook` in
+their responses. To opt into a different reserved domain (or disable the
+default), set the `NGROK_DOMAIN` environment variable before running the
 script.
 
 Security hardening options:
@@ -125,13 +129,52 @@ appropriate credentials as environment variables before running the server.
 - **Live trading** (funded):
 
   ```powershell
-  $env:ALPACA_KEY_FUND    = "YOUR_LIVE_KEY"
-  $env:ALPACA_SECRET_FUND = "YOUR_LIVE_SECRET"
-  $env:ALPACA_BASE_URL_FUND = "https://api.alpaca.markets"  # optional
+  $env:ALPACA_KEY_FUND    = "AKCBWHC7VMDNP677TQ4S33FVPN"
+  $env:ALPACA_SECRET_FUND = "F2ocEuxgNwjSQzM3b3oSftw5gbWrjoxSVWXHsdGSW6Td"
+  $env:ALPACA_BASE_URL_FUND = "https://api.alpaca.markets"  # optional when using the default
   ```
 
 Set only the environment variables you need. If a key/secret pair is missing
 for a given account type, the corresponding endpoint will return an error.
+
+### Per-user credential storage and login
+
+The API now ships with a lightweight SQLite database (`auth.db` by default)
+that stores user accounts and optional Alpaca credentials. Passwords are
+hashed with a salted 2048-bit PBKDF2-SHA512 digest before being persisted.
+
+1. Register a user with `POST /register` and a JSON body of
+   `{ "username": "alice", "password": "<strong-password>" }`.
+2. Log in with `POST /login` using the same payload to receive a bearer
+   token. Supply this token to other endpoints via
+   `Authorization: Bearer <token>`.
+
+   A browser-friendly login flow now lives at [`/login`](http://localhost:8000/login).
+   It issues the same bearer token and stores it alongside an HTTP-only session
+   cookie so the `/dashboard` UI can enforce authentication before loading.
+3. To save Alpaca API keys that are unique to the authenticated user, call
+   `POST /alpaca/credentials` with:
+
+   ```json
+   {
+     "account_type": "paper",  // or "funded"
+     "api_key": "YOUR_KEY",
+     "api_secret": "YOUR_SECRET",
+     "base_url": "https://paper-api.alpaca.markets"  // optional
+   }
+   ```
+
+   Calling `GET /alpaca/credentials` returns the stored metadata (API keys are
+   returned, secrets remain server-side). When the bearer token is supplied to
+   `/positions` or `/pnl`, the API automatically prefers the stored credentials
+   over environment defaults.
+
+You can customize how the browser session cookie is issued by setting:
+
+- `SESSION_COOKIE_NAME` – defaults to `session_token`.
+- `SESSION_COOKIE_MAX_AGE` – lifetime in seconds (default 7 days).
+- `SESSION_COOKIE_SAMESITE` – defaults to `lax`.
+- `AUTH_COOKIE_SECURE` – set to `1` to require HTTPS when sending the cookie.
 
 ### Webhook Verification
 
