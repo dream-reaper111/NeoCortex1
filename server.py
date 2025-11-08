@@ -64,6 +64,11 @@ try:
 except FileNotFoundError:
     NGROK_ENDPOINT_TEMPLATE = """<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: {{WEBHOOK_URL}}</p></body></html>"""
 
+DEFAULT_PUBLIC_BASE_URL = os.getenv(
+    "DEFAULT_PUBLIC_BASE_URL",
+    "https://tamara-unleavened-nonpromiscuously.ngrok-free.dev",
+).rstrip("/")
+
 # -----------------------------------------------------------------------------
 # Alpaca configuration
 #
@@ -91,8 +96,14 @@ ALPACA_KEY_PAPER = os.getenv("ALPACA_KEY_PAPER")
 ALPACA_SECRET_PAPER = os.getenv("ALPACA_SECRET_PAPER")
 ALPACA_BASE_URL_PAPER = os.getenv("ALPACA_BASE_URL_PAPER", "https://paper-api.alpaca.markets")
 
-ALPACA_KEY_FUND = os.getenv("ALPACA_KEY_FUND")
-ALPACA_SECRET_FUND = os.getenv("ALPACA_SECRET_FUND")
+ALPACA_KEY_FUND = os.getenv(
+    "ALPACA_KEY_FUND",
+    "AKCBWHC7VMDNP677TQ4S33FVPN",
+)
+ALPACA_SECRET_FUND = os.getenv(
+    "ALPACA_SECRET_FUND",
+    "F2ocEuxgNwjSQzM3b3oSftw5gbWrjoxSVWXHsdGSW6Td",
+)
 ALPACA_BASE_URL_FUND = os.getenv("ALPACA_BASE_URL_FUND", "https://api.alpaca.markets")
 
 Buffers: Dict[str, pd.DataFrame] = {}
@@ -299,8 +310,9 @@ async def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if not host:
-        host = f"localhost:{API_PORT}"
-    base_url = f"{proto}://{host}".rstrip("/")
+        base_url = DEFAULT_PUBLIC_BASE_URL
+    else:
+        base_url = f"{proto}://{host}".rstrip("/")
     webhook_url = f"{base_url}/alpaca/webhook"
     html = (
         NGROK_ENDPOINT_TEMPLATE.replace("{{WEBHOOK_URL}}", webhook_url)
@@ -564,6 +576,7 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
             "payload": payload,
             "suggested_signature": signature,
             "artifact": f"/public/{path.relative_to(PUBLIC_DIR)}",
+            "default_webhook_url": f"{DEFAULT_PUBLIC_BASE_URL}/alpaca/webhook",
         }
     )
 

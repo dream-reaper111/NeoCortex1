@@ -94,8 +94,12 @@ that URL and configure it in your Alpaca dashboard.
 By default the helper script attempts to use the reserved ngrok domain
 `tamara-unleavened-nonpromiscuously.ngrok-free.dev`. If that domain is not
 available for your ngrok account, the script automatically falls back to a
-randomly generated domain. To opt into a different reserved domain (or disable
-the default), set the `NGROK_DOMAIN` environment variable before running the
+randomly generated domain. The API also exposes this reserved domain as the
+default webhook URL (via `DEFAULT_PUBLIC_BASE_URL`) so tools such as
+`/alpaca/webhook/test` will include
+`https://tamara-unleavened-nonpromiscuously.ngrok-free.dev/alpaca/webhook` in
+their responses. To opt into a different reserved domain (or disable the
+default), set the `NGROK_DOMAIN` environment variable before running the
 script.
 
 Security hardening options:
@@ -125,9 +129,9 @@ appropriate credentials as environment variables before running the server.
 - **Live trading** (funded):
 
   ```powershell
-  $env:ALPACA_KEY_FUND    = "YOUR_LIVE_KEY"
-  $env:ALPACA_SECRET_FUND = "YOUR_LIVE_SECRET"
-  $env:ALPACA_BASE_URL_FUND = "https://api.alpaca.markets"  # optional
+  $env:ALPACA_KEY_FUND    = "AKCBWHC7VMDNP677TQ4S33FVPN"
+  $env:ALPACA_SECRET_FUND = "F2ocEuxgNwjSQzM3b3oSftw5gbWrjoxSVWXHsdGSW6Td"
+  $env:ALPACA_BASE_URL_FUND = "https://api.alpaca.markets"  # optional when using the default
   ```
 
 Set only the environment variables you need. If a key/secret pair is missing
