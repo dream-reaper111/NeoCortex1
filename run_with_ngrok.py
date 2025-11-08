@@ -28,23 +28,10 @@ Note: This script blocks until the server shuts down. To stop, press Ctrl+C.
 import os
 from urllib.parse import urlparse
 
-DEFAULT_NGROK_AUTH_TOKEN = "33aDTBUq8xRsoeabQ5HE1rWk0U3_3hvYA6JV8MPegF1DyXMAT"
-# The reserved ngrok hostname we default to when none is provided. Stored
-# without a protocol so the string can be used directly in ngrok's domain
-# parameter even when older local copies of this script accidentally included
-# merge-conflict markers.
-DEFAULT_NGROK_DOMAIN = "neocortex.internal"
-DEFAULT_NGROK_DOMAIN = "http://neocortex.internal/"
-
-DEFAULT_NGROK_AUTH_TOKEN = "33aDTBUq8xRsoeabQ5HE1rWk0U3_3hvYA6JV8MPegF1DyXMAT"
-
 from dotenv import load_dotenv
 from pyngrok import ngrok
 from pyngrok.exception import PyngrokNgrokHTTPError
 import uvicorn
-
-
-DEFAULT_RESERVED_DOMAIN = "tamara-unleavened-nonpromiscuously.ngrok-free.dev"
 
 try:
     # Import the FastAPI app from server.py
@@ -79,23 +66,36 @@ def main() -> None:
     load_dotenv(override=False)
     # read port and auth token from environment
     port = int(os.getenv("API_PORT", "8000"))
+
     auth_token = os.getenv("NGROK_AUTH_TOKEN")
     if not auth_token:
-        auth_token = DEFAULT_NGROK_AUTH_TOKEN
-    if auth_token:
-        ngrok.set_auth_token(auth_token)
+        raise RuntimeError(
+            "NGROK_AUTH_TOKEN is required to start the tunnel. "
+            "Generate a token from the ngrok dashboard and set it in your environment "
+            "or .env file before running this script."
+        )
+
+    ngrok.set_auth_token(auth_token)
 
     connect_kwargs = {"bind_tls": True}
-    basic_auth = os.getenv("NGROK_BASIC_AUTH")
-    if basic_auth:
-        connect_kwargs["basic_auth"] = basic_auth
-    domain = _normalize_domain(os.getenv("NGROK_DOMAIN") or DEFAULT_NGROK_DOMAIN)
-    domain_env = os.getenv("NGROK_DOMAIN")
-    if domain_env is None:
-        domain = DEFAULT_RESERVED_DOMAIN
-    else:
-        domain = domain_env.strip() or None
 
+    basic_auth = os.getenv("NGROK_BASIC_AUTH")
+    if not basic_auth:
+        username = os.getenv("NGROK_BASIC_AUTH_USER", "").strip()
+        password = os.getenv("NGROK_BASIC_AUTH_PASS", "").strip()
+        if username and password:
+            basic_auth = f"{username}:{password}"
+
+    if not basic_auth or ":" not in basic_auth:
+        raise RuntimeError(
+            "NGROK_BASIC_AUTH (or NGROK_BASIC_AUTH_USER/NGROK_BASIC_AUTH_PASS) must be set "
+            "to protect the public tunnel with HTTP basic authentication."
+        )
+
+    connect_kwargs["basic_auth"] = basic_auth
+
+    domain_env = os.getenv("NGROK_DOMAIN")
+    domain = _normalize_domain(domain_env)
     if domain:
         connect_kwargs["domain"] = domain
     allow_cidrs = [cidr.strip() for cidr in (os.getenv("NGROK_ALLOWED_CIDRS") or "").split(",") if cidr.strip()]
