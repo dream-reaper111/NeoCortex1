@@ -1100,6 +1100,13 @@ async def alpaca_webhook(req: Request):
         payload = None
     # optional signature verification
     secret = os.getenv("ALPACA_WEBHOOK_SECRET")
+    if secret:
+        sig_header = req.headers.get("X-Webhook-Signature")
+        if not sig_header:
+            return _json({"ok": False, "detail": "missing signature"}, 400)
+
+        import hmac, hashlib, base64
+
     sig_header = req.headers.get("X-Webhook-Signature")
     if secret:
         import hmac, hashlib, base64
