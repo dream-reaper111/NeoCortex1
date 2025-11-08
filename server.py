@@ -131,6 +131,7 @@ ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
 
 LOGIN_PAGE = PUBLIC_DIR / "login.html"
+ADMIN_LOGIN_PAGE = PUBLIC_DIR / "admin-login.html"
 
 ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
 ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
@@ -2139,6 +2140,13 @@ def login_page():
     if not LOGIN_PAGE.exists():
         return HTMLResponse("<h1>public/login.html missing</h1>", status_code=404, headers=_nocache())
     return FileResponse(LOGIN_PAGE, media_type="text/html", headers=_nocache())
+
+
+@app.get("/admin/login")
+def admin_login_page():
+    if not ADMIN_LOGIN_PAGE.exists():
+        return HTMLResponse("<h1>public/admin-login.html missing</h1>", status_code=404, headers=_nocache())
+    return FileResponse(ADMIN_LOGIN_PAGE, media_type="text/html", headers=_nocache())
 
 
 @app.get("/dashboard")
