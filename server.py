@@ -60,6 +60,14 @@ ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
 ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
 ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
+NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
+try:
+    NGROK_ENDPOINT_TEMPLATE = NGROK_ENDPOINT_TEMPLATE_PATH.read_text(encoding="utf-8")
+except FileNotFoundError:
+    NGROK_ENDPOINT_TEMPLATE = (
+        "<!doctype html><html><body><h1>ngrok endpoint</h1>"
+        "<p>Webhook URL: {{WEBHOOK_URL}}</p></body></html>"
+    )
 
 # -----------------------------------------------------------------------------
 # Alpaca configuration
