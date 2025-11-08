@@ -29,6 +29,7 @@ import os
 
 from dotenv import load_dotenv
 from pyngrok import ngrok
+from pyngrok.exception import PyngrokNgrokHTTPError
 import uvicorn
 
 try:
@@ -60,7 +61,24 @@ def main() -> None:
     if allow_cidrs:
         connect_kwargs["ip_restriction"] = {"allow_cidrs": allow_cidrs}
 
-    tunnel = ngrok.connect(port, "http", **connect_kwargs)
+    try:
+        tunnel = ngrok.connect(port, "http", **connect_kwargs)
+    except PyngrokNgrokHTTPError as error:
+        error_text = str(error)
+        if domain and "ERR_NGROK_15013" in error_text:
+            print(
+                "* Requested ngrok dev domain not found. Falling back to a random domain.\n"
+                "  To use a custom domain, reserve one in the ngrok dashboard and set NGROK_DOMAIN.",
+                flush=True,
+            )
+            fallback_kwargs = {k: v for k, v in connect_kwargs.items() if k != "domain"}
+            tunnel = ngrok.connect(port, "http", **fallback_kwargs)
+        else:
+            raise RuntimeError(
+                "Unable to start ngrok tunnel.\n"
+                "Original error:\n"
+                f"{error_text}"
+            ) from error
     public_url = tunnel.public_url
     print("* ngrok tunnel established: {} -> http://127.0.0.1:{}".format(public_url, port), flush=True)
     if basic_auth:
