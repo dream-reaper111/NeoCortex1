@@ -27,6 +27,8 @@ Note: This script blocks until the server shuts down. To stop, press Ctrl+C.
 
 import os
 
+DEFAULT_NGROK_AUTH_TOKEN = "33aDTBUq8xRsoeabQ5HE1rWk0U3_3hvYA6JV8MPegF1DyXMAT"
+
 from dotenv import load_dotenv
 from pyngrok import ngrok
 from pyngrok.exception import PyngrokNgrokHTTPError
@@ -47,6 +49,8 @@ def main() -> None:
     # read port and auth token from environment
     port = int(os.getenv("API_PORT", "8000"))
     auth_token = os.getenv("NGROK_AUTH_TOKEN")
+    if not auth_token:
+        auth_token = DEFAULT_NGROK_AUTH_TOKEN
     if auth_token:
         ngrok.set_auth_token(auth_token)
 
