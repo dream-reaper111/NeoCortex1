@@ -29,6 +29,11 @@ import os
 from urllib.parse import urlparse
 
 DEFAULT_NGROK_AUTH_TOKEN = "33aDTBUq8xRsoeabQ5HE1rWk0U3_3hvYA6JV8MPegF1DyXMAT"
+# The reserved ngrok hostname we default to when none is provided. Stored
+# without a protocol so the string can be used directly in ngrok's domain
+# parameter even when older local copies of this script accidentally included
+# merge-conflict markers.
+DEFAULT_NGROK_DOMAIN = "neocortex.internal"
 DEFAULT_NGROK_DOMAIN = "http://neocortex.internal/"
 
 DEFAULT_NGROK_AUTH_TOKEN = "33aDTBUq8xRsoeabQ5HE1rWk0U3_3hvYA6JV8MPegF1DyXMAT"
@@ -85,7 +90,6 @@ def main() -> None:
     if basic_auth:
         connect_kwargs["basic_auth"] = basic_auth
     domain = _normalize_domain(os.getenv("NGROK_DOMAIN") or DEFAULT_NGROK_DOMAIN)
-=======
     domain_env = os.getenv("NGROK_DOMAIN")
     if domain_env is None:
         domain = DEFAULT_RESERVED_DOMAIN

@@ -100,6 +100,7 @@ randomly generated domain. To opt into a different reserved domain (or disable
 the default), set the `NGROK_DOMAIN` environment variable before running the
 script.
 
+
 Security hardening options:
 
 - `NGROK_BASIC_AUTH="user:pass"` enables HTTP basic authentication on the
@@ -110,9 +111,14 @@ Security hardening options:
 - `NGROK_DOMAIN=custom.ngrok-free.app` overrides the default
   `neocortex.internal` reservation (requires an ngrok plan that supports
   reserved domains).
+
+
+- `NGROK_DOMAIN=custom.ngrok-free.app` overrides the default
+  `neocortex.internal` reservation (requires an ngrok plan that supports
+  reserved domains).
 - `NGROK_DOMAIN=custom.ngrok-free.app` requests a reserved domain (requires an
   ngrok plan that supports it). Set it to an empty string to use a random
-  ngrok hostname instead of the default reserved domain.
+
 
 ## Configuring Alpaca
 
