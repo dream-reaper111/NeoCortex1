@@ -1162,6 +1162,77 @@ async def get_positions(
     except Exception as exc:
         return _json({"ok": False, "detail": f"Failed to fetch positions: {exc}"}, 500)
 
+
+@app.post("/positions/{symbol}/close")
+async def close_position(
+    symbol: str,
+    account: str = "paper",
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    """Close a single Alpaca position for the authenticated user."""
+
+    if not symbol:
+        return _json({"ok": False, "detail": "symbol is required"}, 400)
+
+    token = _authorization_token(authorization) or session_token
+    if not token:
+        return _json({"ok": False, "detail": "authorization required"}, 401)
+
+    user = _user_from_token(token)
+    if user is None:
+        return _json({"ok": False, "detail": "invalid or expired token"}, 401)
+
+    creds = _resolve_alpaca_credentials(account, user["id"])
+    key = creds.get("key")
+    secret = creds.get("secret")
+    base_url = creds.get("base_url")
+    if not key or not secret:
+        return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
+
+    url = f"{base_url}/v2/positions/{symbol}"
+    headers = {
+        "APCA-API-KEY-ID": key,
+        "APCA-API-SECRET-KEY": secret,
+    }
+    try:
+        resp = requests.delete(url, headers=headers)
+    except Exception as exc:
+        return _json({"ok": False, "detail": f"Failed to close position: {exc}"}, 500)
+
+    alpaca_payload: Optional[Any] = None
+    try:
+        if resp.content:
+            alpaca_payload = resp.json()
+    except ValueError:
+        alpaca_payload = None
+
+    if 200 <= resp.status_code < 300:
+        detail = (
+            (alpaca_payload or {}).get("message")
+            if isinstance(alpaca_payload, dict)
+            else None
+        ) or f"Closed position for {symbol.upper()}"
+        body: Dict[str, Any] = {"ok": True, "detail": detail}
+        if alpaca_payload is not None:
+            body["alpaca"] = alpaca_payload
+        return _json(body, resp.status_code)
+
+    error_detail: Optional[str] = None
+    if isinstance(alpaca_payload, dict):
+        error_detail = (
+            alpaca_payload.get("message")
+            or alpaca_payload.get("error")
+            or alpaca_payload.get("detail")
+        )
+    if not error_detail:
+        error_detail = resp.text.strip() or "Failed to close position"
+    error_body: Dict[str, Any] = {"ok": False, "detail": error_detail}
+    if alpaca_payload is not None:
+        error_body["alpaca"] = alpaca_payload
+    status_code = resp.status_code or 502
+    return _json(error_body, status_code)
+
 @app.get("/pnl")
 async def get_pnl(
     account: str = "paper",
