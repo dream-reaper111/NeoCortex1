@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 # ---- Torch compile guards (before any torch/model import) ----
@@ -58,6 +58,28 @@ LIQUIDITY_ASSETS = LIQUIDITY_DIR / "assets"
 LIQUIDITY_ASSETS.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
+
+ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
+ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
+
+NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
+
+
+def _load_ngrok_template(path: Path) -> str:
+    """Best-effort loader for the ngrok cloud endpoint HTML template."""
+
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # Fall back to a tiny inline page so the endpoint still renders
+        # something useful even if the repository asset is missing.
+        return (
+            "<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: "
+            "{{WEBHOOK_URL}}</p></body></html>"
+        )
+
+
+NGROK_ENDPOINT_TEMPLATE = _load_ngrok_template(NGROK_ENDPOINT_TEMPLATE_PATH)
 
 # -----------------------------------------------------------------------------
 # Alpaca configuration
@@ -171,6 +193,21 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
+app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
+
+
+@app.get("/ngrok/cloud-endpoint", response_class=HTMLResponse)
+def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
+    """Serve a tiny HTML page that displays the tunnel webhook URL."""
+
+    base_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{base_url}/alpaca/webhook"
+
+    html = (
+        NGROK_ENDPOINT_TEMPLATE.replace("{{WEBHOOK_URL}}", webhook_url)
+        .replace("{{WEBHOOK_HOST}}", base_url)
+    )
+    return HTMLResponse(html, headers=_nocache())
 
 # ---------- normalizers ----------
 def standardize_ohlcv(raw: pd.DataFrame, ticker: Optional[str]=None) -> pd.DataFrame:
@@ -545,6 +582,34 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
             "artifact": f"/public/{path.relative_to(PUBLIC_DIR)}",
         }
     )
+
+
+@app.get("/alpaca/webhook/tests")
+def alpaca_webhook_tests():
+    """Return recently generated Alpaca webhook test artifacts."""
+    tests = []
+    for file_path in sorted(ALPACA_TEST_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            payload = json.loads(file_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        symbol = (
+            (payload.get("order") or {}).get("symbol")
+            or payload.get("symbol")
+            or payload.get("ticker")
+            or ""
+        )
+        stat = file_path.stat()
+        tests.append(
+            {
+                "name": file_path.name,
+                "symbol": symbol,
+                "created": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                "size": stat.st_size,
+                "url": f"/public/{file_path.relative_to(PUBLIC_DIR)}",
+            }
+        )
+    return _json({"ok": True, "tests": tests})
 
 # --- ingestion: TradingView (signals + bars optional) ---
 @app.post("/webhook/tradingview")
