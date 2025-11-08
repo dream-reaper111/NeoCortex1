@@ -82,6 +82,28 @@ except FileNotFoundError:
 ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
 ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
 
+ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
+ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
+
+NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
+
+
+def _load_ngrok_template(path: Path) -> str:
+    """Best-effort loader for the ngrok cloud endpoint HTML template."""
+
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # Fall back to a tiny inline page so the endpoint still renders
+        # something useful even if the repository asset is missing.
+        return (
+            "<!doctype html><html><body><h1>ngrok endpoint</h1><p>Webhook URL: "
+            "{{WEBHOOK_URL}}</p></body></html>"
+        )
+
+
+NGROK_ENDPOINT_TEMPLATE = _load_ngrok_template(NGROK_ENDPOINT_TEMPLATE_PATH)
+
 # -----------------------------------------------------------------------------
 # Alpaca configuration
 #
@@ -209,8 +231,7 @@ def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
         .replace("{{WEBHOOK_HOST}}", base_url)
     )
     return HTMLResponse(html, headers=_nocache())
-=======
-main
+  
 
 # ---------- normalizers ----------
 def standardize_ohlcv(raw: pd.DataFrame, ticker: Optional[str]=None) -> pd.DataFrame:
