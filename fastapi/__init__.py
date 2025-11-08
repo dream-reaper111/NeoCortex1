@@ -1,0 +1,318 @@
+from __future__ import annotations
+
+import asyncio
+import inspect
+import json
+import re
+from http import HTTPStatus
+from types import SimpleNamespace
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Pattern, Tuple, Type, Union
+from urllib.parse import parse_qs, urlsplit
+
+from .responses import JSONResponse, Response
+
+__all__ = [
+    "FastAPI",
+    "HTTPException",
+    "Request",
+    "Header",
+    "Cookie",
+]
+
+__version__ = "0.1.0-stub"
+
+
+class HTTPException(Exception):
+    def __init__(self, status_code: int, detail: Any = None, headers: Optional[Dict[str, str]] = None) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+        self.headers = headers or {}
+
+
+class HeaderInfo:
+    __slots__ = ("default", "alias")
+
+    def __init__(self, default: Any = None, alias: Optional[str] = None) -> None:
+        self.default = default
+        self.alias = alias
+
+
+class CookieInfo:
+    __slots__ = ("default", "alias")
+
+    def __init__(self, default: Any = None, alias: Optional[str] = None) -> None:
+        self.default = default
+        self.alias = alias
+
+
+def Header(default: Any = None, *, alias: Optional[str] = None) -> HeaderInfo:
+    return HeaderInfo(default=default, alias=alias)
+
+
+def Cookie(default: Any = None, *, alias: Optional[str] = None) -> CookieInfo:
+    return CookieInfo(default=default, alias=alias)
+
+
+class Headers:
+    def __init__(self, items: Iterable[Tuple[str, str]]) -> None:
+        store: Dict[str, str] = {}
+        for key, value in items:
+            store[key.lower()] = value
+        self._store = store
+
+    def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        return self._store.get(key.lower(), default)
+
+    def __contains__(self, key: str) -> bool:
+        return key.lower() in self._store
+
+    def __getitem__(self, key: str) -> str:
+        return self._store[key.lower()]
+
+    def items(self) -> Iterable[Tuple[str, str]]:
+        return self._store.items()
+
+
+class RequestURL(SimpleNamespace):
+    def __str__(self) -> str:  # pragma: no cover - convenience method
+        query = getattr(self, "query", "")
+        if query:
+            query = f"?{query}"
+        return f"{self.scheme}://{self.netloc}{self.path}{query}"
+
+
+class Request:
+    def __init__(
+        self,
+        method: str,
+        target: str,
+        headers: Iterable[Tuple[str, str]],
+        body: bytes,
+        client: Tuple[str, int],
+        scheme: str = "http",
+    ) -> None:
+        parts = urlsplit(target)
+        self.method = method.upper()
+        self.path = parts.path or "/"
+        self.query = parts.query
+        self.query_params = {k: v[0] if isinstance(v, list) else v for k, v in parse_qs(parts.query, keep_blank_values=True).items()}
+        self.headers = Headers(headers)
+        self._body = body
+        self._json: Any = ...
+        self._json_loaded = False
+        host = self.headers.get("host", "localhost")
+        self.url = RequestURL(scheme=scheme, netloc=host, path=self.path, query=self.query)
+        self.client = client
+        self.cookies = self._parse_cookies(self.headers.get("cookie"))
+
+    @staticmethod
+    def _parse_cookies(header_value: Optional[str]) -> Dict[str, str]:
+        if not header_value:
+            return {}
+        cookies: Dict[str, str] = {}
+        for chunk in header_value.split(";"):
+            if "=" not in chunk:
+                continue
+            name, value = chunk.split("=", 1)
+            cookies[name.strip()] = value.strip()
+        return cookies
+
+    async def body(self) -> bytes:
+        return self._body
+
+    async def json(self) -> Any:
+        if not self._json_loaded:
+            if not self._body:
+                self._json = {}
+            else:
+                self._json = json.loads(self._body.decode("utf-8"))
+            self._json_loaded = True
+        return self._json
+
+    async def text(self) -> str:
+        return self._body.decode("utf-8")
+
+
+class _Route:
+    __slots__ = ("path", "methods", "endpoint", "response_class", "regex", "param_names")
+
+    def __init__(self, path: str, methods: Tuple[str, ...], endpoint: Callable[..., Any], response_class: Optional[type]) -> None:
+        self.path = path
+        self.methods = tuple(m.upper() for m in methods)
+        self.endpoint = endpoint
+        self.response_class = response_class
+        self.regex, self.param_names = self._compile_path(path)
+
+    @staticmethod
+    def _compile_path(path: str) -> Tuple[Pattern[str], List[str]]:
+        param_regex = re.compile(r"{([^}/]+)}")
+        idx = 0
+        regex = "^"
+        param_names: List[str] = []
+        for match in param_regex.finditer(path):
+            regex += re.escape(path[idx:match.start()])
+            name = match.group(1)
+            param_names.append(name)
+            regex += r"(?P<%s>[^/]+)" % name
+            idx = match.end()
+        regex += re.escape(path[idx:])
+        regex += "$"
+        return re.compile(regex), param_names
+
+    def matches(self, method: str, path: str) -> Optional[re.Match[str]]:
+        if method.upper() not in self.methods:
+            return None
+        return self.regex.match(path)
+
+
+class FastAPI:
+    def __init__(self, title: str = "FastAPI", version: str = "0.1.0", lifespan: Optional[Callable[["FastAPI"], Awaitable[Any]]] = None) -> None:
+        self.title = title
+        self.version = version
+        self._routes: List[_Route] = []
+        self._mounts: List[Tuple[str, Any]] = []
+        self._lifespan_factory = lifespan
+        self._lifespan_cm = lifespan(self) if lifespan else None
+
+    def mount(self, path: str, app: Any, name: Optional[str] = None) -> None:
+        prefix = path.rstrip("/") or "/"
+        self._mounts.append((prefix, app))
+
+    def add_api_route(self, path: str, endpoint: Callable[..., Any], methods: Iterable[str], response_class: Optional[type] = None) -> None:
+        route = _Route(path, tuple(methods), endpoint, response_class)
+        self._routes.append(route)
+
+    def get(self, path: str, *, response_class: Optional[type] = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            self.add_api_route(path, func, ("GET",), response_class=response_class)
+            return func
+
+        return decorator
+
+    def post(self, path: str, *, response_class: Optional[type] = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            self.add_api_route(path, func, ("POST",), response_class=response_class)
+            return func
+
+        return decorator
+
+    async def _startup(self) -> None:
+        if self._lifespan_cm is not None:
+            await self._lifespan_cm.__aenter__()
+
+    async def _shutdown(self) -> None:
+        if self._lifespan_cm is not None:
+            await self._lifespan_cm.__aexit__(None, None, None)
+
+    async def _handle(self, request: Request) -> Response:
+        path = request.path
+        for prefix, app in self._mounts:
+            if prefix == "/":
+                continue
+            if path == prefix or path.startswith(prefix + "/"):
+                sub_path = path[len(prefix) :] or "/"
+                if hasattr(app, "get_response"):
+                    result = app.get_response(sub_path, request)
+                    if inspect.isawaitable(result):
+                        result = await result
+                    if not isinstance(result, Response):
+                        raise HTTPException(500, "Static mount did not return a Response")
+                    return result
+        for route in self._routes:
+            match = route.matches(request.method, path)
+            if not match:
+                continue
+            path_params = {k: v for k, v in match.groupdict().items()}
+            try:
+                result = await self._call_endpoint(route, request, path_params)
+            except HTTPException as exc:
+                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+            except Exception as exc:  # pragma: no cover - unexpected error path
+                return JSONResponse({"detail": f"Internal Server Error: {exc}"}, status_code=500)
+            return self._to_response(result, route.response_class)
+        raise HTTPException(404, "Not Found")
+
+    async def _call_endpoint(self, route: _Route, request: Request, path_params: Dict[str, str]) -> Any:
+        endpoint = route.endpoint
+        signature = inspect.signature(endpoint)
+        kwargs: Dict[str, Any] = {}
+        json_body: Any = None
+        json_loaded = False
+        for name, param in signature.parameters.items():
+            annotation = param.annotation
+            if annotation is Request or annotation is inspect._empty and name == "request":
+                kwargs[name] = request
+                continue
+            if name in path_params:
+                kwargs[name] = path_params[name]
+                continue
+            default = param.default
+            if isinstance(default, HeaderInfo):
+                header_name = default.alias or name.replace("_", "-")
+                value = request.headers.get(header_name)
+                kwargs[name] = value if value is not None else default.default
+                continue
+            if isinstance(default, CookieInfo):
+                cookie_name = default.alias or name
+                value = request.cookies.get(cookie_name, default.default)
+                kwargs[name] = value
+                continue
+            if annotation is not inspect._empty:
+                base_model = _lookup_basemodel(annotation)
+                if base_model is not None:
+                    if not json_loaded:
+                        json_body = await request.json()
+                        json_loaded = True
+                    kwargs[name] = base_model.parse_obj(json_body)
+                    continue
+            if request.method in {"POST", "PUT", "PATCH"}:
+                if not json_loaded:
+                    try:
+                        json_body = await request.json()
+                    except Exception:
+                        json_body = {}
+                    json_loaded = True
+                if isinstance(json_body, dict) and name in json_body:
+                    kwargs[name] = json_body[name]
+                    continue
+            if name in request.query_params:
+                kwargs[name] = request.query_params[name]
+                continue
+            if default is not inspect._empty:
+                kwargs[name] = default
+                continue
+            raise HTTPException(400, f"Missing required parameter '{name}'")
+        result = endpoint(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    def _to_response(self, result: Any, response_class: Optional[type]) -> Response:
+        if isinstance(result, Response):
+            return result
+        if result is None:
+            return Response(b"", status_code=204)
+        if response_class is not None:
+            if issubclass(response_class, Response):
+                return response_class(result)
+        if isinstance(result, (bytes, bytearray)):
+            return Response(bytes(result))
+        if isinstance(result, str):
+            return Response(result.encode("utf-8"))
+        if isinstance(result, Response):
+            return result
+        return JSONResponse(result)
+
+
+def _lookup_basemodel(annotation: Any) -> Optional[Type[Any]]:
+    try:
+        from pydantic import BaseModel  # type: ignore
+    except Exception:  # pragma: no cover - pydantic missing
+        return None
+    try:
+        if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
+            return annotation
+    except Exception:
+        return None
+    return None
