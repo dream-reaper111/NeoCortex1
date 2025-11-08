@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+        <meta charset="utf-8" />
+        <title>Neo Cortex AI – Admin Sign In</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+                :root {
+                        --bg: #06090f;
+                        --panel: #101726;
+                        --border: #1b2535;
+                        --accent: #3b82f6;
+                        --text: #e6edf6;
+                        --muted: #93a7c3;
+                        --danger: #ff4d4f;
+                        --success: #2ecc71;
+                }
+
+                * { box-sizing: border-box; }
+
+                body {
+                        margin: 0;
+                        min-height: 100vh;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        background: radial-gradient(circle at top, rgba(59,130,246,0.25), transparent 55%), var(--bg);
+                        color: var(--text);
+                        font: 14px/1.5 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+                        padding: 20px;
+                }
+
+                .card {
+                        width: min(420px, 100%);
+                        background: rgba(16, 23, 38, 0.92);
+                        border: 1px solid rgba(59, 130, 246, 0.25);
+                        border-radius: 16px;
+                        padding: 28px 26px;
+                        box-shadow: 0 20px 60px rgba(5, 12, 25, 0.45);
+                        backdrop-filter: blur(12px);
+                }
+
+                h1 {
+                        margin: 0 0 8px;
+                        font-size: 26px;
+                        letter-spacing: 0.3px;
+                }
+
+                p.subtitle {
+                        margin: 0 0 24px;
+                        color: var(--muted);
+                        font-size: 13px;
+                }
+
+                label {
+                        display: block;
+                        font-size: 12px;
+                        letter-spacing: 0.4px;
+                        text-transform: uppercase;
+                        color: var(--muted);
+                        margin-bottom: 6px;
+                }
+
+                input[type="text"],
+                input[type="password"] {
+                        width: 100%;
+                        padding: 10px 12px;
+                        border-radius: 10px;
+                        border: 1px solid var(--border);
+                        background: rgba(7, 11, 19, 0.85);
+                        color: var(--text);
+                        outline: none;
+                        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+                        margin-bottom: 16px;
+                }
+
+                input:focus {
+                        border-color: rgba(59, 130, 246, 0.85);
+                        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+                }
+
+                button {
+                        width: 100%;
+                        padding: 12px 14px;
+                        border: none;
+                        border-radius: 10px;
+                        background: linear-gradient(135deg, rgba(59,130,246,0.95), rgba(129,140,248,0.95));
+                        color: #f8fbff;
+                        font-weight: 600;
+                        letter-spacing: 0.4px;
+                        cursor: pointer;
+                        transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.2s ease;
+                }
+
+                button:disabled {
+                        cursor: wait;
+                        opacity: 0.65;
+                        box-shadow: none;
+                }
+
+                button:not(:disabled):hover {
+                        transform: translateY(-1px);
+                        box-shadow: 0 10px 28px rgba(59, 130, 246, 0.35);
+                }
+
+                .secondary {
+                        margin-top: 12px;
+                        background: rgba(16, 23, 38, 0.75);
+                        border: 1px solid rgba(59, 130, 246, 0.35);
+                        color: var(--text);
+                }
+
+                .message {
+                        margin-top: 18px;
+                        min-height: 24px;
+                        font-size: 13px;
+                }
+
+                .message.error { color: var(--danger); }
+                .message.success { color: var(--success); }
+
+                .fine-print {
+                        margin-top: 24px;
+                        color: rgba(147, 167, 195, 0.75);
+                        font-size: 11px;
+                        text-align: center;
+                }
+        </style>
+</head>
+<body>
+        <div class="card">
+                <h1>Admin Portal</h1>
+                <p class="subtitle">Sign in to manage Neo Cortex AI configuration and monitor activity.</p>
+                <form id="loginForm">
+                        <label for="username">Username</label>
+                        <input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required />
+                        <label for="password">Password</label>
+                        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+                        <button type="submit" id="loginBtn">Sign In</button>
+                </form>
+                <button type="button" class="secondary" id="registerBtn">Create Admin Account</button>
+                <div id="message" class="message"></div>
+                <div class="fine-print">Passwords are hashed with PBKDF2-SHA512 and never stored in plain text.</div>
+        </div>
+
+        <script>
+                const TOKEN_KEY = 'nc_token';
+                const USERNAME_KEY = 'nc_user';
+                const COOKIE_NAME_KEY = 'nc_cookie';
+                const params = new URLSearchParams(window.location.search);
+
+                function resolveNext(candidate) {
+                        if (!candidate) { return '/dashboard'; }
+                        try {
+                                const parsed = new URL(candidate, window.location.origin);
+                                if (parsed.origin !== window.location.origin) {
+                                        return '/dashboard';
+                                }
+                                return parsed.pathname + parsed.search + parsed.hash;
+                        } catch (_) {
+                                return '/dashboard';
+                        }
+                }
+
+                const nextUrl = resolveNext(params.get('next'));
+
+                if (localStorage.getItem(TOKEN_KEY)) {
+                        window.location.replace(nextUrl);
+                }
+
+                if (!localStorage.getItem(COOKIE_NAME_KEY)) {
+                        localStorage.setItem(COOKIE_NAME_KEY, 'session_token');
+                }
+
+                const messageEl = document.getElementById('message');
+                const usernameEl = document.getElementById('username');
+                const passwordEl = document.getElementById('password');
+                const loginBtn = document.getElementById('loginBtn');
+                const registerBtn = document.getElementById('registerBtn');
+
+                function setMessage(text, type) {
+                        messageEl.textContent = text || '';
+                        messageEl.className = 'message' + (type ? ' ' + type : '');
+                }
+
+                async function sendAuth(path, body) {
+                        const resp = await fetch(path, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                credentials: 'include',
+                                body: JSON.stringify(body)
+                        });
+                        const text = await resp.text();
+                        let data;
+                        try { data = JSON.parse(text); }
+                        catch (_) { throw new Error(`HTTP ${resp.status} ${resp.statusText}`); }
+                        if (!resp.ok || !data.ok) {
+                                throw new Error(data.detail || data.reason || 'Request failed');
+                        }
+                        return data;
+                }
+
+                document.getElementById('loginForm').addEventListener('submit', async (event) => {
+                        event.preventDefault();
+                        const username = usernameEl.value.trim().toLowerCase();
+                        const password = passwordEl.value;
+                        if (!username || !password) {
+                                setMessage('Enter a username and password to continue.', 'error');
+                                return;
+                        }
+                        loginBtn.disabled = true;
+                        registerBtn.disabled = true;
+                        setMessage('Signing you in…');
+                        try {
+                                const data = await sendAuth('/login', { username, password });
+                                localStorage.setItem(TOKEN_KEY, data.token);
+                                localStorage.setItem(USERNAME_KEY, data.username || username);
+                                localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
+                                setMessage('Success! Redirecting…', 'success');
+                                window.location.replace(nextUrl);
+                        } catch (err) {
+                                setMessage(err.message || 'Login failed', 'error');
+                        } finally {
+                                loginBtn.disabled = false;
+                                registerBtn.disabled = false;
+                        }
+                });
+
+                registerBtn.addEventListener('click', async () => {
+                        const username = usernameEl.value.trim().toLowerCase();
+                        const password = passwordEl.value;
+                        if (!username || !password) {
+                                setMessage('Choose a username and password before creating an account.', 'error');
+                                return;
+                        }
+                        registerBtn.disabled = true;
+                        loginBtn.disabled = true;
+                        setMessage('Creating admin account…');
+                        try {
+                                await sendAuth('/register', { username, password });
+                                setMessage('Account created! You can sign in now.', 'success');
+                                passwordEl.focus();
+                        } catch (err) {
+                                setMessage(err.message || 'Registration failed', 'error');
+                        } finally {
+                                registerBtn.disabled = false;
+                                loginBtn.disabled = false;
+                        }
+                });
+
+                usernameEl.focus();
+        </script>
+</body>
+</html>
