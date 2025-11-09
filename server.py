@@ -265,6 +265,8 @@ SSL_CA_CERTS = _optional_path(os.getenv("SSL_CA_CERTS"))
 SSL_ENABLED = bool(SSL_CERTFILE and SSL_KEYFILE)
 FORCE_HTTPS_REDIRECT = _env_flag("FORCE_HTTPS_REDIRECT", default=SSL_ENABLED)
 ENABLE_HSTS = _env_flag("ENABLE_HSTS", default=SSL_ENABLED)
+ENABLE_SECURITY_HEADERS = _env_flag("ENABLE_SECURITY_HEADERS", default=True)
+DISABLE_SERVER_HEADER = _env_flag("DISABLE_SERVER_HEADER", default=True)
 HSTS_MAX_AGE = int(os.getenv("HSTS_MAX_AGE", "31536000"))
 HSTS_INCLUDE_SUBDOMAINS = _env_flag("HSTS_INCLUDE_SUBDOMAINS", default=True)
 HSTS_PRELOAD = _env_flag("HSTS_PRELOAD", default=False)
@@ -277,6 +279,15 @@ if ENABLE_HSTS:
     HSTS_HEADER_VALUE = "; ".join(_hsts_directives)
 else:
     HSTS_HEADER_VALUE = None
+
+DEFAULT_SECURITY_HEADERS: Dict[str, str] = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
+}
 
 API_HOST   = os.getenv("API_HOST","0.0.0.0")
 API_PORT   = int(os.getenv("API_PORT","8000"))
@@ -1108,13 +1119,22 @@ if FORCE_HTTPS_REDIRECT:
     app.add_middleware(HTTPSRedirectMiddleware)
 
 
-if ENABLE_HSTS and HSTS_HEADER_VALUE:
+if ENABLE_SECURITY_HEADERS or ENABLE_HSTS or DISABLE_SERVER_HEADER:
 
     @app.middleware("http")
-    async def _add_security_headers(request: Request, call_next):
+    async def _apply_security_headers(request: Request, call_next):
         response = await call_next(request)
-        if request.url.scheme == "https":
+
+        if ENABLE_SECURITY_HEADERS:
+            for header_name, header_value in DEFAULT_SECURITY_HEADERS.items():
+                response.headers.setdefault(header_name, header_value)
+
+        if ENABLE_HSTS and HSTS_HEADER_VALUE and request.url.scheme == "https":
             response.headers.setdefault("Strict-Transport-Security", HSTS_HEADER_VALUE)
+
+        if DISABLE_SERVER_HEADER and "server" in response.headers:
+            del response.headers["server"]
+
         return response
 
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
