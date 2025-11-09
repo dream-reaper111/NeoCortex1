@@ -61,6 +61,14 @@
                         margin-bottom: 6px;
                 }
 
+                .admin-key-label span {
+                        font-size: 11px;
+                        text-transform: none;
+                        letter-spacing: 0;
+                        margin-left: 6px;
+                        color: rgba(147, 167, 195, 0.85);
+                }
+
                 input[type="text"],
                 input[type="password"] {
                         width: 100%;
@@ -136,6 +144,8 @@
                         <input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required />
                         <label for="password">Password</label>
                         <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+                        <label for="adminKey" class="admin-key-label">Admin Private Key <span>(required for account creation)</span></label>
+                        <input id="adminKey" name="adminKey" type="password" autocomplete="off" placeholder="Enter admin key" />
                         <button type="submit" id="loginBtn">Sign In</button>
                 </form>
                 <button type="button" class="secondary" id="registerBtn">Create Admin Account</button>
@@ -177,6 +187,7 @@
                 const passwordEl = document.getElementById('password');
                 const loginBtn = document.getElementById('loginBtn');
                 const registerBtn = document.getElementById('registerBtn');
+                const adminKeyEl = document.getElementById('adminKey');
 
                 function setMessage(text, type) {
                         messageEl.textContent = text || '';
@@ -212,7 +223,7 @@
                         registerBtn.disabled = true;
                         setMessage('Signing you in…');
                         try {
-                                const data = await sendAuth('/login', { username, password });
+                                const data = await sendAuth('/login', { username, password, require_admin: true });
                                 localStorage.setItem(TOKEN_KEY, data.token);
                                 localStorage.setItem(USERNAME_KEY, data.username || username);
                                 localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
@@ -229,17 +240,23 @@
                 registerBtn.addEventListener('click', async () => {
                         const username = usernameEl.value.trim().toLowerCase();
                         const password = passwordEl.value;
+                        const adminKey = adminKeyEl.value.trim();
                         if (!username || !password) {
                                 setMessage('Choose a username and password before creating an account.', 'error');
+                                return;
+                        }
+                        if (!adminKey) {
+                                setMessage('Enter the admin private key to create an account.', 'error');
                                 return;
                         }
                         registerBtn.disabled = true;
                         loginBtn.disabled = true;
                         setMessage('Creating admin account…');
                         try {
-                                await sendAuth('/register', { username, password });
+                                await sendAuth('/register', { username, password, admin_key: adminKey });
                                 setMessage('Account created! You can sign in now.', 'success');
                                 passwordEl.focus();
+                                adminKeyEl.value = '';
                         } catch (err) {
                                 setMessage(err.message || 'Registration failed', 'error');
                         } finally {
