@@ -29,8 +29,8 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
     pd = _PandasStub()  # type: ignore
 
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
-
 
 class _FallbackHTTPSRedirectMiddleware:
     """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
@@ -83,6 +83,49 @@ def _load_https_redirect_middleware():
 
 
 HTTPSRedirectMiddleware = _load_https_redirect_middleware()
+try:
+
+    _https_redirect_mod = importlib.import_module("fastapi.middleware.httpsredirect")
+    HTTPSRedirectMiddleware = getattr(_https_redirect_mod, "HTTPSRedirectMiddleware")
+except Exception:  # pragma: no cover - fallback for trimmed fastapi distro or runtime import errors
+    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+except ModuleNotFoundError:  # pragma: no cover - fallback for trimmed fastapi distro
+    class HTTPSRedirectMiddleware:
+        """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
+
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope.get("type") != "http":
+                await self.app(scope, receive, send)
+                return
+
+            scheme = scope.get("scheme", "http")
+            if scheme == "https":
+                await self.app(scope, receive, send)
+                return
+
+            headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
+            host = headers.get("host")
+            if not host:
+                server = scope.get("server")
+                if server:
+                    host = f"{server[0]}:{server[1]}" if server[1] else server[0]
+                else:
+                    host = ""
+
+            path = scope.get("raw_path") or scope.get("path", "")
+            if isinstance(path, bytes):
+                path = path.decode("latin-1")
+
+            query = scope.get("query_string", b"")
+            if query:
+                path = f"{path}?{query.decode('latin-1')}"
+
+            target_url = f"https://{host}{path}" if host else "https://" + path.lstrip("/")
+            response = RedirectResponse(url=target_url, status_code=307)
+            await response(scope, receive, send)
 
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
