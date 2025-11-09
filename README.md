@@ -203,7 +203,34 @@ You can customize how the browser session cookie is issued by setting:
 - `SESSION_COOKIE_NAME` – defaults to `session_token`.
 - `SESSION_COOKIE_MAX_AGE` – lifetime in seconds (default 7 days).
 - `SESSION_COOKIE_SAMESITE` – defaults to `lax`.
-- `AUTH_COOKIE_SECURE` – set to `1` to require HTTPS when sending the cookie.
+- `AUTH_COOKIE_SECURE` – defaults to `1` when TLS is configured (set to `0`
+  explicitly if you are terminating HTTPS upstream).
+
+#### Serving the dashboard over HTTPS
+
+The FastAPI server can terminate TLS directly so credentials never traverse the
+network in plain text. Provide file paths to a certificate and private key via
+environment variables before launching `server.py`:
+
+```bash
+export SSL_CERTFILE="/etc/ssl/certs/fullchain.pem"
+export SSL_KEYFILE="/etc/ssl/private/privkey.pem"
+python server.py
+```
+
+When both variables are set, Uvicorn boots in HTTPS mode, the app issues
+HTTP-only cookies with the `Secure` attribute, and an automatic redirect ensures
+HTTP requests are upgraded to HTTPS. You can optionally supply a password for
+an encrypted key (`SSL_KEYFILE_PASSWORD`) or a custom CA bundle
+(`SSL_CA_CERTS`).
+
+Strict Transport Security headers (`Strict-Transport-Security`) are enabled by
+default for HTTPS deployments. Tweak the behaviour with:
+
+- `FORCE_HTTPS_REDIRECT` – disable (`0`) if HTTPS termination happens upstream.
+- `ENABLE_HSTS` – disable (`0`) to skip writing HSTS headers.
+- `HSTS_MAX_AGE`, `HSTS_INCLUDE_SUBDOMAINS`, `HSTS_PRELOAD` – customize the HSTS
+  directives if your domain policy differs from the defaults.
 
 ### Whop membership onboarding
 

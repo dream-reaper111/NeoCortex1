@@ -29,6 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
     pd = _PandasStub()  # type: ignore
 
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -37,6 +38,26 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
     def load_dotenv(*_args, **_kwargs):  # type: ignore
         return False
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Interpret an environment variable as a boolean flag."""
+
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = raw.strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _optional_path(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return str(Path(value).expanduser())
 
 
 def _load_optional_module(name: str):
@@ -117,6 +138,26 @@ except Exception as exc:  # pragma: no cover - optional dependency fallback
         raise StrategyError(f"Strategy module unavailable: {exc}")
 
 load_dotenv(override=False)
+
+SSL_CERTFILE = _optional_path(os.getenv("SSL_CERTFILE"))
+SSL_KEYFILE = _optional_path(os.getenv("SSL_KEYFILE"))
+SSL_KEYFILE_PASSWORD = os.getenv("SSL_KEYFILE_PASSWORD") or None
+SSL_CA_CERTS = _optional_path(os.getenv("SSL_CA_CERTS"))
+SSL_ENABLED = bool(SSL_CERTFILE and SSL_KEYFILE)
+FORCE_HTTPS_REDIRECT = _env_flag("FORCE_HTTPS_REDIRECT", default=SSL_ENABLED)
+ENABLE_HSTS = _env_flag("ENABLE_HSTS", default=SSL_ENABLED)
+HSTS_MAX_AGE = int(os.getenv("HSTS_MAX_AGE", "31536000"))
+HSTS_INCLUDE_SUBDOMAINS = _env_flag("HSTS_INCLUDE_SUBDOMAINS", default=True)
+HSTS_PRELOAD = _env_flag("HSTS_PRELOAD", default=False)
+if ENABLE_HSTS:
+    _hsts_directives = [f"max-age={HSTS_MAX_AGE}"]
+    if HSTS_INCLUDE_SUBDOMAINS:
+        _hsts_directives.append("includeSubDomains")
+    if HSTS_PRELOAD:
+        _hsts_directives.append("preload")
+    HSTS_HEADER_VALUE = "; ".join(_hsts_directives)
+else:
+    HSTS_HEADER_VALUE = None
 
 API_HOST   = os.getenv("API_HOST","0.0.0.0")
 API_PORT   = int(os.getenv("API_PORT","8000"))
@@ -409,7 +450,7 @@ except Exception:
 AUTH_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "auth.db")).resolve()
 AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session_token")
-SESSION_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes"}
+SESSION_COOKIE_SECURE = _env_flag("AUTH_COOKIE_SECURE", default=SSL_ENABLED)
 SESSION_COOKIE_MAX_AGE = int(os.getenv("SESSION_COOKIE_MAX_AGE", str(7 * 24 * 3600)))
 SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax") or "lax"
 
@@ -944,6 +985,19 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
+if FORCE_HTTPS_REDIRECT:
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+
+if ENABLE_HSTS and HSTS_HEADER_VALUE:
+
+    @app.middleware("http")
+    async def _add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.scheme == "https":
+            response.headers.setdefault("Strict-Transport-Security", HSTS_HEADER_VALUE)
+        return response
+
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
@@ -2187,4 +2241,17 @@ def liquidity_ui():
 if __name__ == "__main__":
     print(json.dumps(run_preflight(), indent=2))
     import uvicorn
-    uvicorn.run(app, host=API_HOST, port=API_PORT, reload=False)
+
+    uvicorn_kwargs = {"host": API_HOST, "port": API_PORT, "reload": False}
+    if SSL_ENABLED:
+        uvicorn_kwargs.update(
+            {
+                "ssl_certfile": SSL_CERTFILE,
+                "ssl_keyfile": SSL_KEYFILE,
+            }
+        )
+        if SSL_KEYFILE_PASSWORD:
+            uvicorn_kwargs["ssl_keyfile_password"] = SSL_KEYFILE_PASSWORD
+        if SSL_CA_CERTS:
+            uvicorn_kwargs["ssl_ca_certs"] = SSL_CA_CERTS
+    uvicorn.run(app, **uvicorn_kwargs)
