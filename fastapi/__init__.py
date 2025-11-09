@@ -174,6 +174,7 @@ class FastAPI:
         self._mounts: List[Tuple[str, Any]] = []
         self._lifespan_factory = lifespan
         self._lifespan_cm = lifespan(self) if lifespan else None
+        self._http_middleware: List[Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]] = []
 
     def mount(self, path: str, app: Any, name: Optional[str] = None) -> None:
         prefix = path.rstrip("/") or "/"
@@ -197,6 +198,38 @@ class FastAPI:
 
         return decorator
 
+    def add_middleware(self, middleware_cls: Type[Any], **options: Any) -> None:
+        instance = middleware_cls(self, **options)
+        dispatch = getattr(instance, "dispatch", None)
+        if dispatch is None:
+            dispatch = getattr(instance, "__call__", None)
+        if dispatch is None:
+            raise TypeError("Middleware must define a 'dispatch' or '__call__' method")
+
+        async def middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]], _dispatch=dispatch) -> Response:
+            result = _dispatch(request, call_next)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+
+        self._http_middleware.append(middleware)
+
+    def middleware(self, type_: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        if type_ != "http":
+            raise ValueError("Only 'http' middleware is supported in the stub implementation")
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]], _func=func) -> Response:
+                result = _func(request, call_next)
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
+
+            self._http_middleware.append(middleware)
+            return func
+
+        return decorator
+
     async def _startup(self) -> None:
         if self._lifespan_cm is not None:
             await self._lifespan_cm.__aenter__()
@@ -206,6 +239,16 @@ class FastAPI:
             await self._lifespan_cm.__aexit__(None, None, None)
 
     async def _handle(self, request: Request) -> Response:
+        async def endpoint(req: Request) -> Response:
+            return await self._dispatch_request(req)
+
+        handler = endpoint
+        for middleware in reversed(self._http_middleware):
+            handler = self._wrap_http_middleware(middleware, handler)
+
+        return await handler(request)
+
+    async def _dispatch_request(self, request: Request) -> Response:
         path = request.path
         for prefix, app in self._mounts:
             if prefix == "/":
@@ -291,6 +334,22 @@ class FastAPI:
         if inspect.isawaitable(result):
             result = await result
         return result
+
+    def _wrap_http_middleware(
+        self,
+        middleware: Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]],
+        handler: Callable[[Request], Awaitable[Response]],
+    ) -> Callable[[Request], Awaitable[Response]]:
+        async def call_next(request: Request, _handler=handler) -> Response:
+            return await _handler(request)
+
+        async def wrapped(request: Request, _middleware=middleware) -> Response:
+            result = _middleware(request, call_next)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+
+        return wrapped
 
     def _to_response(self, result: Any, response_class: Optional[type]) -> Response:
         if isinstance(result, Response):
