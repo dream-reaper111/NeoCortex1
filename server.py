@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, quote, urlencode
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any, Dict, List, Optional, Tuple, Literal
 
 try:
@@ -30,6 +30,60 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+
+
+class _FallbackHTTPSRedirectMiddleware:
+    """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        scheme = scope.get("scheme", "http")
+        if scheme == "https":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        host = headers.get("host")
+        if not host:
+            server = scope.get("server")
+            if server:
+                host = f"{server[0]}:{server[1]}" if server[1] else server[0]
+            else:
+                host = ""
+
+        path = scope.get("raw_path") or scope.get("path", "")
+        if isinstance(path, bytes):
+            path = path.decode("latin-1")
+
+        query = scope.get("query_string", b"")
+        if query:
+            path = f"{path}?{query.decode('latin-1')}"
+
+        target_url = f"https://{host}{path}" if host else "https://" + path.lstrip("/")
+        response = RedirectResponse(url=target_url, status_code=307)
+        await response(scope, receive, send)
+
+
+def _load_https_redirect_middleware():
+    with suppress(Exception):
+        module = importlib.import_module("fastapi.middleware.httpsredirect")
+        middleware = getattr(module, "HTTPSRedirectMiddleware", None)
+        if middleware is not None:
+            return middleware
+    return _FallbackHTTPSRedirectMiddleware
+
+
+HTTPSRedirectMiddleware = _load_https_redirect_middleware()
+
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 try:
@@ -37,6 +91,26 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
     def load_dotenv(*_args, **_kwargs):  # type: ignore
         return False
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Interpret an environment variable as a boolean flag."""
+
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = raw.strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _optional_path(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return str(Path(value).expanduser())
 
 
 def _load_optional_module(name: str):
@@ -89,7 +163,21 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
 
 # added imports for Alpaca integration
 import requests
-from cryptography.fernet import Fernet, InvalidToken
+
+with suppress(ModuleNotFoundError):
+    from cryptography.fernet import Fernet, InvalidToken  # type: ignore
+
+if "Fernet" not in globals():  # pragma: no cover - optional dependency fallback
+    class InvalidToken(Exception):
+        """Raised when decrypting stored credentials with an invalid token."""
+
+    class _MissingCryptographyFernet:
+        def __init__(self, *_args, **_kwargs):
+            raise ModuleNotFoundError(
+                "cryptography is required for credential encryption. Install it with 'pip install cryptography'."
+            )
+
+    Fernet = _MissingCryptographyFernet  # type: ignore
 
 # ---- your model utils (import AFTER env guards) ----
 try:
@@ -117,6 +205,26 @@ except Exception as exc:  # pragma: no cover - optional dependency fallback
         raise StrategyError(f"Strategy module unavailable: {exc}")
 
 load_dotenv(override=False)
+
+SSL_CERTFILE = _optional_path(os.getenv("SSL_CERTFILE"))
+SSL_KEYFILE = _optional_path(os.getenv("SSL_KEYFILE"))
+SSL_KEYFILE_PASSWORD = os.getenv("SSL_KEYFILE_PASSWORD") or None
+SSL_CA_CERTS = _optional_path(os.getenv("SSL_CA_CERTS"))
+SSL_ENABLED = bool(SSL_CERTFILE and SSL_KEYFILE)
+FORCE_HTTPS_REDIRECT = _env_flag("FORCE_HTTPS_REDIRECT", default=SSL_ENABLED)
+ENABLE_HSTS = _env_flag("ENABLE_HSTS", default=SSL_ENABLED)
+HSTS_MAX_AGE = int(os.getenv("HSTS_MAX_AGE", "31536000"))
+HSTS_INCLUDE_SUBDOMAINS = _env_flag("HSTS_INCLUDE_SUBDOMAINS", default=True)
+HSTS_PRELOAD = _env_flag("HSTS_PRELOAD", default=False)
+if ENABLE_HSTS:
+    _hsts_directives = [f"max-age={HSTS_MAX_AGE}"]
+    if HSTS_INCLUDE_SUBDOMAINS:
+        _hsts_directives.append("includeSubDomains")
+    if HSTS_PRELOAD:
+        _hsts_directives.append("preload")
+    HSTS_HEADER_VALUE = "; ".join(_hsts_directives)
+else:
+    HSTS_HEADER_VALUE = None
 
 API_HOST   = os.getenv("API_HOST","0.0.0.0")
 API_PORT   = int(os.getenv("API_PORT","8000"))
@@ -409,7 +517,7 @@ except Exception:
 AUTH_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "auth.db")).resolve()
 AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session_token")
-SESSION_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes"}
+SESSION_COOKIE_SECURE = _env_flag("AUTH_COOKIE_SECURE", default=SSL_ENABLED)
 SESSION_COOKIE_MAX_AGE = int(os.getenv("SESSION_COOKIE_MAX_AGE", str(7 * 24 * 3600)))
 SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax") or "lax"
 
@@ -418,6 +526,7 @@ WHOP_API_KEY = (os.getenv("WHOP_API_KEY") or "").strip() or None
 WHOP_API_BASE = (os.getenv("WHOP_API_BASE") or "https://api.whop.com").rstrip("/")
 WHOP_PORTAL_URL = (os.getenv("WHOP_PORTAL_URL") or "").strip() or None
 WHOP_SESSION_TTL = int(os.getenv("WHOP_SESSION_TTL", "900"))
+ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "the3istheD3T").strip()
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -436,10 +545,15 @@ def _init_auth_db() -> None:
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )
             """
         )
+        info = conn.execute("PRAGMA table_info(users)").fetchall()
+        column_names = {row["name"] for row in info}
+        if "is_admin" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -938,6 +1052,19 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
+if FORCE_HTTPS_REDIRECT:
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+
+if ENABLE_HSTS and HSTS_HEADER_VALUE:
+
+    @app.middleware("http")
+    async def _add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.scheme == "https":
+            response.headers.setdefault("Strict-Transport-Security", HSTS_HEADER_VALUE)
+        return response
+
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
@@ -1092,6 +1219,8 @@ def gpu_info():
 class AuthReq(BaseModel):
     username: str
     password: str
+    admin_key: Optional[str] = None
+    require_admin: bool = False
 
 
 async def _auth_req_from_request(request: Request) -> AuthReq:
@@ -1272,8 +1401,8 @@ async def register_whop(req: WhopRegistrationReq):
     try:
         with _db_conn() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (username, password_hash, salt, created_at) VALUES (?, ?, ?, ?)",
-                (uname, pw_hash, salt, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO users (username, password_hash, salt, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
+                (uname, pw_hash, salt, 0, datetime.now(timezone.utc).isoformat()),
             )
             user_id = cursor.lastrowid
     except sqlite3.IntegrityError:
@@ -1319,12 +1448,14 @@ async def register(request: Request):
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
+    if ADMIN_PRIVATE_KEY and (req.admin_key or "").strip() != ADMIN_PRIVATE_KEY:
+        return _json({"ok": False, "detail": "invalid admin key"}, 403)
     pw_hash, salt = _hash_password_sha2048(req.password)
     try:
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO users (username, password_hash, salt, created_at) VALUES (?, ?, ?, ?)",
-                (uname, pw_hash, salt, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO users (username, password_hash, salt, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
+                (uname, pw_hash, salt, 1, datetime.now(timezone.utc).isoformat()),
             )
     except sqlite3.IntegrityError:
         return _json({"ok": False, "detail": "username already exists"}, 400)
@@ -1343,7 +1474,7 @@ async def login(request: Request):
         return _json({"ok": False, "detail": "username and password required"}, 400)
     with _db_conn() as conn:
         row = conn.execute(
-            "SELECT id, password_hash, salt FROM users WHERE username = ?",
+            "SELECT id, password_hash, salt, is_admin FROM users WHERE username = ?",
             (uname,),
         ).fetchone()
     if row is None:
@@ -1351,8 +1482,18 @@ async def login(request: Request):
     expected_hash, _ = _hash_password_sha2048(req.password, row["salt"])
     if expected_hash != row["password_hash"]:
         return _json({"ok": False, "detail": "invalid credentials"}, 401)
+    if req.require_admin and not row["is_admin"]:
+        return _json({"ok": False, "detail": "admin access required"}, 403)
     token = _create_session_token(row["id"])
-    resp = _json({"ok": True, "token": token, "username": uname, "session_cookie": SESSION_COOKIE_NAME})
+    resp = _json(
+        {
+            "ok": True,
+            "token": token,
+            "username": uname,
+            "session_cookie": SESSION_COOKIE_NAME,
+            "is_admin": bool(row["is_admin"]),
+        }
+    )
     resp.set_cookie(
         SESSION_COOKIE_NAME,
         token,
@@ -2167,4 +2308,17 @@ def liquidity_ui():
 if __name__ == "__main__":
     print(json.dumps(run_preflight(), indent=2))
     import uvicorn
-    uvicorn.run(app, host=API_HOST, port=API_PORT, reload=False)
+
+    uvicorn_kwargs = {"host": API_HOST, "port": API_PORT, "reload": False}
+    if SSL_ENABLED:
+        uvicorn_kwargs.update(
+            {
+                "ssl_certfile": SSL_CERTFILE,
+                "ssl_keyfile": SSL_KEYFILE,
+            }
+        )
+        if SSL_KEYFILE_PASSWORD:
+            uvicorn_kwargs["ssl_keyfile_password"] = SSL_KEYFILE_PASSWORD
+        if SSL_CA_CERTS:
+            uvicorn_kwargs["ssl_ca_certs"] = SSL_CA_CERTS
+    uvicorn.run(app, **uvicorn_kwargs)

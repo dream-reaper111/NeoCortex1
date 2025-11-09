@@ -142,8 +142,30 @@ The API now ships with a lightweight SQLite database (`auth.db` by default)
 that stores user accounts and optional Alpaca credentials. Passwords are
 hashed with a salted 2048-bit PBKDF2-SHA512 digest before being persisted.
 
-1. Register a user with `POST /register` and a JSON body of
-   `{ "username": "alice", "password": "<strong-password>" }`.
+#### Admin private key configuration
+
+Admin registration is gated by a shared secret so only trusted operators can
+create privileged accounts. The backend reads this secret from the
+`ADMIN_PRIVATE_KEY` environment variable during startup and falls back to the
+default value `the3istheD3T` when the variable is unset. Update the value to a
+unique string before deploying by exporting it in your shell (PowerShell
+example shown below) or placing it in a `.env` file that `server.py` will load
+automatically if [`python-dotenv`](https://pypi.org/project/python-dotenv/)
+is installed.
+
+```powershell
+$env:ADMIN_PRIVATE_KEY = "change-me-with-a-strong-secret"
+python server.py
+```
+
+All admin registration or login attempts must present the matching private key
+in their payload. The key is not required for end-user logins or Whop-based
+member onboarding.
+
+1. Register an admin user with `POST /register` and a JSON body like
+   `{ "username": "alice", "password": "<strong-password>", "admin_key": "the3istheD3T" }`.
+   The private key can be overridden via the `ADMIN_PRIVATE_KEY` environment
+   variable.
 2. Log in with `POST /login` using the same payload to receive a bearer
    token. Supply this token to other endpoints via
    `Authorization: Bearer <token>`.
@@ -181,7 +203,34 @@ You can customize how the browser session cookie is issued by setting:
 - `SESSION_COOKIE_NAME` – defaults to `session_token`.
 - `SESSION_COOKIE_MAX_AGE` – lifetime in seconds (default 7 days).
 - `SESSION_COOKIE_SAMESITE` – defaults to `lax`.
-- `AUTH_COOKIE_SECURE` – set to `1` to require HTTPS when sending the cookie.
+- `AUTH_COOKIE_SECURE` – defaults to `1` when TLS is configured (set to `0`
+  explicitly if you are terminating HTTPS upstream).
+
+#### Serving the dashboard over HTTPS
+
+The FastAPI server can terminate TLS directly so credentials never traverse the
+network in plain text. Provide file paths to a certificate and private key via
+environment variables before launching `server.py`:
+
+```bash
+export SSL_CERTFILE="/etc/ssl/certs/fullchain.pem"
+export SSL_KEYFILE="/etc/ssl/private/privkey.pem"
+python server.py
+```
+
+When both variables are set, Uvicorn boots in HTTPS mode, the app issues
+HTTP-only cookies with the `Secure` attribute, and an automatic redirect ensures
+HTTP requests are upgraded to HTTPS. You can optionally supply a password for
+an encrypted key (`SSL_KEYFILE_PASSWORD`) or a custom CA bundle
+(`SSL_CA_CERTS`).
+
+Strict Transport Security headers (`Strict-Transport-Security`) are enabled by
+default for HTTPS deployments. Tweak the behaviour with:
+
+- `FORCE_HTTPS_REDIRECT` – disable (`0`) if HTTPS termination happens upstream.
+- `ENABLE_HSTS` – disable (`0`) to skip writing HSTS headers.
+- `HSTS_MAX_AGE`, `HSTS_INCLUDE_SUBDOMAINS`, `HSTS_PRELOAD` – customize the HSTS
+  directives if your domain policy differs from the defaults.
 
 ### Whop membership onboarding
 

@@ -222,9 +222,6 @@
                 <button type="button" class="secondary whop" id="whopBtn">Continue with Whop</button>
                 <button type="button" class="secondary" id="registerBtn" hidden>Complete Whop Registration</button>
 
-                <button type="button" class="secondary" id="registerBtn">Create Account</button>
-                <button type="button" class="secondary whop" id="whopBtn">Continue with Whop</button>
-
                 <div id="message" class="message"></div>
                 <div class="fine-print">Passwords are hashed with PBKDF2-SHA512 and never stored in plain text.</div>
         </div>
@@ -264,19 +261,17 @@
                 const loginBtn = document.getElementById('loginBtn');
                 const registerBtn = document.getElementById('registerBtn');
                 const whopBtn = document.getElementById('whopBtn');
-
-                if (registerBtn) {
-                        registerBtn.hidden = true;
-                        registerBtn.dataset.mode = '';
-                }
-
-
                 const whopNotice = document.getElementById('whopNotice');
                 const whopExtras = document.getElementById('whopExtras');
                 const accountTypeEl = document.getElementById('accountType');
                 const apiKeyEl = document.getElementById('apiKey');
                 const apiSecretEl = document.getElementById('apiSecret');
                 const baseUrlEl = document.getElementById('baseUrl');
+
+                if (registerBtn) {
+                        registerBtn.hidden = true;
+                        registerBtn.dataset.mode = '';
+                }
 
                 function setMessage(text, type) {
                         messageEl.textContent = text || '';
@@ -312,25 +307,17 @@
                         return data;
                 }
 
-                const whopToken = params.get('whop_token');
+                const whopToken = (params.get('whop_token') || '').trim();
                 let whopMode = false;
-                let whopSessionValid = true;
+                let whopSessionValid = false;
 
-                if (whopToken) {
+                if (whopToken && registerBtn) {
                         whopMode = true;
                         whopExtras.hidden = false;
-
-                        if (registerBtn) {
-                                registerBtn.hidden = false;
-                                registerBtn.textContent = 'Complete Whop Registration';
-                                registerBtn.dataset.mode = 'whop';
-                                registerBtn.disabled = true;
-                        }
-
-                        registerBtn.textContent = 'Complete Whop Registration';
+                        registerBtn.hidden = false;
                         registerBtn.dataset.mode = 'whop';
+                        registerBtn.textContent = 'Complete Whop Registration';
                         registerBtn.disabled = true;
-
                         if (whopBtn) { whopBtn.style.display = 'none'; }
                         showWhopNotice('Verifying your Whop membership…');
                         (async () => {
@@ -351,17 +338,20 @@
                                                 usernameEl.value = email.split('@')[0];
                                         }
                                         whopSessionValid = true;
-
-                                        if (registerBtn) { registerBtn.disabled = false; }
-
                                         registerBtn.disabled = false;
-
                                 } catch (err) {
                                         console.error(err);
                                         whopSessionValid = false;
                                         showWhopNotice('Unable to verify your Whop membership. Please restart from Whop.', 'error');
                                 }
                         })();
+                } else {
+                        whopExtras.hidden = true;
+                        showWhopNotice('', '');
+                        if (registerBtn) {
+                                registerBtn.hidden = true;
+                                registerBtn.dataset.mode = '';
+                        }
                 }
 
                 if (whopBtn) {
@@ -380,7 +370,9 @@
                                 return;
                         }
                         loginBtn.disabled = true;
-                        registerBtn.disabled = true;
+                        if (registerBtn) {
+                                registerBtn.disabled = true;
+                        }
                         setMessage('Signing you in…');
                         try {
                                 const data = await sendAuth('/login', { username, password });
@@ -393,40 +385,23 @@
                                 setMessage(err.message || 'Login failed', 'error');
                         } finally {
                                 loginBtn.disabled = false;
-
                                 if (registerBtn && registerBtn.dataset.mode === 'whop') {
-                                        const lockRegister = !whopSessionValid;
-                                        registerBtn.disabled = lockRegister;
+                                        registerBtn.disabled = !whopSessionValid;
                                 }
-
-                                const lockRegister = registerBtn.dataset.mode === 'whop' && !whopSessionValid;
-                                registerBtn.disabled = lockRegister;
-
                         }
                 });
 
-                if (registerBtn) { registerBtn.addEventListener('click', async () => {
-                        if (!whopMode) {
-                                return;
-                        }
-                        const username = usernameEl.value.trim().toLowerCase();
-                        const password = passwordEl.value;
-                        if (!username || !password) {
-                                setMessage('Choose a username and password before creating an account.', 'error');
-                                return;
-                        }
-                        if (!whopSessionValid) {
-                                setMessage('Your Whop session has expired. Start again from Whop.', 'error');
-                                return;
-                        }
-                        const apiKey = apiKeyEl.value.trim();
-                        const apiSecret = apiSecretEl.value.trim();
-                        const baseUrl = baseUrlEl.value.trim();
-                        if (!apiKey || !apiSecret) {
-                                setMessage('Enter your Alpaca API key and secret to continue.', 'error');
-                                return;
-                        }
-                        if (registerBtn.dataset.mode === 'whop') {
+                if (registerBtn) {
+                        registerBtn.addEventListener('click', async () => {
+                                if (!whopMode || registerBtn.dataset.mode !== 'whop') {
+                                        return;
+                                }
+                                const username = usernameEl.value.trim().toLowerCase();
+                                const password = passwordEl.value;
+                                if (!username || !password) {
+                                        setMessage('Choose a username and password before creating an account.', 'error');
+                                        return;
+                                }
                                 if (!whopSessionValid) {
                                         setMessage('Your Whop session has expired. Start again from Whop.', 'error');
                                         return;
@@ -465,36 +440,8 @@
                                         registerBtn.disabled = false;
                                         loginBtn.disabled = false;
                                 }
-                                return;
-                        }
-                        registerBtn.disabled = true;
-                        loginBtn.disabled = true;
-                        setMessage('Linking your Whop membership…');
-                        try {
-                                const payload = {
-                                        token: whopToken,
-                                        username,
-                                        password,
-                                        api_key: apiKey,
-                                        api_secret: apiSecret,
-                                        account_type: (accountTypeEl.value || 'funded').toLowerCase(),
-                                };
-                                if (baseUrl) {
-                                        payload.base_url = baseUrl;
-                                }
-                                const data = await sendAuth('/register/whop', payload);
-                                localStorage.setItem(TOKEN_KEY, data.token);
-                                localStorage.setItem(USERNAME_KEY, data.username || username);
-                                localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
-                                setMessage('Welcome aboard! Redirecting…', 'success');
-                                window.location.replace(nextUrl);
-                        } catch (err) {
-                                setMessage(err.message || 'Whop registration failed', 'error');
-                        } finally {
-                                registerBtn.disabled = false;
-                                loginBtn.disabled = false;
-                        }
-                }); }
+                        });
+                }
 
                 usernameEl.focus();
         </script>
