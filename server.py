@@ -29,12 +29,16 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
     pd = _PandasStub()  # type: ignore
 
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 
 try:
+
     _https_redirect_mod = importlib.import_module("fastapi.middleware.httpsredirect")
     HTTPSRedirectMiddleware = getattr(_https_redirect_mod, "HTTPSRedirectMiddleware")
 except Exception:  # pragma: no cover - fallback for trimmed fastapi distro or runtime import errors
+    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+except ModuleNotFoundError:  # pragma: no cover - fallback for trimmed fastapi distro
     class HTTPSRedirectMiddleware:
         """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
 
