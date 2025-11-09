@@ -31,7 +31,6 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
-
 class _FallbackHTTPSRedirectMiddleware:
     """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
 
@@ -71,6 +70,16 @@ class _FallbackHTTPSRedirectMiddleware:
         target_url = f"https://{host}{path}" if host else "https://" + path.lstrip("/")
         response = RedirectResponse(url=target_url, status_code=307)
         await response(scope, receive, send)
+try:  # pragma: no cover - import is environment-dependent
+    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware as _FastAPIHTTPSRedirectMiddleware
+except Exception:  # ModuleNotFoundError or trimmed export
+    _FastAPIHTTPSRedirectMiddleware = None
+
+
+if _FastAPIHTTPSRedirectMiddleware is not None:
+    HTTPSRedirectMiddleware = _FastAPIHTTPSRedirectMiddleware
+else:
+    HTTPSRedirectMiddleware = _FallbackHTTPSRedirectMiddleware
 
 
 def _load_https_redirect_middleware():
