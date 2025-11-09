@@ -142,8 +142,30 @@ The API now ships with a lightweight SQLite database (`auth.db` by default)
 that stores user accounts and optional Alpaca credentials. Passwords are
 hashed with a salted 2048-bit PBKDF2-SHA512 digest before being persisted.
 
-1. Register a user with `POST /register` and a JSON body of
-   `{ "username": "alice", "password": "<strong-password>" }`.
+#### Admin private key configuration
+
+Admin registration is gated by a shared secret so only trusted operators can
+create privileged accounts. The backend reads this secret from the
+`ADMIN_PRIVATE_KEY` environment variable during startup and falls back to the
+default value `the3istheD3T` when the variable is unset. Update the value to a
+unique string before deploying by exporting it in your shell (PowerShell
+example shown below) or placing it in a `.env` file that `server.py` will load
+automatically if [`python-dotenv`](https://pypi.org/project/python-dotenv/)
+is installed.
+
+```powershell
+$env:ADMIN_PRIVATE_KEY = "change-me-with-a-strong-secret"
+python server.py
+```
+
+All admin registration or login attempts must present the matching private key
+in their payload. The key is not required for end-user logins or Whop-based
+member onboarding.
+
+1. Register an admin user with `POST /register` and a JSON body like
+   `{ "username": "alice", "password": "<strong-password>", "admin_key": "the3istheD3T" }`.
+   The private key can be overridden via the `ADMIN_PRIVATE_KEY` environment
+   variable.
 2. Log in with `POST /login` using the same payload to receive a bearer
    token. Supply this token to other endpoints via
    `Authorization: Bearer <token>`.

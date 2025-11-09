@@ -418,6 +418,7 @@ WHOP_API_KEY = (os.getenv("WHOP_API_KEY") or "").strip() or None
 WHOP_API_BASE = (os.getenv("WHOP_API_BASE") or "https://api.whop.com").rstrip("/")
 WHOP_PORTAL_URL = (os.getenv("WHOP_PORTAL_URL") or "").strip() or None
 WHOP_SESSION_TTL = int(os.getenv("WHOP_SESSION_TTL", "900"))
+ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "the3istheD3T").strip()
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -436,10 +437,15 @@ def _init_auth_db() -> None:
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )
             """
         )
+        info = conn.execute("PRAGMA table_info(users)").fetchall()
+        column_names = {row["name"] for row in info}
+        if "is_admin" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -1092,6 +1098,8 @@ def gpu_info():
 class AuthReq(BaseModel):
     username: str
     password: str
+    admin_key: Optional[str] = None
+    require_admin: bool = False
 
 
 async def _auth_req_from_request(request: Request) -> AuthReq:
@@ -1272,8 +1280,8 @@ async def register_whop(req: WhopRegistrationReq):
     try:
         with _db_conn() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (username, password_hash, salt, created_at) VALUES (?, ?, ?, ?)",
-                (uname, pw_hash, salt, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO users (username, password_hash, salt, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
+                (uname, pw_hash, salt, 0, datetime.now(timezone.utc).isoformat()),
             )
             user_id = cursor.lastrowid
     except sqlite3.IntegrityError:
@@ -1319,12 +1327,14 @@ async def register(request: Request):
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
+    if ADMIN_PRIVATE_KEY and (req.admin_key or "").strip() != ADMIN_PRIVATE_KEY:
+        return _json({"ok": False, "detail": "invalid admin key"}, 403)
     pw_hash, salt = _hash_password_sha2048(req.password)
     try:
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO users (username, password_hash, salt, created_at) VALUES (?, ?, ?, ?)",
-                (uname, pw_hash, salt, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO users (username, password_hash, salt, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
+                (uname, pw_hash, salt, 1, datetime.now(timezone.utc).isoformat()),
             )
     except sqlite3.IntegrityError:
         return _json({"ok": False, "detail": "username already exists"}, 400)
@@ -1343,7 +1353,7 @@ async def login(request: Request):
         return _json({"ok": False, "detail": "username and password required"}, 400)
     with _db_conn() as conn:
         row = conn.execute(
-            "SELECT id, password_hash, salt FROM users WHERE username = ?",
+            "SELECT id, password_hash, salt, is_admin FROM users WHERE username = ?",
             (uname,),
         ).fetchone()
     if row is None:
@@ -1351,8 +1361,18 @@ async def login(request: Request):
     expected_hash, _ = _hash_password_sha2048(req.password, row["salt"])
     if expected_hash != row["password_hash"]:
         return _json({"ok": False, "detail": "invalid credentials"}, 401)
+    if req.require_admin and not row["is_admin"]:
+        return _json({"ok": False, "detail": "admin access required"}, 403)
     token = _create_session_token(row["id"])
-    resp = _json({"ok": True, "token": token, "username": uname, "session_cookie": SESSION_COOKIE_NAME})
+    resp = _json(
+        {
+            "ok": True,
+            "token": token,
+            "username": uname,
+            "session_cookie": SESSION_COOKIE_NAME,
+            "is_admin": bool(row["is_admin"]),
+        }
+    )
     resp.set_cookie(
         SESSION_COOKIE_NAME,
         token,
