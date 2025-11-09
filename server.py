@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, quote, urlencode
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any, Dict, List, Optional, Tuple, Literal
 
 try:
@@ -32,6 +32,57 @@ from fastapi import FastAPI, HTTPException, Request, Header, Cookie
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 
+class _FallbackHTTPSRedirectMiddleware:
+    """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        scheme = scope.get("scheme", "http")
+        if scheme == "https":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        host = headers.get("host")
+        if not host:
+            server = scope.get("server")
+            if server:
+                host = f"{server[0]}:{server[1]}" if server[1] else server[0]
+            else:
+                host = ""
+
+        path = scope.get("raw_path") or scope.get("path", "")
+        if isinstance(path, bytes):
+            path = path.decode("latin-1")
+
+        query = scope.get("query_string", b"")
+        if query:
+            path = f"{path}?{query.decode('latin-1')}"
+
+        target_url = f"https://{host}{path}" if host else "https://" + path.lstrip("/")
+        response = RedirectResponse(url=target_url, status_code=307)
+        await response(scope, receive, send)
+
+
+def _load_https_redirect_middleware():
+    with suppress(Exception):
+        module = importlib.import_module("fastapi.middleware.httpsredirect")
+        middleware = getattr(module, "HTTPSRedirectMiddleware", None)
+        if middleware is not None:
+            return middleware
+    return _FallbackHTTPSRedirectMiddleware
+
+
+HTTPSRedirectMiddleware = _load_https_redirect_middleware()
 try:
 
     _https_redirect_mod = importlib.import_module("fastapi.middleware.httpsredirect")
@@ -155,7 +206,21 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
 
 # added imports for Alpaca integration
 import requests
-from cryptography.fernet import Fernet, InvalidToken
+
+with suppress(ModuleNotFoundError):
+    from cryptography.fernet import Fernet, InvalidToken  # type: ignore
+
+if "Fernet" not in globals():  # pragma: no cover - optional dependency fallback
+    class InvalidToken(Exception):
+        """Raised when decrypting stored credentials with an invalid token."""
+
+    class _MissingCryptographyFernet:
+        def __init__(self, *_args, **_kwargs):
+            raise ModuleNotFoundError(
+                "cryptography is required for credential encryption. Install it with 'pip install cryptography'."
+            )
+
+    Fernet = _MissingCryptographyFernet  # type: ignore
 
 # ---- your model utils (import AFTER env guards) ----
 try:
