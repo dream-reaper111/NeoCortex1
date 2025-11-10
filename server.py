@@ -52,6 +52,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager, suppress
 from typing import Any, Dict, List, Optional, Tuple, Literal, Set, Iterable
+from types import SimpleNamespace
 
 try:
     import pandas as pd
@@ -73,8 +74,148 @@ from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Depends
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi import FastAPI, HTTPException, Request, Header, Cookie
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+try:
+    from fastapi.templating import Jinja2Templates
+except ModuleNotFoundError:  # pragma: no cover - fallback when optional extras missing
+    try:  # pragma: no cover - secondary fallback if FastAPI re-export unavailable
+        from starlette.templating import Jinja2Templates  # type: ignore
+    except ModuleNotFoundError:  # pragma: no cover - minimal templating shim
+        class Jinja2Templates:
+            """Lightweight template renderer used when Starlette's helper is unavailable."""
+
+            _TOKEN_RE = re.compile(r"(\{\{.*?\}\}|\{%.*?%\})", re.S)
+
+            def __init__(self, directory: str) -> None:
+                self.directory = Path(directory)
+                self._cache: Dict[str, List[Tuple[str, str]]] = {}
+
+            def _wrap(self, value: Any) -> Any:
+                if isinstance(value, dict):
+                    return SimpleNamespace(**{k: self._wrap(v) for k, v in value.items()})
+                if isinstance(value, list):
+                    return [self._wrap(v) for v in value]
+                if isinstance(value, set):
+                    return [self._wrap(v) for v in sorted(value)]
+                return value
+
+            def _prepare_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+                prepared: Dict[str, Any] = {}
+                for key, value in context.items():
+                    if key == "request":
+                        prepared[key] = value
+                    else:
+                        prepared[key] = self._wrap(value)
+                return prepared
+
+            def _load_template(self, name: str) -> str:
+                path = (self.directory / name).resolve()
+                if not str(path).startswith(str(self.directory.resolve())):
+                    raise ValueError(f"Invalid template path: {name}")
+                try:
+                    return path.read_text(encoding="utf-8")
+                except FileNotFoundError as exc:  # pragma: no cover - configuration issue
+                    raise RuntimeError(f"Template '{name}' not found") from exc
+
+            def _tokenize(self, name: str, text: str) -> List[Tuple[str, str]]:
+                cached = self._cache.get(name)
+                if cached is not None:
+                    return cached
+                tokens: List[Tuple[str, str]] = []
+                pos = 0
+                for match in self._TOKEN_RE.finditer(text):
+                    if match.start() > pos:
+                        tokens.append(("text", text[pos:match.start()]))
+                    raw = match.group(0)
+                    if raw.startswith("{{"):
+                        tokens.append(("expr", raw[2:-2].strip()))
+                    else:
+                        tokens.append(("stmt", raw[2:-2].strip()))
+                    pos = match.end()
+                if pos < len(text):
+                    tokens.append(("text", text[pos:]))
+                self._cache[name] = tokens
+                return tokens
+
+            def _eval(self, expr: str, context: Dict[str, Any]) -> Any:
+                locals_ctx = self._prepare_context(context)
+                try:
+                    return eval(expr, {"__builtins__": {}}, locals_ctx)  # noqa: S307 - controlled input
+                except Exception:
+                    return ""
+
+            def _render_tokens(
+                self,
+                tokens: List[Tuple[str, str]],
+                context: Dict[str, Any],
+                start: int = 0,
+                stop_tokens: Optional[Set[str]] = None,
+            ) -> Tuple[str, int]:
+                pieces: List[str] = []
+                idx = start
+                while idx < len(tokens):
+                    kind, value = tokens[idx]
+                    if kind == "text":
+                        pieces.append(value)
+                    elif kind == "expr":
+                        rendered = self._eval(value, context)
+                        pieces.append("" if rendered is None else str(rendered))
+                    elif kind == "stmt":
+                        stmt = value.strip()
+                        if stop_tokens and stmt in stop_tokens:
+                            return "".join(pieces), idx
+                        if stmt.startswith("include"):
+                            include_path = self._parse_include(stmt)
+                            included_html = self._render_template(include_path, context)
+                            pieces.append(included_html)
+                        elif stmt.startswith("if "):
+                            cond_expr = stmt[3:].strip()
+                            true_block, next_idx = self._render_tokens(tokens, context, idx + 1, {"else", "endif"})
+                            idx = next_idx
+                            false_block = ""
+                            if idx < len(tokens):
+                                kind2, value2 = tokens[idx]
+                                if kind2 == "stmt" and value2.strip() == "else":
+                                    false_block, next_idx = self._render_tokens(tokens, context, idx + 1, {"endif"})
+                                    idx = next_idx
+                            if idx < len(tokens):
+                                kind3, value3 = tokens[idx]
+                                if not (kind3 == "stmt" and value3.strip() == "endif"):
+                                    raise RuntimeError("Unmatched {% if %} block")
+                            if self._truthy(cond_expr, context):
+                                pieces.append(true_block)
+                            else:
+                                pieces.append(false_block)
+                        elif stmt == "else" or stmt == "endif":
+                            if stop_tokens:
+                                return "".join(pieces), idx
+                        else:
+                            # Unsupported directive is ignored for compatibility.
+                            pass
+                    idx += 1
+                return "".join(pieces), idx
+
+            def _truthy(self, expr: str, context: Dict[str, Any]) -> bool:
+                result = self._eval(expr, context)
+                return bool(result)
+
+            def _parse_include(self, stmt: str) -> str:
+                match = re.search(r"include\s+['\"]([^'\"]+)['\"]", stmt)
+                if not match:
+                    raise RuntimeError(f"Invalid include statement: {stmt}")
+                return match.group(1)
+
+            def _render_template(self, name: str, context: Dict[str, Any]) -> str:
+                source = self._load_template(name)
+                tokens = self._tokenize(name, source)
+                rendered, _ = self._render_tokens(tokens, context)
+                return rendered
+
+            def TemplateResponse(self, name: str, context: Dict[str, Any], status_code: int = 200) -> HTMLResponse:
+                if "request" not in context:
+                    raise RuntimeError("Template context must include 'request'")
+                html = self._render_template(name, context)
+                return HTMLResponse(html, status_code=status_code)
+from auth import create_access_token, get_current_user
 
 
 class _FallbackHTTPSRedirectMiddleware:
@@ -486,6 +627,9 @@ RUNS_ROOT  = Path(os.getenv("RUNS_ROOT","artifacts")).resolve()
 RUNS_ROOT.mkdir(parents=True, exist_ok=True)
 STATIC_DIR = Path(os.getenv("STATIC_DIR","static")).resolve(); STATIC_DIR.mkdir(parents=True, exist_ok=True)
 PUBLIC_DIR = Path(os.getenv("PUBLIC_DIR","public")).resolve(); PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+TEMPLATES_DIR = Path(os.getenv("TEMPLATES_DIR", "templates")).resolve(); TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
 LIQUIDITY_DIR = PUBLIC_DIR / "liquidity"
 LIQUIDITY_DIR.mkdir(parents=True, exist_ok=True)
 LIQUIDITY_ASSETS = LIQUIDITY_DIR / "assets"
@@ -493,9 +637,6 @@ LIQUIDITY_ASSETS.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = ALPACA_TEST_DIR.resolve()
-
-LOGIN_PAGE = PUBLIC_DIR / "login.html"
-ADMIN_LOGIN_PAGE = PUBLIC_DIR / "admin-login.html"
 
 ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
 ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
@@ -1359,22 +1500,17 @@ def _create_access_token(
     refresh_id: Optional[str],
     expires_delta: Optional[timedelta] = None,
 ) -> str:
-    now = datetime.now(timezone.utc)
-    expires = now + (expires_delta or timedelta(minutes=JWT_ACCESS_EXPIRE_MINUTES))
     payload = {
         "iss": JWT_ISSUER,
         "sub": str(user["id"]),
         "aud": JWT_AUDIENCE,
-        "iat": int(now.timestamp()),
-        "nbf": int(now.timestamp()),
-        "exp": int(expires.timestamp()),
         "type": "access",
         "sid": refresh_id,
         "username": user["username"],
         "roles": user["roles"],
         "scopes": sorted(user["scopes"]),
     }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return create_access_token(payload, expires_delta=expires_delta)
 
 
 def _create_refresh_token(user_id: int) -> Tuple[str, str, datetime]:
@@ -1933,6 +2069,21 @@ def _nocache() -> Dict[str,str]:
 
 def _json(obj: Any, code: int = 200) -> JSONResponse:
     return JSONResponse(obj, status_code=code, headers=_nocache())
+
+
+def _render_template(
+    name: str,
+    request: Request,
+    context: Optional[Dict[str, Any]] = None,
+    status_code: int = 200,
+):
+    payload: Dict[str, Any] = {"request": request}
+    if context:
+        payload.update(context)
+    response = templates.TemplateResponse(name, payload, status_code=status_code)
+    for key, value in _nocache().items():
+        response.headers.setdefault(key, value)
+    return response
 
 
 class _WebhookReplayProtector:
@@ -2809,17 +2960,7 @@ async def register(request: Request):
         return _json({"ok": False, "detail": "username already exists"}, 400)
     return _json({"ok": True, "created": uname})
 
-@app.post("/login")
-async def login(request: Request):
-    # Authenticate a user and return a bearer token tied to the SQLite credential store.
-    # The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
-    # manage user-specific Alpaca credentials.
-    '''
-    Authenticate a user and return a bearer token tied to the SQLite credential store.
-    The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
-    manage user-specific Alpaca credentials.
-    '''
-    req = await _auth_req_from_request(request)
+def _handle_login(req: AuthReq, *, enforce_admin: bool = False) -> JSONResponse:
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
@@ -2833,7 +2974,8 @@ async def login(request: Request):
     expected_hash, _ = _hash_password_sha2048(req.password, row["salt"])
     if expected_hash != row["password_hash"]:
         return _json({"ok": False, "detail": "invalid credentials"}, 401)
-    if req.require_admin and not row["is_admin"]:
+    require_admin = enforce_admin or req.require_admin
+    if require_admin and not row["is_admin"]:
         return _json({"ok": False, "detail": "admin access required"}, 403)
     user = _load_user_record(row["id"])
     roles = set(user["roles"])
@@ -2853,6 +2995,7 @@ async def login(request: Request):
         else:
             return _json({"ok": False, "detail": "mfa enrollment required"}, 403)
     tokens = _issue_token_pair(user)
+    primary_role = user["roles"][0] if user["roles"] else DEFAULT_ROLE
     resp = _json(
         {
             "ok": True,
@@ -2866,10 +3009,38 @@ async def login(request: Request):
             "session_cookie": SESSION_COOKIE_NAME,
             "refresh_cookie": REFRESH_COOKIE_NAME,
             "refresh_expires_at": tokens.get("refresh_expires_at"),
+            "token_type": "bearer",
+            "role": primary_role,
         }
     )
     _set_auth_cookies(resp, tokens)
     return resp
+
+
+def _require_user(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    return user
+
+
+def _require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    if ROLE_ADMIN not in set(user.get("roles", [])):
+        raise HTTPException(status_code=403, detail="admin access required")
+    return user
+
+
+@app.post("/login")
+async def login(request: Request):
+    """Authenticate a user and issue a bearer token."""
+
+    req = await _auth_req_from_request(request)
+    return _handle_login(req)
+
+
+@app.post("/admin/login")
+async def admin_login(request: Request):
+    """Admin-specific login endpoint that enforces elevated privileges."""
+
+    req = await _auth_req_from_request(request)
+    return _handle_login(req, enforce_admin=True)
 
 
 @app.post("/logout")
@@ -3851,37 +4022,39 @@ def root():
     return RedirectResponse(url="/login")
 
 
-@app.get("/login")
-def login_page():
-    if not LOGIN_PAGE.exists():
-        return HTMLResponse("<h1>public/login.html missing</h1>", status_code=404, headers=_nocache())
-    return FileResponse(LOGIN_PAGE, media_type="text/html", headers=_nocache())
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return _render_template("login.html", request)
 
 
-@app.get("/admin/login")
-def admin_login_page(
-    request: Request, credentials: HTTPBasicCredentials = Depends(ADMIN_PORTAL_HTTP_BASIC)
-):
-    _enforce_admin_portal_gate(request, credentials)
-    if not ADMIN_LOGIN_PAGE.exists():
-        return HTMLResponse("<h1>public/admin-login.html missing</h1>", status_code=404, headers=_nocache())
-    return FileResponse(ADMIN_LOGIN_PAGE, media_type="text/html", headers=_nocache())
+@app.get("/admin/login", response_class=HTMLResponse)
+def admin_login_page(request: Request):
+    return _render_template("admin_login.html", request)
 
 
-@app.get("/dashboard")
-def dashboard():
-    html = PUBLIC_DIR / "dashboard.html"
-    if not html.exists():
-        return HTMLResponse("<h1>public/dashboard.html missing</h1>", status_code=404, headers=_nocache())
-    return FileResponse(html, media_type="text/html", headers=_nocache())
+@app.get("/admin", response_class=HTMLResponse)
+def admin_portal(request: Request, user: Dict[str, Any] = Depends(_require_admin)):
+    return _render_template("admin.html", request, {"user": user})
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, user: Dict[str, Any] = Depends(_require_admin)):
+    return _render_template("dashboard.html", request, {"user": user})
+
+
+@app.get("/enduserapp", response_class=HTMLResponse)
+def enduserapp(request: Request, user: Dict[str, Any] = Depends(_require_user)):
+    return _render_template("enduserapp.html", request, {"user": user})
+
+
+@app.get("/radar", response_class=HTMLResponse)
+def radar(request: Request, user: Dict[str, Any] = Depends(_require_user)):
+    return _render_template("radar.html", request, {"user": user})
 
 
 @app.get("/liquidity")
 def liquidity_ui():
-    html = LIQUIDITY_DIR / "index.html"
-    if not html.exists():
-        return HTMLResponse("<h1>public/liquidity/index.html missing</h1>", status_code=404, headers=_nocache())
-    return FileResponse(html, media_type="text/html", headers=_nocache())
+    return RedirectResponse(url="/radar")
 
 if __name__ == "__main__":
     print(json.dumps(run_preflight(), indent=2))
