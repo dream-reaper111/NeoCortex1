@@ -57,13 +57,16 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 
 try:
     # Import the FastAPI app from server.py
-    from server import app, DISABLE_ACCESS_LOGS  # type: ignore
+    from server import app, DISABLE_ACCESS_LOGS, ensure_runtime_directories  # type: ignore
 except Exception as e:
     raise ImportError(
         "Unable to import FastAPI app from server.py. Please ensure that the "
         "project has been compiled and that server.py is in the same directory. "
         f"Original error: {e}"
     ) from e
+
+# Ensure the runtime directories are prepared before starting the server.
+_RUNTIME_DIRS = ensure_runtime_directories()
 
 def _normalize_domain(raw: str | None) -> str:
     """Return an ngrok-compatible domain string without protocol or slashes."""
@@ -110,6 +113,12 @@ def _uvicorn_run(app: Any, *, host: str, port: int, log_level: str) -> None:
 def main() -> None:
     load_dotenv(override=False)
     port = int(os.getenv("API_PORT", "8000"))
+
+    runtime_dirs = dict(_RUNTIME_DIRS)
+    logging.getLogger("neocortex.runtime").debug(
+        "runtime directories ready: %s",
+        {name: str(path) for name, path in runtime_dirs.items()},
+    )
 
     if uvicorn is None:
         raise RuntimeError(
