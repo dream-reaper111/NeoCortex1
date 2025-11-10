@@ -46,7 +46,7 @@
                                 <h1>Admin Portal</h1>
                                 <p class="admin-subtitle nc-text-muted">Sign in to manage Neo Cortex AI configuration and monitor activity.</p>
                         </header>
-                        <form id="loginForm" class="nc-stack">
+                        <form id="loginForm" class="nc-stack" method="post">
                                 <div>
                                         <label for="username">Username</label>
                                         <input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required />
@@ -148,10 +148,33 @@
                         return data;
                 }
 
+                async function sendFormEncoded(path, fields) {
+                        const params = new URLSearchParams();
+                        for (const [key, value] of Object.entries(fields || {})) {
+                                if (value === undefined || value === null) { continue; }
+                                params.append(key, value);
+                        }
+                        const resp = await fetch(path, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                credentials: 'include',
+                                body: params
+                        });
+                        const text = await resp.text();
+                        let data;
+                        try { data = JSON.parse(text); }
+                        catch (_) { throw new Error(`HTTP ${resp.status} ${resp.statusText}`); }
+                        if (!resp.ok || !data.ok) {
+                                throw new Error(data.detail || data.reason || 'Request failed');
+                        }
+                        return data;
+                }
+
                 document.getElementById('loginForm').addEventListener('submit', async (event) => {
                         event.preventDefault();
                         const username = usernameEl.value.trim().toLowerCase();
                         const password = passwordEl.value;
+                        const adminKey = adminKeyEl.value.trim();
                         if (!username || !password) {
                                 setMessage('Enter a username and password to continue.', 'error');
                                 return;
@@ -160,7 +183,7 @@
                         registerBtn.disabled = true;
                         setMessage('Signing you in…');
                         try {
-                                const data = await sendAuth('/login', { username, password, require_admin: true });
+                                const data = await sendFormEncoded('/admin/login', { username, password, adminKey });
                                 const token = data.access_token || data.token;
                                 if (!token) {
                                         throw new Error('Login response missing access token');

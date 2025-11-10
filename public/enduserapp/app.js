@@ -268,8 +268,11 @@ if (whopToken) {
   showWhopNotice('Verifying your Whop membership…');
   (async () => {
     try {
-      const resp = await fetch(`/auth/whop/session?token=${encodeURIComponent(whopToken)}`, {
+      const resp = await fetch('/auth/whop/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
+        body: JSON.stringify({ token: whopToken })
       });
       let data = null;
       try {
