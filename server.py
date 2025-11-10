@@ -1,6 +1,27 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+try:  # pragma: no cover - optional dependency
+    import aikido_zen  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
+    class _AikidoZenStub:
+        """Fallback shim when ``aikido_zen`` is unavailable."""
+
+        available = False
+
+        def protect(self) -> bool:
+            return False
+
+        def __getattr__(self, name: str):
+            raise AttributeError(name)
+
+    aikido_zen = _AikidoZenStub()  # type: ignore[assignment]
+    _ZEN_LIBRARY_AVAILABLE = False
+else:  # pragma: no cover - passthrough when dependency is present
+    _ZEN_LIBRARY_AVAILABLE = True
+
+aikido_zen.protect()
+
 # ---- Torch compile guards (before any torch/model import) ----
 import os as _os
 _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
@@ -175,6 +196,12 @@ def _optional_path(value: Optional[str]) -> Optional[str]:
     return str(Path(value).expanduser())
 
 
+def _comma_separated_list(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _load_optional_module(name: str):
     spec = importlib.util.find_spec(name)
     if spec is None:
@@ -298,6 +325,149 @@ DEFAULT_SECURITY_HEADERS: Dict[str, str] = {
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
 }
+
+
+ZEN_FIREWALL_ENABLED = _env_flag("ZEN_FIREWALL_ENABLED", default=True)
+ZEN_FIREWALL_PROFILE = os.getenv("ZEN_FIREWALL_PROFILE", "balanced")
+ZEN_FIREWALL_RULES = os.getenv("ZEN_FIREWALL_RULES")
+ZEN_FIREWALL_DEFAULT_POLICY = os.getenv("ZEN_FIREWALL_DEFAULT_POLICY", "allow")
+ZEN_ACCESS_TOKEN = os.getenv("ZEN_ACCESS_TOKEN")
+ZEN_TOR_ENABLED = _env_flag("ZEN_TOR_ENABLED", default=False)
+ZEN_TOR_EXIT_NODES = os.getenv("ZEN_TOR_EXIT_NODES")
+ZEN_TOR_STRICT_NODES = _env_flag("ZEN_TOR_STRICT_NODES", default=False)
+ZEN_TOR_PERFORMANCE_MODE = os.getenv("ZEN_TOR_PERFORMANCE_MODE", "fast")
+ZEN_TOR_MAX_LATENCY_MS = os.getenv("ZEN_TOR_MAX_LATENCY_MS", "150")
+ZEN_TOR_NEW_CIRCUIT_SECONDS = os.getenv("ZEN_TOR_NEW_CIRCUIT_SECONDS", "300")
+
+
+def _configure_aikido_services() -> Dict[str, Any]:
+    status: Dict[str, Any] = {
+        "library_available": _ZEN_LIBRARY_AVAILABLE,
+        "firewall": {
+            "requested": ZEN_FIREWALL_ENABLED,
+            "profile": ZEN_FIREWALL_PROFILE,
+            "default_policy": ZEN_FIREWALL_DEFAULT_POLICY,
+            "applied": False,
+        },
+        "token": {
+            "provided": bool(ZEN_ACCESS_TOKEN),
+            "applied": False,
+        },
+        "tor": {
+            "requested": ZEN_TOR_ENABLED,
+            "performance_mode": ZEN_TOR_PERFORMANCE_MODE,
+            "strict_nodes": ZEN_TOR_STRICT_NODES,
+            "exit_nodes": _comma_separated_list(ZEN_TOR_EXIT_NODES),
+            "max_latency_ms": None,
+            "new_circuit_seconds": None,
+            "applied": False,
+        },
+    }
+
+    if not _ZEN_LIBRARY_AVAILABLE:
+        status["detail"] = "aikido_zen module not installed"
+        return status
+
+    # Configure the Zen firewall if requested.
+    if ZEN_FIREWALL_ENABLED:
+        firewall_kwargs: Dict[str, Any] = {
+            "profile": ZEN_FIREWALL_PROFILE,
+            "default_policy": ZEN_FIREWALL_DEFAULT_POLICY,
+        }
+
+        if ZEN_FIREWALL_RULES:
+            try:
+                firewall_kwargs["rules"] = json.loads(ZEN_FIREWALL_RULES)
+            except json.JSONDecodeError as exc:
+                logger.warning("ZEN_FIREWALL_RULES is not valid JSON: %s", exc)
+                status["firewall"]["error"] = f"invalid rules: {exc}"
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("Unexpected error parsing ZEN_FIREWALL_RULES")
+                status["firewall"]["error"] = str(exc)
+
+        if "error" not in status["firewall"]:
+            firewall_handler = getattr(aikido_zen, "enable_firewall", None) or getattr(
+                aikido_zen, "configure_firewall", None
+            )
+            if callable(firewall_handler):
+                try:
+                    result = firewall_handler(**firewall_kwargs)
+                    status["firewall"]["applied"] = True
+                    if result is not None:
+                        status["firewall"]["result"] = result
+                except Exception as exc:  # pragma: no cover - runtime safety
+                    logger.exception("Failed to configure Zen firewall")
+                    status["firewall"]["error"] = str(exc)
+            else:
+                status["firewall"]["error"] = "firewall controls unavailable"
+
+    # Register secure token with aikido_zen if provided.
+    if ZEN_ACCESS_TOKEN:
+        token_handler = (
+            getattr(aikido_zen, "register_token", None)
+            or getattr(aikido_zen, "set_token", None)
+            or getattr(aikido_zen, "add_token", None)
+        )
+        if callable(token_handler):
+            try:
+                token_handler(ZEN_ACCESS_TOKEN)
+                status["token"]["applied"] = True
+            except Exception as exc:  # pragma: no cover - runtime safety
+                logger.exception("Failed to register Zen access token")
+                status["token"]["error"] = str(exc)
+        else:
+            status["token"]["error"] = "token registration unavailable"
+
+    # Enable Tor services with performance-focused defaults if requested.
+    if ZEN_TOR_ENABLED:
+        try:
+            max_latency = max(10, int(str(ZEN_TOR_MAX_LATENCY_MS)))
+        except (TypeError, ValueError):
+            logger.warning(
+                "ZEN_TOR_MAX_LATENCY_MS must be an integer; falling back to 150"
+            )
+            max_latency = 150
+        try:
+            new_circuit_seconds = max(30, int(str(ZEN_TOR_NEW_CIRCUIT_SECONDS)))
+        except (TypeError, ValueError):
+            logger.warning(
+                "ZEN_TOR_NEW_CIRCUIT_SECONDS must be an integer; falling back to 300"
+            )
+            new_circuit_seconds = 300
+
+        status["tor"]["max_latency_ms"] = max_latency
+        status["tor"]["new_circuit_seconds"] = new_circuit_seconds
+
+        tor_handler = (
+            getattr(aikido_zen, "enable_tor", None)
+            or getattr(aikido_zen, "configure_tor", None)
+            or getattr(aikido_zen, "start_tor_service", None)
+        )
+        if callable(tor_handler):
+            tor_kwargs: Dict[str, Any] = {
+                "performance": ZEN_TOR_PERFORMANCE_MODE,
+                "strict_nodes": ZEN_TOR_STRICT_NODES,
+                "exit_nodes": status["tor"]["exit_nodes"],
+                "max_latency_ms": max_latency,
+                "new_circuit_seconds": new_circuit_seconds,
+            }
+            if not tor_kwargs["exit_nodes"]:
+                tor_kwargs.pop("exit_nodes")
+            try:
+                result = tor_handler(**tor_kwargs)
+                status["tor"]["applied"] = True
+                if result is not None:
+                    status["tor"]["result"] = result
+            except Exception as exc:  # pragma: no cover - runtime safety
+                logger.exception("Failed to enable Zen Tor services")
+                status["tor"]["error"] = str(exc)
+        else:
+            status["tor"]["error"] = "tor integration unavailable"
+
+    return status
+
+
+ZEN_SECURITY_STATUS = _configure_aikido_services()
 
 
 def _is_subpath(base: Path, candidate: Path) -> bool:
@@ -1760,10 +1930,13 @@ def run_preflight():
             ram_avail_gb = round(pages * page_size / 1024**3, 2)
         except (AttributeError, ValueError, OSError):
             ram_avail_gb = None
-    return {"packages":{"ok":not miss,"missing":miss,"versions":vers},
-            "hardware":{"disk_free_gb":round(free/1024**3,2),"ram_avail_gb":ram_avail_gb},
-            "gpu":_gpu_info(),
-            "time_utc":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}
+    return {
+        "packages": {"ok": not miss, "missing": miss, "versions": vers},
+        "hardware": {"disk_free_gb": round(free / 1024**3, 2), "ram_avail_gb": ram_avail_gb},
+        "gpu": _gpu_info(),
+        "zen_security": ZEN_SECURITY_STATUS,
+        "time_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
