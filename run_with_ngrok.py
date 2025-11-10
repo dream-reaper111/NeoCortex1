@@ -25,7 +25,10 @@ under the "Webhook URL" field in your Alpaca paper trading settings.
 Note: This script blocks until the server shuts down. To stop, press Ctrl+C.
 """
 
+import inspect
+import logging
 import os
+from typing import Any
 from urllib.parse import urlparse
 
 try:
@@ -55,12 +58,16 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 try:
     # Import the FastAPI app from server.py
     from server import app, DISABLE_ACCESS_LOGS  # type: ignore
+    from server import app, DISABLE_ACCESS_LOGS, ensure_runtime_directories  # type: ignore
 except Exception as e:
     raise ImportError(
         "Unable to import FastAPI app from server.py. Please ensure that the "
         "project has been compiled and that server.py is in the same directory. "
         f"Original error: {e}"
     ) from e
+
+# Ensure the runtime directories are prepared before starting the server.
+_RUNTIME_DIRS = ensure_runtime_directories()
 
 def _normalize_domain(raw: str | None) -> str:
     """Return an ngrok-compatible domain string without protocol or slashes."""
@@ -81,9 +88,38 @@ def _normalize_domain(raw: str | None) -> str:
     return host.strip().strip("/")
 
 
+def _uvicorn_run(app: Any, *, host: str, port: int, log_level: str) -> None:
+    """Proxy ``uvicorn.run`` while gracefully handling legacy signatures."""
+
+    run_kwargs: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "log_level": log_level,
+    }
+
+    try:
+        signature = inspect.signature(uvicorn.run)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        signature = None
+
+    if signature and "access_log" in signature.parameters:
+        run_kwargs["access_log"] = not DISABLE_ACCESS_LOGS
+    elif DISABLE_ACCESS_LOGS:
+        # Fall back to disabling the logger directly when the parameter is unsupported.
+        logging.getLogger("uvicorn.access").disabled = True
+
+    uvicorn.run(app, **run_kwargs)
+
+
 def main() -> None:
     load_dotenv(override=False)
     port = int(os.getenv("API_PORT", "8000"))
+
+    runtime_dirs = dict(_RUNTIME_DIRS)
+    logging.getLogger("neocortex.runtime").debug(
+        "runtime directories ready: %s",
+        {name: str(path) for name, path in runtime_dirs.items()},
+    )
 
     if uvicorn is None:
         raise RuntimeError(
@@ -103,6 +139,7 @@ def main() -> None:
             log_level="info",
             access_log=not DISABLE_ACCESS_LOGS,
         )
+        _uvicorn_run(app, host="0.0.0.0", port=port, log_level="info")
         return
 
     auth_token = os.getenv("NGROK_AUTH_TOKEN")
@@ -117,24 +154,31 @@ def main() -> None:
 
     connect_kwargs = {"bind_tls": True}
 
-    basic_auth = os.getenv("NGROK_BASIC_AUTH")
     basic_auth_applied = False
+    basic_auth = (os.getenv("NGROK_BASIC_AUTH") or "").strip()
     if not basic_auth:
         username = os.getenv("NGROK_BASIC_AUTH_USER", "").strip()
         password = os.getenv("NGROK_BASIC_AUTH_PASS", "").strip()
         if username and password:
             basic_auth = f"{username}:{password}"
+        elif username or password:
+            raise RuntimeError(
+                "Both NGROK_BASIC_AUTH_USER and NGROK_BASIC_AUTH_PASS must be provided to enable basic auth."
+            )
 
-    if basic_auth and ":" in basic_auth:
+    if basic_auth:
+        if ":" not in basic_auth:
+            raise RuntimeError(
+                "NGROK_BASIC_AUTH must be in the format 'username:password'."
+            )
         connect_kwargs["basic_auth"] = basic_auth
         basic_auth_applied = True
     else:
         print(
-            "* Warning: ngrok tunnel will be launched without HTTP basic auth.\n"
-            "  Set NGROK_BASIC_AUTH or NGROK_BASIC_AUTH_USER/NGROK_BASIC_AUTH_PASS to secure the tunnel.",
+            "* NGROK basic auth is not configured; the tunnel will be publicly accessible.\n"
+            "  Set NGROK_BASIC_AUTH or NGROK_BASIC_AUTH_USER/NGROK_BASIC_AUTH_PASS to require credentials.",
             flush=True,
         )
-        basic_auth = ""
 
     domain_env = os.getenv("NGROK_DOMAIN")
     domain = _normalize_domain(domain_env)
@@ -180,6 +224,7 @@ def main() -> None:
             log_level="info",
             access_log=not DISABLE_ACCESS_LOGS,
         )
+        _uvicorn_run(app, host="0.0.0.0", port=port, log_level="info")
     finally:
         try:
             ngrok.disconnect(tunnel.public_url)

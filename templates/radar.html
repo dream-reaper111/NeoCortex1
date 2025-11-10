@@ -7,8 +7,7 @@
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet" />
-        <link rel="stylesheet" href="/public/enduserapp/style.css" />
-        <link rel="stylesheet" href="../enduserapp/style.css" />
+        <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
         <style>
                 :root {
                         color-scheme: dark;
@@ -53,6 +52,7 @@
                         flex-direction: column;
                         gap: 12px;
                         text-align: left;
+                        margin-top: 24px;
                 }
 
                 header h1 {
@@ -259,6 +259,8 @@
         </style>
 </head>
 <body>
+        {% include "partials/nav.html" %}
+
         <header>
                 <span class="pill">AM SESSION</span>
                 <h1>Liquidity Sweep Radar</h1>
@@ -268,7 +270,7 @@
         <main>
                 <section class="card" id="controls">
                         <h2 class="section-title">Analyse session</h2>
-                        <form id="queryForm" method="post">
+                        <form id="queryForm">
                                 <div>
                                         <label for="ticker">Ticker</label>
                                         <input id="ticker" name="ticker" value="SPY" maxlength="8" required />

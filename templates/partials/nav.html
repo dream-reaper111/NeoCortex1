@@ -1,0 +1,138 @@
+<style>
+        .nc-global-nav {
+                position: sticky;
+                top: 0;
+                z-index: 1000;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 12px 18px;
+                background: rgba(9, 3, 22, 0.92);
+                border-bottom: 1px solid rgba(192, 132, 252, 0.28);
+                box-shadow: 0 10px 30px rgba(12, 4, 24, 0.35);
+                backdrop-filter: blur(18px);
+        }
+
+        .nc-nav-left,
+        .nc-nav-right {
+                display: flex;
+                gap: 14px;
+                align-items: center;
+                flex-wrap: wrap;
+        }
+
+        .nc-brand-link {
+                font-weight: 600;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                color: #f5e9ff;
+        }
+
+        .nc-nav-link,
+        .nc-brand-link {
+                text-decoration: none;
+                color: rgba(224, 196, 255, 0.8);
+                font-size: 0.9rem;
+                transition: color 0.2s ease;
+        }
+
+        .nc-nav-link:hover,
+        .nc-brand-link:hover,
+        .nc-nav-link.active {
+                color: #d8b4fe;
+        }
+
+        .nc-nav-user {
+                font-size: 0.85rem;
+                color: rgba(224, 196, 255, 0.85);
+        }
+
+        .nc-nav-logout {
+                border: 1px solid rgba(192, 132, 252, 0.45);
+                background: rgba(18, 5, 34, 0.85);
+                color: #f3e8ff;
+                padding: 6px 14px;
+                border-radius: 999px;
+                cursor: pointer;
+                font-size: 0.8rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+        }
+
+        .nc-nav-logout:hover:not([disabled]) {
+                background: rgba(129, 29, 214, 0.35);
+        }
+
+        .nc-nav-logout[disabled] {
+                opacity: 0.6;
+                cursor: wait;
+        }
+
+        @media (max-width: 720px) {
+                .nc-global-nav {
+                        flex-direction: column;
+                        align-items: flex-start;
+                        gap: 10px;
+                }
+        }
+</style>
+<div class="nc-global-nav">
+        <div class="nc-nav-left">
+                <a class="nc-brand-link" href="/admin">Neo Cortex</a>
+                <a class="nc-nav-link" href="/dashboard">Dashboard</a>
+                <a class="nc-nav-link" href="/enduserapp">End User App</a>
+                <a class="nc-nav-link" href="/radar">Liquidity Radar</a>
+        </div>
+        <div class="nc-nav-right">
+                {% if user %}
+                <span class="nc-nav-user">Signed in as {{ user.username }}</span>
+                <button type="button" class="nc-nav-logout" id="globalLogoutBtn">Log out</button>
+                {% else %}
+                <a class="nc-nav-link" href="/login">Sign In</a>
+                {% endif %}
+        </div>
+</div>
+<script>
+        (function () {
+                const TOKEN_KEY = 'nc_token';
+                const USERNAME_KEY = 'nc_user';
+                const COOKIE_NAME_KEY = 'nc_cookie';
+                const REFRESH_KEY = 'nc_refresh';
+
+                function clearSession() {
+                        const cookieName = localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
+                        localStorage.removeItem(TOKEN_KEY);
+                        localStorage.removeItem(USERNAME_KEY);
+                        localStorage.removeItem(REFRESH_KEY);
+                        if (cookieName) {
+                                document.cookie = cookieName + '=; Max-Age=0; path=/';
+                        }
+                }
+
+                const links = document.querySelectorAll('.nc-global-nav .nc-nav-link');
+                const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+                links.forEach((link) => {
+                        const href = link.getAttribute('href');
+                        if (!href) return;
+                        const normalized = href.replace(/\/+$/, '') || '/';
+                        if (normalized === currentPath) {
+                                link.classList.add('active');
+                        }
+                });
+
+                const logoutBtn = document.getElementById('globalLogoutBtn');
+                if (logoutBtn) {
+                        logoutBtn.addEventListener('click', async (event) => {
+                                event.preventDefault();
+                                logoutBtn.disabled = true;
+                                try {
+                                        await fetch('/logout', { method: 'POST', credentials: 'include' });
+                                } catch (err) {
+                                        console.warn('Logout request failed', err);
+                                }
+                                clearSession();
+                                window.location.href = '/login';
+                        });
+                }
+        })();
+</script>

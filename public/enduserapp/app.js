@@ -205,6 +205,8 @@ const artifactList = document.getElementById('artifactList');
 const yearEl = document.getElementById('year');
 
 const paperForm = document.getElementById('paperForm');
+const executionModeSelect = document.getElementById('executionMode');
+const executionHelp = document.getElementById('executionHelp');
 const paperStatus = document.getElementById('paperStatus');
 const aiStatusEl = document.getElementById('aiStatus');
 const pnlTotalEl = document.getElementById('pnlTotal');
@@ -217,12 +219,164 @@ const positionsStatus = document.getElementById('positionsStatus');
 const instrumentSelect = document.getElementById('paperInstrument');
 const optionFields = Array.from(document.querySelectorAll('.option-field'));
 const futureFields = Array.from(document.querySelectorAll('.future-field'));
+const chatContainer = document.getElementById('chatContainer');
+const chatMessages = document.getElementById('chatMessages');
+const chatForm = document.getElementById('chatForm');
+const chatPrompt = document.getElementById('chatPrompt');
+const chatStatus = document.getElementById('chatStatus');
+const chatSendBtn = chatForm ? chatForm.querySelector('.chat-send') : null;
+
+let chatHistory = [];
+
+function updateChatStatus(text, type) {
+  if (!chatStatus) return;
+  chatStatus.textContent = text || '';
+  const base = 'status chat-status';
+  chatStatus.className = type ? `${base} ${type}` : base;
+}
+
+function resetChat(options = {}) {
+  const locked = options.locked !== undefined ? options.locked : true;
+  const statusText =
+    options.status !== undefined ? options.status : locked ? 'Sign in to chat with the assistant.' : '';
+  const statusType = options.statusType || '';
+  chatHistory = [];
+  if (chatMessages) {
+    chatMessages.innerHTML = '';
+  }
+  if (chatPrompt) {
+    chatPrompt.value = '';
+    chatPrompt.disabled = locked;
+  }
+  if (chatSendBtn) {
+    chatSendBtn.disabled = locked;
+    chatSendBtn.textContent = 'Send';
+  }
+  if (chatContainer) {
+    chatContainer.classList.toggle('chat-disabled', locked);
+  }
+  updateChatStatus(statusText, statusType);
+}
+
+function appendChatMessage(role, content, options = {}) {
+  if (!chatMessages || !content) return;
+  const persist = options.persist !== false;
+  const wrapper = document.createElement('div');
+  wrapper.className = `chat-message chat-message--${role}`;
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble';
+  bubble.textContent = content;
+  wrapper.appendChild(bubble);
+  chatMessages.appendChild(wrapper);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  if (persist) {
+    chatHistory.push({ role, content });
+    if (chatHistory.length > 20) {
+      chatHistory = chatHistory.slice(-20);
+    }
+  }
+}
+
+function setChatLoading(isLoading) {
+  const locked = chatContainer ? chatContainer.classList.contains('chat-disabled') : false;
+  const disabled = locked || isLoading;
+  if (chatPrompt) {
+    chatPrompt.disabled = disabled;
+  }
+  if (chatSendBtn) {
+    chatSendBtn.disabled = disabled;
+    chatSendBtn.textContent = isLoading ? 'Sending…' : 'Send';
+  }
+}
+
+function initializeChat() {
+  if (!chatForm) return;
+  resetChat({ locked: false, status: 'Ask a question to get started.' });
+  appendChatMessage(
+    'assistant',
+    'Hello! I can help you configure Neo Cortex, link Alpaca accounts, and interpret AI trading signals. How can I help?',
+    { persist: false }
+  );
+}
+
+async function sendChatPrompt(event) {
+  event.preventDefault();
+  if (!chatPrompt) return;
+
+  const prompt = chatPrompt.value.trim();
+  if (!prompt) {
+    updateChatStatus('Enter a question to send.', 'error');
+    return;
+  }
+
+  updateChatStatus('Contacting the assistant…');
+  appendChatMessage('user', prompt);
+  chatPrompt.value = '';
+
+  const historyPayload = chatHistory
+    .slice(0, -1)
+    .slice(-10)
+    .map((msg) => ({ role: msg.role, content: msg.content }));
+
+  let assistantDisabled = false;
+  try {
+    setChatLoading(true);
+    const resp = await fetch('/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, history: historyPayload }),
+    });
+    const text = await resp.text();
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch (parseErr) {
+      const error = new Error(`HTTP ${resp.status} ${resp.statusText}`);
+      error.status = resp.status;
+      throw error;
+    }
+    if (!resp.ok || !data || data.ok === false) {
+      const detail = (data && (data.detail || data.reason || data.error)) || `HTTP ${resp.status}`;
+      const error = new Error(detail);
+      error.status = resp.status;
+      throw error;
+    }
+    appendChatMessage('assistant', data.reply || 'The assistant did not return a response.');
+    let statusMessage = 'Assistant responded.';
+    if (data.usage && typeof data.usage.total_tokens === 'number') {
+      statusMessage = `Assistant responded • ${data.usage.total_tokens} tokens`;
+    } else if (data.model) {
+      statusMessage = `Assistant responded (${data.model}).`;
+    }
+    updateChatStatus(statusMessage, 'success');
+  } catch (err) {
+    if (err && typeof err === 'object' && 'status' in err && err.status === 404) {
+      assistantDisabled = true;
+      resetChat({ locked: true, status: 'The assistant is not currently available.' });
+      appendChatMessage(
+        'assistant',
+        'The assistant is offline right now. Please try again later or contact support for help.',
+        { persist: false }
+      );
+      return;
+    }
+    const message = err && err.message ? err.message : 'Unable to reach the assistant.';
+    updateChatStatus(message, 'error');
+  } finally {
+    if (!assistantDisabled) {
+      setChatLoading(false);
+    }
+  }
+}
+
+resetChat({ locked: true });
 
 function stopApp() {
   if (paperRefreshTimer) {
     clearInterval(paperRefreshTimer);
     paperRefreshTimer = null;
   }
+  resetChat({ locked: true });
 }
 
 function startApp() {
@@ -268,8 +422,11 @@ if (whopToken) {
   showWhopNotice('Verifying your Whop membership…');
   (async () => {
     try {
-      const resp = await fetch(`/auth/whop/session?token=${encodeURIComponent(whopToken)}`, {
+      const resp = await fetch('/auth/whop/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
+        body: JSON.stringify({ token: whopToken })
       });
       let data = null;
       try {
@@ -478,16 +635,65 @@ if (authToken()) {
   showOverlay();
 }
 
+function getExecutionMode() {
+  if (!paperForm) return 'sim';
+  const value = (paperForm.dataset.mode || 'sim').trim().toLowerCase();
+  if (value === 'paper' || value === 'funded') {
+    return value;
+  }
+  return 'sim';
+}
+
 function getAccountType() {
   if (!paperForm) return 'paper';
-  const value = (paperForm.dataset.account || 'paper').trim().toLowerCase();
-  return value || 'paper';
+  const mode = getExecutionMode();
+  if (mode === 'funded') {
+    return 'funded';
+  }
+  return 'paper';
 }
 
 function formatAccountLabel(accountType) {
-  const value = (accountType || 'paper').toString();
+  const value = (accountType || 'paper').toString().trim().toLowerCase();
   if (!value) return 'Paper';
+  if (value === 'funded') {
+    return 'Funded (live)';
+  }
+  if (value === 'paper') {
+    return 'Paper';
+  }
+  if (value === 'sim') {
+    return 'Simulated';
+  }
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function updateExecutionHelp(mode) {
+  if (!executionHelp) return;
+  if (mode === 'funded') {
+    executionHelp.textContent =
+      'Approved orders are routed to your Alpaca live account using the stored API credentials.';
+  } else if (mode === 'paper') {
+    executionHelp.textContent =
+      'Approved orders are sent to your Alpaca paper account so you can rehearse live execution.';
+  } else {
+    executionHelp.textContent =
+      'Orders are simulated locally. The AI trainer will score each trade without contacting Alpaca.';
+  }
+}
+
+function applyExecutionMode(mode, { refresh = true } = {}) {
+  if (!paperForm) return;
+  const normalized = mode === 'funded' ? 'funded' : mode === 'paper' ? 'paper' : 'sim';
+  paperForm.dataset.mode = normalized;
+  paperForm.dataset.account = normalized === 'funded' ? 'funded' : 'paper';
+  if (executionModeSelect && executionModeSelect.value !== normalized) {
+    executionModeSelect.value = normalized;
+  }
+  updateExecutionHelp(normalized);
+  if (refresh) {
+    loadPaperDashboard();
+  }
 }
 
 function describeAssetClass(assetClass) {
@@ -1008,7 +1214,7 @@ async function loadMockDashboard(message, statusClass) {
       renderPositions(shortTable, dashboard.orders.short || []);
     }
     if (typeof message === 'undefined') {
-      updatePositionsStatus('Showing simulated paper trading positions.', 'success');
+      updatePositionsStatus('Showing simulated AI trading positions.', 'success');
     } else if (message !== null) {
       updatePositionsStatus(message, statusClass || 'success');
     }
@@ -1028,13 +1234,18 @@ async function loadMockDashboard(message, statusClass) {
 
 async function loadPaperDashboard() {
   if (!paperForm) return null;
+  const mode = getExecutionMode();
+  if (mode === 'sim') {
+    return loadMockDashboard();
+  }
   const accountType = getAccountType();
   const live = await loadLiveDashboard(accountType);
   if (live) {
     return live;
   }
+  const accountLabel = formatAccountLabel(accountType);
   return loadMockDashboard(
-    'Live Alpaca positions unavailable. Showing simulated paper trading positions.',
+    `Simulated AI positions are shown while the ${accountLabel} account is unreachable.`,
     'error',
   );
 }
@@ -1058,8 +1269,15 @@ async function submitPaperOrder(event) {
     paperRefreshTimer = null;
   }
 
+  const mode = getExecutionMode();
+  const accountType = getAccountType();
+  const executionLabel = formatAccountLabel(mode === 'sim' ? 'sim' : accountType);
+
   if (paperStatus) {
-    paperStatus.textContent = 'Submitting…';
+    paperStatus.textContent =
+      mode === 'sim'
+        ? 'Submitting simulated order…'
+        : `Submitting to the ${executionLabel} account…`;
     paperStatus.classList.remove('error');
   }
 
@@ -1090,28 +1308,64 @@ async function submitPaperOrder(event) {
     }
 
     const bodyPayload = sanitizeOrderPayload(payload);
-    const res = await fetch('/papertrade/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bodyPayload),
-    });
-    const body = await res.json();
-    if (!res.ok || !body.ok) {
-      throw new Error(body.detail || res.statusText || 'Order rejected');
-    }
+    if (mode === 'sim') {
+      const res = await fetch('/papertrade/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyPayload),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) {
+        throw new Error(body.detail || res.statusText || 'Order rejected');
+      }
 
-    if (paperStatus) {
-      paperStatus.textContent = 'Order sent to Neo Cortex AI.';
-    }
-    if (aiStatusEl && body.order && body.order.ai) {
-      const ai = body.order.ai;
-      aiStatusEl.textContent = `${ai.message} (confidence ${Number(ai.confidence).toFixed(2)})`;
-    }
-    const dashboard = body.dashboard || {};
-    updatePnlWidget(dashboard.pnl || {}, dashboard.generated_at);
-    if (dashboard.orders) {
-      renderPositions(longTable, dashboard.orders.long || []);
-      renderPositions(shortTable, dashboard.orders.short || []);
+      if (paperStatus) {
+        paperStatus.textContent = 'Order sent to Neo Cortex AI.';
+      }
+      if (aiStatusEl && body.order && body.order.ai) {
+        const ai = body.order.ai;
+        aiStatusEl.textContent = `${ai.message} (confidence ${Number(ai.confidence).toFixed(2)})`;
+      }
+      const dashboard = body.dashboard || {};
+      updatePnlWidget(dashboard.pnl || {}, dashboard.generated_at);
+      if (dashboard.orders) {
+        renderPositions(longTable, dashboard.orders.long || []);
+        renderPositions(shortTable, dashboard.orders.short || []);
+      }
+    } else {
+      const autoPayload = { ...bodyPayload, account: accountType };
+      const res = await fetch('/trade/auto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autoPayload),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) {
+        throw new Error(body.detail || res.statusText || 'Order rejected');
+      }
+
+      const ai = body.ai || {};
+      if (paperStatus) {
+        if (body.executed === true) {
+          paperStatus.textContent = `AI executed the order on the ${executionLabel} account.`;
+        } else if (body.detail) {
+          paperStatus.textContent = body.detail;
+        } else {
+          paperStatus.textContent = `AI parked the order for the ${executionLabel} account.`;
+        }
+      }
+      if (aiStatusEl) {
+        if (typeof ai.confidence !== 'undefined') {
+          aiStatusEl.textContent = `${ai.message || 'AI decision recorded.'} (confidence ${Number(ai.confidence).toFixed(2)})`;
+        } else if (body.detail) {
+          aiStatusEl.textContent = body.detail;
+        } else {
+          aiStatusEl.textContent = 'Neo Cortex AI processed the order.';
+        }
+      }
+      if (body.executed === true) {
+        await loadPaperDashboard();
+      }
     }
   } catch (err) {
     if (paperStatus) {
@@ -1122,7 +1376,7 @@ async function submitPaperOrder(event) {
       aiStatusEl.textContent = 'Neo Cortex AI could not process the order.';
     }
   } finally {
-    paperRefreshTimer = setInterval(loadPaperDashboard, LIVE_PNL_REFRESH_MS);
+    paperRefreshTimer = setInterval(() => loadPaperDashboard(), LIVE_PNL_REFRESH_MS);
   }
 }
 
@@ -1132,13 +1386,15 @@ function boot() {
     yearEl.textContent = new Date().getFullYear();
   }
   loadArtifacts();
+  initializeChat();
   if (paperForm) {
     syncInstrumentFields();
+    applyExecutionMode(getExecutionMode(), { refresh: false });
     loadPaperDashboard();
     if (paperRefreshTimer) {
       clearInterval(paperRefreshTimer);
     }
-    paperRefreshTimer = setInterval(loadPaperDashboard, LIVE_PNL_REFRESH_MS);
+    paperRefreshTimer = setInterval(() => loadPaperDashboard(), LIVE_PNL_REFRESH_MS);
   }
 }
 
@@ -1151,9 +1407,25 @@ if (form) {
 if (refreshBtn) {
   refreshBtn.addEventListener('click', loadArtifacts);
 }
+if (executionModeSelect) {
+  executionModeSelect.addEventListener('change', () => {
+    applyExecutionMode(executionModeSelect.value);
+  });
+}
 if (paperForm) {
   paperForm.addEventListener('submit', submitPaperOrder);
 }
 if (instrumentSelect) {
   instrumentSelect.addEventListener('change', syncInstrumentFields);
+}
+if (chatForm) {
+  chatForm.addEventListener('submit', sendChatPrompt);
+}
+if (chatPrompt && chatForm) {
+  chatPrompt.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      chatForm.requestSubmit();
+    }
+  });
 }

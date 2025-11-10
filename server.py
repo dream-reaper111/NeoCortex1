@@ -45,13 +45,17 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random
-from urllib.parse import parse_qs, quote, urlencode
+import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, tempfile, stat, ipaddress, traceback
+from urllib.parse import quote, urlencode
+import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, tempfile, stat, ipaddress
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager, suppress
-from typing import Any, Dict, List, Optional, Tuple, Literal, Set, Iterable
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Literal, Set
+from types import SimpleNamespace
+from collections import defaultdict, deque
 
 try:
     import pandas as pd
@@ -70,11 +74,189 @@ else:  # pragma: no cover - exercised when pandas is installed
     _PANDAS_AVAILABLE = True
 
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Depends
+try:  # pragma: no cover - optional dependency
+    from openai import OpenAI, OpenAIError
+except ModuleNotFoundError:  # pragma: no cover - fallback when OpenAI SDK missing
+    OpenAI = None  # type: ignore[assignment]
+
+    class OpenAIError(Exception):
+        """Fallback error type used when the OpenAI SDK is not installed."""
+
+        pass
+
+from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Depends, Form
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+try:
+    from fastapi.middleware.cors import CORSMiddleware
+except ModuleNotFoundError:  # pragma: no cover - fallback when optional dependency missing
+    class CORSMiddleware:  # type: ignore[override]
+        """Minimal ASGI middleware stub used when FastAPI's CORS middleware is unavailable."""
+
+        def __init__(self, app, **_: object) -> None:
+            self.app = app
+
+        async def __call__(self, scope, receive, send):  # pragma: no cover - pass-through behaviour
+            await self.app(scope, receive, send)
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    StreamingResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+try:
+    from fastapi.templating import Jinja2Templates
+except ModuleNotFoundError:  # pragma: no cover - fallback when optional extras missing
+    try:  # pragma: no cover - secondary fallback if FastAPI re-export unavailable
+        from starlette.templating import Jinja2Templates  # type: ignore
+    except ModuleNotFoundError:  # pragma: no cover - minimal templating shim
+        class Jinja2Templates:
+            """Lightweight template renderer used when Starlette's helper is unavailable."""
+
+            _TOKEN_RE = re.compile(r"(\{\{.*?\}\}|\{%.*?%\})", re.S)
+
+            def __init__(self, directory: str) -> None:
+                self.directory = Path(directory)
+                self._cache: Dict[str, List[Tuple[str, str]]] = {}
+
+            def _wrap(self, value: Any) -> Any:
+                if isinstance(value, dict):
+                    return SimpleNamespace(**{k: self._wrap(v) for k, v in value.items()})
+                if isinstance(value, list):
+                    return [self._wrap(v) for v in value]
+                if isinstance(value, set):
+                    return [self._wrap(v) for v in sorted(value)]
+                return value
+
+            def _prepare_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+                prepared: Dict[str, Any] = {}
+                for key, value in context.items():
+                    if key == "request":
+                        prepared[key] = value
+                    else:
+                        prepared[key] = self._wrap(value)
+                return prepared
+
+            def _load_template(self, name: str) -> str:
+                path = (self.directory / name).resolve()
+                if not str(path).startswith(str(self.directory.resolve())):
+                    raise ValueError(f"Invalid template path: {name}")
+                try:
+                    return path.read_text(encoding="utf-8")
+                except FileNotFoundError as exc:  # pragma: no cover - configuration issue
+                    raise RuntimeError(f"Template '{name}' not found") from exc
+
+            def _tokenize(self, name: str, text: str) -> List[Tuple[str, str]]:
+                cached = self._cache.get(name)
+                if cached is not None:
+                    return cached
+                tokens: List[Tuple[str, str]] = []
+                pos = 0
+                for match in self._TOKEN_RE.finditer(text):
+                    if match.start() > pos:
+                        tokens.append(("text", text[pos:match.start()]))
+                    raw = match.group(0)
+                    if raw.startswith("{{"):
+                        tokens.append(("expr", raw[2:-2].strip()))
+                    else:
+                        tokens.append(("stmt", raw[2:-2].strip()))
+                    pos = match.end()
+                if pos < len(text):
+                    tokens.append(("text", text[pos:]))
+                self._cache[name] = tokens
+                return tokens
+
+            def _eval(self, expr: str, context: Dict[str, Any]) -> Any:
+                locals_ctx = self._prepare_context(context)
+                try:
+                    return eval(expr, {"__builtins__": {}}, locals_ctx)  # noqa: S307 - controlled input
+                except Exception:
+                    return ""
+
+            def _render_tokens(
+                self,
+                tokens: List[Tuple[str, str]],
+                context: Dict[str, Any],
+                start: int = 0,
+                stop_tokens: Optional[Set[str]] = None,
+            ) -> Tuple[str, int]:
+                pieces: List[str] = []
+                idx = start
+                while idx < len(tokens):
+                    kind, value = tokens[idx]
+                    if kind == "text":
+                        pieces.append(value)
+                    elif kind == "expr":
+                        rendered = self._eval(value, context)
+                        pieces.append("" if rendered is None else str(rendered))
+                    elif kind == "stmt":
+                        stmt = value.strip()
+                        if stop_tokens and stmt in stop_tokens:
+                            return "".join(pieces), idx
+                        if stmt.startswith("include"):
+                            include_path = self._parse_include(stmt)
+                            included_html = self._render_template(include_path, context)
+                            pieces.append(included_html)
+                        elif stmt.startswith("if "):
+                            cond_expr = stmt[3:].strip()
+                            true_block, next_idx = self._render_tokens(tokens, context, idx + 1, {"else", "endif"})
+                            idx = next_idx
+                            false_block = ""
+                            if idx < len(tokens):
+                                kind2, value2 = tokens[idx]
+                                if kind2 == "stmt" and value2.strip() == "else":
+                                    false_block, next_idx = self._render_tokens(tokens, context, idx + 1, {"endif"})
+                                    idx = next_idx
+                            if idx < len(tokens):
+                                kind3, value3 = tokens[idx]
+                                if not (kind3 == "stmt" and value3.strip() == "endif"):
+                                    raise RuntimeError("Unmatched {% if %} block")
+                            if self._truthy(cond_expr, context):
+                                pieces.append(true_block)
+                            else:
+                                pieces.append(false_block)
+                        elif stmt == "else" or stmt == "endif":
+                            if stop_tokens:
+                                return "".join(pieces), idx
+                        else:
+                            # Unsupported directive is ignored for compatibility.
+                            pass
+                    idx += 1
+                return "".join(pieces), idx
+
+            def _truthy(self, expr: str, context: Dict[str, Any]) -> bool:
+                result = self._eval(expr, context)
+                return bool(result)
+
+            def _parse_include(self, stmt: str) -> str:
+                match = re.search(r"include\s+['\"]([^'\"]+)['\"]", stmt)
+                if not match:
+                    raise RuntimeError(f"Invalid include statement: {stmt}")
+                return match.group(1)
+
+            def _render_template(self, name: str, context: Dict[str, Any]) -> str:
+                source = self._load_template(name)
+                tokens = self._tokenize(name, source)
+                rendered, _ = self._render_tokens(tokens, context)
+                return rendered
+
+            def TemplateResponse(self, name: str, context: Dict[str, Any], status_code: int = 200) -> HTMLResponse:
+                if "request" not in context:
+                    raise RuntimeError("Template context must include 'request'")
+                html = self._render_template(name, context)
+                return HTMLResponse(html, status_code=status_code)
+from auth import create_access_token, get_current_user
+from fastapi.templating import Jinja2Templates
+from auth import create_access_token, get_current_user
+from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Form
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+
+
 class _FallbackHTTPSRedirectMiddleware:
-    '''Minimal HTTPS redirect middleware compatible with FastAPI's interface.'''
+    """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
 
     def __init__(self, app):
         self.app = app
@@ -112,71 +294,20 @@ class _FallbackHTTPSRedirectMiddleware:
         target_url = f"https://{host}{path}" if host else "https://" + path.lstrip("/")
         response = RedirectResponse(url=target_url, status_code=307)
         await response(scope, receive, send)
-try:  # pragma: no cover - import is environment-dependent
-    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware as _FastAPIHTTPSRedirectMiddleware
-except Exception:  # ModuleNotFoundError or trimmed export
-    _FastAPIHTTPSRedirectMiddleware = None
 
 
-if _FastAPIHTTPSRedirectMiddleware is not None:
-    HTTPSRedirectMiddleware = _FastAPIHTTPSRedirectMiddleware
-else:
-    HTTPSRedirectMiddleware = _FallbackHTTPSRedirectMiddleware
-
-
-def _load_https_redirect_middleware():
-    with suppress(Exception):
+def _resolve_https_redirect_middleware():
+    try:  # pragma: no cover - import is environment-dependent
         module = importlib.import_module("fastapi.middleware.httpsredirect")
         middleware = getattr(module, "HTTPSRedirectMiddleware", None)
         if middleware is not None:
             return middleware
+    except Exception:  # pragma: no cover - fallback for trimmed/partial installs
+        return _FallbackHTTPSRedirectMiddleware
     return _FallbackHTTPSRedirectMiddleware
 
 
-HTTPSRedirectMiddleware = _load_https_redirect_middleware()
-try:
-
-    _https_redirect_mod = importlib.import_module("fastapi.middleware.httpsredirect")
-    HTTPSRedirectMiddleware = getattr(_https_redirect_mod, "HTTPSRedirectMiddleware")
-except Exception:  # pragma: no cover - fallback for trimmed fastapi distro or runtime import errors
-    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
-except ModuleNotFoundError:  # pragma: no cover - fallback for trimmed fastapi distro
-    class HTTPSRedirectMiddleware:
-        '''Minimal HTTPS redirect middleware compatible with FastAPI's interface.'''
-
-        def __init__(self, app):
-            self.app = app
-
-        async def __call__(self, scope, receive, send):
-            if scope.get("type") != "http":
-                await self.app(scope, receive, send)
-                return
-
-            scheme = scope.get("scheme", "http")
-            if scheme == "https":
-                await self.app(scope, receive, send)
-                return
-
-            headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
-            host = headers.get("host")
-            if not host:
-                server = scope.get("server")
-                if server:
-                    host = f"{server[0]}:{server[1]}" if server[1] else server[0]
-                else:
-                    host = ""
-
-            path = scope.get("raw_path") or scope.get("path", "")
-            if isinstance(path, bytes):
-                path = path.decode("latin-1")
-
-            query = scope.get("query_string", b"")
-            if query:
-                path = f"{path}?{query.decode('latin-1')}"
-
-            target_url = f"https://{host}{path}" if host else "https://" + path.lstrip("/")
-            response = RedirectResponse(url=target_url, status_code=307)
-            await response(scope, receive, send)
+HTTPSRedirectMiddleware = _resolve_https_redirect_middleware()
 
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -195,6 +326,26 @@ except (ImportError, AttributeError) as exc:  # pragma: no cover - guard against
         "The imported 'jwt' package is not PyJWT. Please install PyJWT and remove conflicting 'jwt' packages."
     ) from exc
 try:
+    import bcrypt
+except ModuleNotFoundError:  # pragma: no cover - lightweight fallback for test environments
+    import hashlib
+    import os
+
+    class _BcryptStub:
+        def gensalt(self, rounds: int = 12) -> bytes:
+            return os.urandom(16)
+
+        def hashpw(self, password: bytes, salt: bytes) -> bytes:
+            digest = hashlib.pbkdf2_hmac("sha256", password, salt, 390000)
+            return salt + digest
+
+        def checkpw(self, password: bytes, hashed: bytes) -> bool:
+            salt, digest = hashed[:16], hashed[16:]
+            expected = hashlib.pbkdf2_hmac("sha256", password, salt, 390000)
+            return expected == digest
+
+    bcrypt = _BcryptStub()  # type: ignore[assignment]
+try:
     import pyotp
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     pyotp = None  # type: ignore[assignment]
@@ -207,6 +358,37 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
     def load_dotenv(*_args, **_kwargs):  # type: ignore
         return False
+
+try:
+    from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+except ModuleNotFoundError:  # pragma: no cover - provide lightweight serializer for tests
+    import base64
+    import hashlib
+    import hmac as _hmac
+    import json as _json
+
+    class BadSignature(Exception):
+        pass
+
+    class SignatureExpired(BadSignature):
+        pass
+
+    class URLSafeTimedSerializer:
+        def __init__(self, secret_key: str, salt: str = "", serializer: Any | None = None) -> None:
+            self._secret = (secret_key + salt).encode("utf-8")
+
+        def dumps(self, obj: Any) -> str:
+            payload = _json.dumps(obj, separators=(",", ":")).encode("utf-8")
+            signature = _hmac.new(self._secret, payload, hashlib.sha256).digest()
+            return base64.urlsafe_b64encode(payload + signature).decode("ascii")
+
+        def loads(self, token: str, max_age: int | None = None) -> Any:
+            raw = base64.urlsafe_b64decode(token.encode("ascii"))
+            payload, signature = raw[:-32], raw[-32:]
+            expected = _hmac.new(self._secret, payload, hashlib.sha256).digest()
+            if not _hmac.compare_digest(signature, expected):
+                raise BadSignature("Signature mismatch")
+            return _json.loads(payload.decode("utf-8"))
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -247,7 +429,218 @@ def _load_optional_module(name: str):
 
 psutil = _load_optional_module("psutil")
 
+_SENSITIVE_PATTERNS = [
+    re.compile(r"(authorization\\s*[:=]\\s*)([^\s]+)", re.IGNORECASE),
+    re.compile(r"(bearer\\s+)[A-Za-z0-9._\-+=/]+", re.IGNORECASE),
+    re.compile(r"(apikey\\s+)[A-Za-z0-9._\-+=/]+", re.IGNORECASE),
+    re.compile(r"(token=)([^&\s]+)", re.IGNORECASE),
+    re.compile(r"(password=)([^&\s]+)", re.IGNORECASE),
+    re.compile(r"(secret=)([^&\s]+)", re.IGNORECASE),
+]
+_SENSITIVE_KEYS = {
+    "password",
+    "passcode",
+    "secret",
+    "token",
+    "api_key",
+    "api_secret",
+    "authorization",
+    "access_token",
+    "refresh_token",
+}
+
+
+def _sanitize_log_text(value: str) -> str:
+    cleaned = value
+    for pattern in _SENSITIVE_PATTERNS:
+        cleaned = pattern.sub(lambda m: m.group(1) + "[REDACTED]", cleaned)
+    return cleaned
+
+
+def _sanitize_log_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_log_text(value)
+    if isinstance(value, dict):
+        sanitized: Dict[Any, Any] = {}
+        for key, item in value.items():
+            if isinstance(key, str) and key.lower() in _SENSITIVE_KEYS:
+                sanitized[key] = "[REDACTED]"
+            else:
+                sanitized[key] = _sanitize_log_value(item)
+        return sanitized
+    if isinstance(value, (list, tuple, set)):
+        iterable = [_sanitize_log_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(iterable)
+        if isinstance(value, set):
+            return set(iterable)
+        return iterable
+    return value
+
+
+class _SensitiveDataFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover - logging integration
+        if record.args:
+            record.args = tuple(_sanitize_log_value(arg) for arg in record.args)
+        record.msg = _sanitize_log_value(record.msg)
+        if not isinstance(record.msg, str):
+            record.msg = _sanitize_log_text(str(record.msg))
+        return True
+
+
 logger = logging.getLogger("neocortex.server")
+logger.addFilter(_SensitiveDataFilter())
+AUDIT_LOGGER = logging.getLogger("neocortex.audit")
+AUDIT_LOGGER.setLevel(logging.INFO)
+AUDIT_LOGGER.addFilter(_SensitiveDataFilter())
+
+ALLOWED_HTTP_METHODS: Set[str] = {"GET", "POST"}
+LOGIN_RATE_LIMIT_MAX_ATTEMPTS = int(os.getenv("LOGIN_RATE_LIMIT_MAX_ATTEMPTS", "5"))
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "60"))
+_LOGIN_ATTEMPTS: Dict[str, deque] = defaultdict(deque)
+_LOGIN_RATE_LOCK = threading.Lock()
+
+AUTH_FAILURE_ALERT_THRESHOLD = int(os.getenv("AUTH_FAILURE_ALERT_THRESHOLD", "5"))
+AUTH_FAILURE_ALERT_WINDOW_SECONDS = int(os.getenv("AUTH_FAILURE_ALERT_WINDOW_SECONDS", "300"))
+_AUTH_FAILURES: Dict[str, deque] = defaultdict(deque)
+_AUTH_FAILURE_LOCK = threading.Lock()
+
+_IP_ALLOWLIST_RAW = _comma_separated_list(os.getenv("IP_ALLOWLIST"))
+IP_ALLOWLIST: List[ipaddress._BaseNetwork] = []
+for entry in _IP_ALLOWLIST_RAW:
+    try:
+        IP_ALLOWLIST.append(ipaddress.ip_network(entry, strict=False))
+    except ValueError:
+        logger.warning("invalid IP allowlist entry ignored: %s", entry)
+
+ALLOWED_ORIGINS = _comma_separated_list(os.getenv("ALLOWED_ORIGINS") or os.getenv("CORS_ALLOWED_ORIGINS"))
+CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "csrftoken")
+CSRF_HEADER_NAME = os.getenv("CSRF_HEADER_NAME", "X-CSRF-Token")
+CSRF_TOKEN_TTL_SECONDS = int(os.getenv("CSRF_TOKEN_TTL_SECONDS", "3600"))
+BCRYPT_ROUNDS = int(os.getenv("BCRYPT_ROUNDS", "12"))
+AUDIT_METADATA_MAX_LENGTH = int(os.getenv("AUDIT_METADATA_MAX_LENGTH", "2048"))
+
+
+def _ip_allowed(ip: str) -> bool:
+    if not IP_ALLOWLIST:
+        return True
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in network for network in IP_ALLOWLIST)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    client = getattr(request, "client", None)
+    if client:
+        host = None
+        if isinstance(client, tuple):
+            host = client[0]
+        else:
+            host = getattr(client, "host", None)
+        if host:
+            return str(host)
+    return "0.0.0.0"
+
+
+def _client_user_agent(request: Request) -> str:
+    return request.headers.get("user-agent", "unknown")[:512]
+
+
+def _client_fingerprint(request: Request) -> str:
+    identifier = f"{_client_ip(request)}|{_client_user_agent(request)}"
+    secret = JWT_SECRET_KEY.encode("utf-8") if isinstance(JWT_SECRET_KEY, str) else bytes(JWT_SECRET_KEY)
+    return hmac.new(secret, identifier.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _enforce_login_rate_limit(identifier: str) -> None:
+    key = identifier or "unknown"
+    now = time.monotonic()
+    with _LOGIN_RATE_LOCK:
+        attempts = _LOGIN_ATTEMPTS[key]
+        while attempts and now - attempts[0] > LOGIN_RATE_LIMIT_WINDOW_SECONDS:
+            attempts.popleft()
+        if len(attempts) >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS:
+            raise HTTPException(
+                status_code=429,
+                detail="too many login attempts from this source; please retry later",
+            )
+        attempts.append(now)
+
+
+def _reset_login_attempts(identifier: str) -> None:
+    key = identifier or "unknown"
+    with _LOGIN_RATE_LOCK:
+        _LOGIN_ATTEMPTS.pop(key, None)
+
+
+def _track_auth_failure(ip: str) -> None:
+    key = ip or "unknown"
+    now = time.monotonic()
+    with _AUTH_FAILURE_LOCK:
+        entries = _AUTH_FAILURES[key]
+        while entries and now - entries[0] > AUTH_FAILURE_ALERT_WINDOW_SECONDS:
+            entries.popleft()
+        entries.append(now)
+        if len(entries) >= AUTH_FAILURE_ALERT_THRESHOLD:
+            logger.warning("multiple authentication failures detected for %s", key)
+            entries.clear()
+
+
+def _clear_auth_failures(ip: str) -> None:
+    key = ip or "unknown"
+    with _AUTH_FAILURE_LOCK:
+        _AUTH_FAILURES.pop(key, None)
+
+
+def _register_auth_failure(request: Optional[Request], ip: str) -> None:
+    _track_auth_failure(ip)
+    if request is not None:
+        try:
+            request.state.auth_failure_logged = True
+        except AttributeError:
+            pass
+
+
+def _generate_csrf_token(request: Request) -> str:
+    payload = {"fp": _client_fingerprint(request), "ts": int(time.time())}
+    return _CSRF_SERIALIZER.dumps(payload)
+
+
+def _validate_csrf_token(request: Request, token: Optional[str]) -> bool:
+    token = (token or "").strip()
+    if not token:
+        return False
+    try:
+        data = _CSRF_SERIALIZER.loads(token, max_age=CSRF_TOKEN_TTL_SECONDS)
+    except (BadSignature, SignatureExpired):
+        return False
+    expected_fp = _client_fingerprint(request)
+    provided_fp = str(data.get("fp") or "")
+    return bool(provided_fp) and secrets.compare_digest(expected_fp, provided_fp)
+
+
+def _should_enforce_csrf(request: Request) -> bool:
+    if request.method.upper() != "POST":
+        return False
+    content_type = (request.headers.get("content-type") or "").lower()
+    if any(
+        marker in content_type
+        for marker in ("application/x-www-form-urlencoded", "multipart/form-data")
+    ):
+        return True
+    if SESSION_COOKIE_NAME in request.cookies or REFRESH_COOKIE_NAME in request.cookies:
+        return True
+    return False
 
 try:
     import matplotlib  # type: ignore
@@ -341,6 +734,8 @@ FORCE_HTTPS_REDIRECT = _env_flag("FORCE_HTTPS_REDIRECT", default=SSL_ENABLED)
 ENABLE_HSTS = _env_flag("ENABLE_HSTS", default=SSL_ENABLED)
 ENABLE_SECURITY_HEADERS = _env_flag("ENABLE_SECURITY_HEADERS", default=True)
 DISABLE_SERVER_HEADER = _env_flag("DISABLE_SERVER_HEADER", default=True)
+CSRF_COOKIE_SECURE = _env_flag("CSRF_COOKIE_SECURE", default=SSL_ENABLED)
+CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "lax") or "lax"
 HSTS_MAX_AGE = int(os.getenv("HSTS_MAX_AGE", "31536000"))
 HSTS_INCLUDE_SUBDOMAINS = _env_flag("HSTS_INCLUDE_SUBDOMAINS", default=True)
 HSTS_PRELOAD = _env_flag("HSTS_PRELOAD", default=False)
@@ -527,12 +922,124 @@ def _sanitize_filename_component(value: str) -> str:
     cleaned = SAFE_FILENAME_COMPONENT.sub("_", value.upper())
     return cleaned or "UNKNOWN"
 
+
+_PROJECT_ROOT = Path(__file__).resolve().parent
+
+_RUNTIME_DIRECTORY_ENV_KEYS: Dict[str, Tuple[str, ...]] = {
+    "artifacts": ("ARTIFACTS_DIR", "RUNS_ROOT"),
+    "logs": ("LOGS_DIR", "LOG_DIR"),
+    "tmp": ("TMP_DIR", "TMP_ROOT", "TEMP_DIR"),
+}
+
+_RUNTIME_DIRECTORIES_CACHE: Optional[Dict[str, Path]] = None
+
+
+def _resolve_runtime_directory(name: str, env_keys: Tuple[str, ...]) -> Path:
+    raw_path = ""
+    for key in env_keys:
+        candidate = os.getenv(key)
+        if candidate:
+            raw_path = candidate
+            break
+    if raw_path:
+        resolved = Path(raw_path).expanduser()
+        if not resolved.is_absolute():
+            resolved = (_PROJECT_ROOT / resolved).resolve()
+    else:
+        resolved = (_PROJECT_ROOT / name).resolve()
+    return resolved
+
+
+def _apply_directory_permissions(path: Path) -> None:
+    runtime_logger = logging.getLogger("neocortex.runtime")
+    try:
+        current_mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError as exc:  # pragma: no cover - platform specific
+        runtime_logger.debug("unable to stat runtime directory %s: %s", path, exc)
+        return
+
+    desired_mode = 0o755
+    if current_mode == desired_mode:
+        return
+    try:
+        path.chmod(desired_mode)
+    except PermissionError:  # pragma: no cover - depends on filesystem
+        runtime_logger.debug("insufficient permissions to chmod %s", path)
+    except OSError as exc:  # pragma: no cover - platform specific
+        runtime_logger.debug("unable to adjust permissions for %s: %s", path, exc)
+
+
+def _prepare_runtime_directory(name: str, env_keys: Tuple[str, ...]) -> Path:
+    runtime_logger = logging.getLogger("neocortex.runtime")
+    candidate = _resolve_runtime_directory(name, env_keys)
+    fallback_base = Path(tempfile.gettempdir()).resolve()
+    fallback = (fallback_base / "neocortex" / name).resolve()
+
+    for path in (candidate, fallback):
+        resolved = path.resolve()
+        if resolved.exists() and not resolved.is_dir():
+            runtime_logger.warning(
+                "runtime path %s exists but is not a directory; skipping", resolved
+            )
+            continue
+        try:
+            resolved.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            runtime_logger.warning(
+                "permission denied creating runtime directory %s (%s)", resolved, exc
+            )
+            continue
+        except OSError as exc:
+            runtime_logger.warning(
+                "unable to create runtime directory %s (%s)", resolved, exc
+            )
+            if resolved == fallback:
+                raise
+            continue
+
+        _apply_directory_permissions(resolved)
+        if os.access(resolved, os.W_OK | os.X_OK):
+            if resolved != candidate and resolved == fallback:
+                runtime_logger.warning(
+                    "using fallback runtime directory for %s: %s", name, resolved
+                )
+            for key in env_keys:
+                os.environ[key] = str(resolved)
+            return resolved
+
+        runtime_logger.warning(
+            "runtime directory %s is not writable; trying fallback", resolved
+        )
+
+    raise RuntimeError(
+        f"No writable directory available for '{name}'. "
+        f"Set one of {', '.join(env_keys)} to a writable path."
+    )
+
+
+def ensure_runtime_directories() -> Dict[str, Path]:
+    global _RUNTIME_DIRECTORIES_CACHE
+    if _RUNTIME_DIRECTORIES_CACHE is not None:
+        return dict(_RUNTIME_DIRECTORIES_CACHE)
+
+    directories: Dict[str, Path] = {}
+    for name, env_keys in _RUNTIME_DIRECTORY_ENV_KEYS.items():
+        directories[name] = _prepare_runtime_directory(name, env_keys)
+
+    _RUNTIME_DIRECTORIES_CACHE = directories
+    return dict(_RUNTIME_DIRECTORIES_CACHE)
+
 API_HOST   = os.getenv("API_HOST","0.0.0.0")
 API_PORT   = int(os.getenv("API_PORT","8000"))
-RUNS_ROOT  = Path(os.getenv("RUNS_ROOT","artifacts")).resolve()
-RUNS_ROOT.mkdir(parents=True, exist_ok=True)
+RUNTIME_DIRECTORIES = ensure_runtime_directories()
+RUNS_ROOT = RUNTIME_DIRECTORIES["artifacts"]
+LOGS_ROOT = RUNTIME_DIRECTORIES["logs"]
+TMP_ROOT = RUNTIME_DIRECTORIES["tmp"]
 STATIC_DIR = Path(os.getenv("STATIC_DIR","static")).resolve(); STATIC_DIR.mkdir(parents=True, exist_ok=True)
 PUBLIC_DIR = Path(os.getenv("PUBLIC_DIR","public")).resolve(); PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+TEMPLATES_DIR = Path(os.getenv("TEMPLATES_DIR", "templates")).resolve(); TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
 LIQUIDITY_DIR = PUBLIC_DIR / "liquidity"
 LIQUIDITY_DIR.mkdir(parents=True, exist_ok=True)
 LIQUIDITY_ASSETS = LIQUIDITY_DIR / "assets"
@@ -540,9 +1047,6 @@ LIQUIDITY_ASSETS.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = ALPACA_TEST_DIR.resolve()
-
-LOGIN_PAGE = PUBLIC_DIR / "login.html"
-ADMIN_LOGIN_PAGE = PUBLIC_DIR / "admin-login.html"
 
 ENDUSERAPP_DIR = PUBLIC_DIR / "enduserapp"
 ENDUSERAPP_DIR.mkdir(parents=True, exist_ok=True)
@@ -843,6 +1347,8 @@ JWT_ISSUER = os.getenv("JWT_ISSUER", "neo-cortex")
 JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "neo-cortex-clients")
 JWT_LEEWAY_SECONDS = int(os.getenv("JWT_LEEWAY_SECONDS", "30"))
 TOKEN_REFRESH_LEEWAY_SECONDS = int(os.getenv("TOKEN_REFRESH_LEEWAY_SECONDS", "60"))
+CSRF_SECRET_KEY = os.getenv("CSRF_SECRET_KEY") or JWT_SECRET_KEY
+_CSRF_SERIALIZER = URLSafeTimedSerializer(str(CSRF_SECRET_KEY), salt="neo-cortex-csrf")
 
 ROLE_ADMIN = "admin"
 ROLE_TRADER = "trader"
@@ -850,10 +1356,10 @@ ROLE_READ_ONLY = "read-only"
 ROLE_LICENSE = "license_user"
 DEFAULT_ROLE = os.getenv("DEFAULT_USER_ROLE", ROLE_READ_ONLY)
 ROLE_SCOPES: Dict[str, Set[str]] = {
-    ROLE_ADMIN: {"admin", "trade", "read", "positions", "credentials", "api-keys"},
-    ROLE_TRADER: {"trade", "read", "positions"},
-    ROLE_LICENSE: {"license", "read"},
-    ROLE_READ_ONLY: {"read"},
+    ROLE_ADMIN: {"admin", "trade", "read", "positions", "credentials", "api-keys", "ml-chat"},
+    ROLE_TRADER: {"trade", "read", "positions", "ml-chat"},
+    ROLE_LICENSE: {"license", "read", "ml-chat"},
+    ROLE_READ_ONLY: {"read", "ml-chat"},
 }
 MFA_REQUIRED_ROLES: Set[str] = {role.strip() for role in os.getenv("MFA_REQUIRED_ROLES", f"{ROLE_ADMIN},{ROLE_TRADER}").split(",") if role.strip()}
 API_TOKEN_PREFIX = os.getenv("API_TOKEN_PREFIX", "ApiKey")
@@ -875,7 +1381,6 @@ PINNED_CERT_HASH_ALGO = (os.getenv("PINNED_CERT_HASH_ALGO") or "sha256").strip()
 ENABLE_CERT_PINNING = bool(PINNED_CERT_FINGERPRINT)
 
 SECURE_HEADERS_TEMPLATE: Dict[str, str] = {
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
@@ -884,15 +1389,40 @@ SECURE_HEADERS_TEMPLATE: Dict[str, str] = {
     "Cross-Origin-Embedder-Policy": "require-corp",
     "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; object-src 'none'",
 }
+
+ENDUSER_CHAT_ENABLED = _env_flag("ENDUSER_CHAT_ENABLED", default=True)
+ENDUSER_CHAT_MODEL = (os.getenv("ENDUSER_CHAT_MODEL") or "gpt-3.5-turbo").strip() or "gpt-3.5-turbo"
+ENDUSER_CHAT_SYSTEM_PROMPT = (
+    os.getenv("ENDUSER_CHAT_SYSTEM_PROMPT")
+    or "You are the Neo Cortex trading assistant. Provide concise, helpful answers about the platform."
+).strip()
+ENDUSER_CHAT_MAX_HISTORY = int(os.getenv("ENDUSER_CHAT_MAX_HISTORY", "8"))
+ENDUSER_CHAT_MAX_OUTPUT_TOKENS = int(os.getenv("ENDUSER_CHAT_MAX_OUTPUT_TOKENS", "512"))
+ENDUSER_CHAT_TEMPERATURE = float(os.getenv("ENDUSER_CHAT_TEMPERATURE", "0.2"))
+OPENAI_BASE_URL = (os.getenv("OPENAI_BASE_URL") or os.getenv("CHATGPT_BASE_URL") or "").strip()
+
+_openai_client_lock = threading.Lock()
+_openai_client: Optional[OpenAI] = None
 CUSTOM_SECURE_HEADERS = os.getenv("SECURE_HEADERS_EXTRA", "")
+_STRICT_TRANSPORT_TEMPLATE: Optional[str] = None
 if CUSTOM_SECURE_HEADERS:
+    updated_headers = dict(SECURE_HEADERS_TEMPLATE)
     for header_pair in CUSTOM_SECURE_HEADERS.split(";;"):
         if not header_pair.strip():
             continue
         if "=" not in header_pair:
             continue
         name, value = header_pair.split("=", 1)
-        SECURE_HEADERS_TEMPLATE[name.strip()] = value.strip()
+        header_name = name.strip()
+        header_value = value.strip()
+        if header_name.lower() == "strict-transport-security":
+            _STRICT_TRANSPORT_TEMPLATE = header_value
+            continue
+        updated_headers[header_name] = header_value
+    SECURE_HEADERS_TEMPLATE = updated_headers
+else:
+    _STRICT_TRANSPORT_TEMPLATE = None
+
 DEFAULT_SECURITY_HEADERS.update(SECURE_HEADERS_TEMPLATE)
 
 WHOP_API_KEY = (os.getenv("WHOP_API_KEY") or "").strip() or None
@@ -900,6 +1430,7 @@ WHOP_API_BASE = (os.getenv("WHOP_API_BASE") or "https://api.whop.com").rstrip("/
 WHOP_PORTAL_URL = (os.getenv("WHOP_PORTAL_URL") or "").strip() or None
 WHOP_SESSION_TTL = int(os.getenv("WHOP_SESSION_TTL", "900"))
 ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "the3istheD3T").strip()
+ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "").strip()
 ADMIN_PORTAL_BASIC_USER = (os.getenv("ADMIN_PORTAL_BASIC_USER") or "").strip()
 ADMIN_PORTAL_BASIC_PASS = (os.getenv("ADMIN_PORTAL_BASIC_PASS") or "").strip()
 ADMIN_PORTAL_BASIC_REALM = (
@@ -913,6 +1444,38 @@ DISABLE_ACCESS_LOGS = _env_flag("DISABLE_ACCESS_LOGS", default=True)
 ADMIN_PORTAL_HTTP_BASIC = HTTPBasic(auto_error=False)
 if DISABLE_ACCESS_LOGS:
     logging.getLogger("uvicorn.access").disabled = True
+
+ALPACA_WEBHOOK_SECRET = (os.getenv("ALPACA_WEBHOOK_SECRET") or "").strip()
+ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS = _env_flag(
+    "ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS", default=False
+)
+ALPACA_WEBHOOK_SIGNATURE_HEADER = (
+    os.getenv("ALPACA_WEBHOOK_SIGNATURE_HEADER", "X-Webhook-Signature") or "X-Webhook-Signature"
+).strip()
+ALPACA_WEBHOOK_TIMESTAMP_HEADER = (
+    os.getenv("ALPACA_WEBHOOK_TIMESTAMP_HEADER", "X-Webhook-Timestamp") or "X-Webhook-Timestamp"
+).strip()
+ALPACA_WEBHOOK_TOLERANCE_SECONDS = max(
+    0,
+    int(os.getenv("ALPACA_WEBHOOK_TOLERANCE_SECONDS", "300")),
+)
+ALPACA_WEBHOOK_REPLAY_CAPACITY = max(
+    1,
+    int(os.getenv("ALPACA_WEBHOOK_REPLAY_CAPACITY", "2048")),
+)
+ALPACA_WEBHOOK_TEST_REQUIRE_AUTH = _env_flag(
+    "ALPACA_WEBHOOK_TEST_REQUIRE_AUTH", default=True
+)
+
+if not ADMIN_PRIVATE_KEY:
+    logger.warning(
+        "ADMIN_PRIVATE_KEY is not configured; the /register admin bootstrap endpoint will refuse requests until it is set."
+    )
+
+if not ALPACA_WEBHOOK_SECRET and not ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS:
+    logger.warning(
+        "ALPACA_WEBHOOK_SECRET is not configured. Incoming /alpaca/webhook requests will be rejected until it is provided."
+    )
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -928,6 +1491,54 @@ def _db_conn() -> sqlite3.Connection:
     return conn
 
 
+def _record_audit_event(
+    event: str,
+    *,
+    user_id: Optional[int] = None,
+    username: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    serialized_metadata: Optional[str] = None
+    if metadata is not None:
+        try:
+            cleaned = _sanitize_log_value(metadata)
+            serialized_metadata = json.dumps(cleaned, default=str)
+        except TypeError:
+            serialized_metadata = json.dumps({"detail": str(metadata)})
+        if len(serialized_metadata) > AUDIT_METADATA_MAX_LENGTH:
+            serialized_metadata = serialized_metadata[:AUDIT_METADATA_MAX_LENGTH]
+    with _db_conn() as conn:
+        conn.execute(
+            '''
+            INSERT INTO audit_events (event, user_id, username, ip_address, user_agent, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                event,
+                user_id,
+                username,
+                ip_address,
+                user_agent,
+                serialized_metadata,
+                timestamp,
+            ),
+        )
+    AUDIT_LOGGER.info(
+        {
+            "event": event,
+            "user_id": user_id,
+            "username": username,
+            "ip": ip_address,
+            "user_agent": user_agent,
+            "timestamp": timestamp,
+            "metadata": _sanitize_log_value(metadata) if metadata is not None else None,
+        }
+    )
+
+
 def _init_auth_db() -> None:
     with _db_conn() as conn:
         conn.execute(
@@ -937,6 +1548,7 @@ def _init_auth_db() -> None:
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
+                password_algo TEXT NOT NULL DEFAULT 'pbkdf2',
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )
@@ -950,6 +1562,10 @@ def _init_auth_db() -> None:
             default_role_literal = DEFAULT_ROLE.replace("'", "''")
             conn.execute(
                 f"ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT '{default_role_literal}'"
+            )
+        if "password_algo" not in column_names:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN password_algo TEXT NOT NULL DEFAULT 'pbkdf2'"
             )
         if "totp_secret" not in column_names:
             conn.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT")
@@ -968,6 +1584,9 @@ def _init_auth_db() -> None:
                 created_at TEXT NOT NULL,
                 expires_at TEXT,
                 last_used_at TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                fingerprint TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             '''
@@ -980,6 +1599,12 @@ def _init_auth_db() -> None:
             conn.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT")
         if "last_used_at" not in session_columns:
             conn.execute("ALTER TABLE sessions ADD COLUMN last_used_at TEXT")
+        if "ip_address" not in session_columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN ip_address TEXT")
+        if "user_agent" not in session_columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN user_agent TEXT")
+        if "fingerprint" not in session_columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN fingerprint TEXT")
         conn.execute(
             '''
             CREATE TABLE IF NOT EXISTS alpaca_credentials (
@@ -1020,6 +1645,20 @@ def _init_auth_db() -> None:
                 key_version TEXT NOT NULL,
                 rotated_at TEXT NOT NULL,
                 total_records INTEGER NOT NULL DEFAULT 0
+            )
+            '''
+        )
+        conn.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event TEXT NOT NULL,
+                user_id INTEGER,
+                username TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                metadata TEXT,
+                created_at TEXT NOT NULL
             )
             '''
         )
@@ -1362,27 +2001,30 @@ def _create_access_token(
     *,
     user: Dict[str, Any],
     refresh_id: Optional[str],
+    fingerprint: str,
     expires_delta: Optional[timedelta] = None,
 ) -> str:
-    now = datetime.now(timezone.utc)
-    expires = now + (expires_delta or timedelta(minutes=JWT_ACCESS_EXPIRE_MINUTES))
     payload = {
         "iss": JWT_ISSUER,
         "sub": str(user["id"]),
         "aud": JWT_AUDIENCE,
-        "iat": int(now.timestamp()),
-        "nbf": int(now.timestamp()),
-        "exp": int(expires.timestamp()),
         "type": "access",
         "sid": refresh_id,
         "username": user["username"],
         "roles": user["roles"],
         "scopes": sorted(user["scopes"]),
+        "fp": fingerprint,
     }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return create_access_token(payload, expires_delta=expires_delta)
 
 
-def _create_refresh_token(user_id: int) -> Tuple[str, str, datetime]:
+def _create_refresh_token(
+    user_id: int,
+    *,
+    fingerprint: str,
+    ip_address: str,
+    user_agent: str,
+) -> Tuple[str, str, datetime]:
     token_id = secrets.token_hex(16)
     secret = secrets.token_urlsafe(48)
     token = f"{token_id}.{secret}"
@@ -1402,6 +2044,14 @@ def _create_refresh_token(user_id: int) -> Tuple[str, str, datetime]:
                 expires_at.isoformat(),
                 None,
             ),
+        )
+        conn.execute(
+            '''
+            UPDATE sessions
+            SET ip_address = ?, user_agent = ?, fingerprint = ?
+            WHERE token = ?
+            ''',
+            (ip_address, user_agent, fingerprint, token_id),
         )
     return token, token_id, expires_at
 
@@ -1427,7 +2077,12 @@ def _decode_access_token(token: str, *, verify_exp: bool = True) -> Dict[str, An
     return payload
 
 
-def _verify_refresh_token(token: str, *, update_last_used: bool = True) -> Dict[str, Any]:
+def _verify_refresh_token(
+    token: str,
+    *,
+    update_last_used: bool = True,
+    request: Optional[Request] = None,
+) -> Dict[str, Any]:
     token = (token or "").strip()
     if not token or "." not in token:
         raise HTTPException(status_code=401, detail="invalid refresh token")
@@ -1449,17 +2104,59 @@ def _verify_refresh_token(token: str, *, update_last_used: bool = True) -> Dict[
                 raise HTTPException(status_code=401, detail="refresh token invalid expiry")
             if expires_at < datetime.now(timezone.utc):
                 raise HTTPException(status_code=401, detail="refresh token expired")
+        current_ip = _client_ip(request) if request else None
+        current_ua = _client_user_agent(request) if request else None
+        current_fp = _client_fingerprint(request) if request else None
+        stored_fp = row["fingerprint"] or ""
+        if request:
+            if stored_fp and current_fp and not secrets.compare_digest(stored_fp, current_fp):
+                _revoke_refresh_token(token_id=token_id)
+                raise HTTPException(status_code=401, detail="refresh token context mismatch")
+            stored_ip = (row["ip_address"] or "").strip()
+            if stored_ip and current_ip and stored_ip != current_ip:
+                _revoke_refresh_token(token_id=token_id)
+                raise HTTPException(status_code=401, detail="refresh token context mismatch")
+            stored_agent = row["user_agent"] or ""
+            if stored_agent and current_ua and not secrets.compare_digest(stored_agent, current_ua):
+                _revoke_refresh_token(token_id=token_id)
+                raise HTTPException(status_code=401, detail="refresh token context mismatch")
         if update_last_used:
             conn.execute(
-                "UPDATE sessions SET last_used_at = ? WHERE token = ?",
-                (datetime.now(timezone.utc).isoformat(), token_id),
+                """
+                UPDATE sessions
+                SET last_used_at = ?, ip_address = COALESCE(?, ip_address), user_agent = COALESCE(?, user_agent), fingerprint = COALESCE(?, fingerprint)
+                WHERE token = ?
+                """,
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    current_ip,
+                    current_ua,
+                    current_fp,
+                    token_id,
+                ),
             )
-    return {"token_id": token_id, "user_id": row["user_id"], "expires_at": row["expires_at"]}
+    return {
+        "token_id": token_id,
+        "user_id": row["user_id"],
+        "expires_at": row["expires_at"],
+    }
 
 
-def _issue_token_pair(user: Dict[str, Any]) -> Dict[str, Any]:
-    refresh_token, refresh_id, refresh_exp = _create_refresh_token(user["id"])
-    access_token = _create_access_token(user=user, refresh_id=refresh_id)
+def _issue_token_pair(user: Dict[str, Any], *, request: Request) -> Dict[str, Any]:
+    fingerprint = getattr(request.state, "client_fingerprint", _client_fingerprint(request))
+    client_ip = getattr(request.state, "client_ip", _client_ip(request))
+    user_agent = getattr(request.state, "client_user_agent", _client_user_agent(request))
+    refresh_token, refresh_id, refresh_exp = _create_refresh_token(
+        user["id"],
+        fingerprint=fingerprint,
+        ip_address=client_ip,
+        user_agent=user_agent,
+    )
+    access_token = _create_access_token(
+        user=user,
+        refresh_id=refresh_id,
+        fingerprint=fingerprint,
+    )
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -1468,7 +2165,7 @@ def _issue_token_pair(user: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _set_auth_cookies(response: JSONResponse, tokens: Dict[str, Any]) -> None:
+def _set_auth_cookies(response: Response, tokens: Dict[str, Any]) -> None:
     access_token = tokens["access_token"]
     refresh_token = tokens["refresh_token"]
     response.set_cookie(
@@ -1491,7 +2188,7 @@ def _set_auth_cookies(response: JSONResponse, tokens: Dict[str, Any]) -> None:
     )
 
 
-def _clear_auth_cookies(response: JSONResponse) -> None:
+def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(
         SESSION_COOKIE_NAME,
         path="/",
@@ -1555,6 +2252,131 @@ def _http_session() -> requests.Session:
         session.mount("https://", _PinnedHTTPSAdapter())
     _HTTP_SESSION = session
     return session
+
+
+def _get_openai_client() -> OpenAI:
+    if OpenAI is None:  # pragma: no cover - optional dependency guard
+        raise RuntimeError("OpenAI SDK is not installed")
+    global _openai_client
+    with _openai_client_lock:
+        if _openai_client is not None:
+            return _openai_client
+        api_key = (os.getenv("OPENAI_API_KEY") or os.getenv("CHATGPT_API_KEY") or "").strip()
+        if not api_key:
+            raise RuntimeError("OpenAI API key is not configured")
+        client_kwargs: Dict[str, Any] = {"api_key": api_key}
+        if OPENAI_BASE_URL:
+            client_kwargs["base_url"] = OPENAI_BASE_URL
+        _openai_client = OpenAI(**client_kwargs)
+        return _openai_client
+
+
+def _prepare_chat_messages(req: ChatCompletionRequest) -> List[Dict[str, str]]:
+    prompt = req.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    history: List[Dict[str, str]] = []
+    if req.history:
+        # Preserve the most recent history to avoid unbounded prompts.
+        for item in req.history[-max(1, ENDUSER_CHAT_MAX_HISTORY):]:
+            role = item.role
+            if role not in {"user", "assistant"}:
+                continue
+            content = item.content.strip()
+            if not content:
+                continue
+            history.append({"role": role, "content": content})
+    messages: List[Dict[str, str]] = []
+    system_prompt = (req.system_prompt or ENDUSER_CHAT_SYSTEM_PROMPT).strip()
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.extend(history)
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def _chat_usage_to_dict(usage: Any) -> Dict[str, int]:
+    if not usage:
+        return {}
+    if hasattr(usage, "to_dict"):
+        usage = usage.to_dict()
+    result: Dict[str, int] = {}
+    if isinstance(usage, dict):
+        items = usage.items()
+    else:
+        items = ((name, getattr(usage, name, None)) for name in (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "input_tokens",
+            "output_tokens",
+        ))
+    for key, value in items:
+        if not isinstance(value, (int, float)):
+            continue
+        result[key] = int(value)
+    return result
+
+
+async def _run_chat_completion(req: ChatCompletionRequest, user: Dict[str, Any]) -> Dict[str, Any]:
+    if OpenAI is None:
+        raise HTTPException(status_code=503, detail="chat assistant is not installed")
+    try:
+        client = _get_openai_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    messages = _prepare_chat_messages(req)
+    model = (req.model or ENDUSER_CHAT_MODEL).strip()
+    if not model:
+        raise HTTPException(status_code=503, detail="no chat model configured")
+
+    temperature = (
+        ENDUSER_CHAT_TEMPERATURE
+        if req.temperature is None
+        else max(0.0, min(2.0, float(req.temperature)))
+    )
+    max_tokens = ENDUSER_CHAT_MAX_OUTPUT_TOKENS
+    if req.max_output_tokens is not None:
+        max_tokens = max(1, min(int(req.max_output_tokens), ENDUSER_CHAT_MAX_OUTPUT_TOKENS))
+    else:
+        max_tokens = max(1, max_tokens)
+
+    loop = asyncio.get_running_loop()
+
+    def _request_completion():
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            user=str(user.get("id") or user.get("username") or "enduser"),
+        )
+
+    try:
+        completion = await loop.run_in_executor(None, _request_completion)
+    except OpenAIError as exc:
+        logger.warning("OpenAI chat completion failed for user %s: %s", user.get("id"), exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - unexpected SDK error
+        logger.exception("Unexpected error during OpenAI chat completion")
+        raise HTTPException(status_code=502, detail="chat service unavailable") from exc
+
+    choices = getattr(completion, "choices", None) or []
+    response_text = ""
+    for choice in choices:
+        message = getattr(choice, "message", None)
+        content = getattr(message, "content", None) if message else None
+        if content:
+            response_text = str(content).strip()
+            if response_text:
+                break
+    if not response_text:
+        raise HTTPException(status_code=502, detail="assistant returned an empty response")
+
+    usage = _chat_usage_to_dict(getattr(completion, "usage", None))
+    model_name = getattr(completion, "model", None) or model
+    return {"message": response_text, "model": model_name, "usage": usage}
 
 
 def _generate_recovery_codes(count: int = MFA_RECOVERY_CODE_COUNT) -> List[str]:
@@ -1828,6 +2650,26 @@ def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[s
     return derived.hex(), salt
 
 
+def _hash_password_secure(password: str) -> Tuple[str, str, str]:
+    salt = secrets.token_hex(16)
+    hashed = bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt(rounds=max(4, BCRYPT_ROUNDS)),
+    )
+    return hashed.decode("utf-8"), salt, "bcrypt"
+
+
+def _verify_password(password: str, stored_hash: str, salt: str, algo: Optional[str]) -> bool:
+    algorithm = (algo or "").lower() or ("bcrypt" if stored_hash.startswith("$2") else "pbkdf2")
+    if algorithm == "bcrypt":
+        try:
+            return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+        except ValueError:
+            return False
+    expected_hash, _ = _hash_password_sha2048(password, salt)
+    return secrets.compare_digest(expected_hash, stored_hash)
+
+
 def _fetch_user_credentials(user_id: int, account_type: str) -> Optional[sqlite3.Row]:
     with _db_conn() as conn:
         return conn.execute(
@@ -1940,6 +2782,84 @@ def _json(obj: Any, code: int = 200) -> JSONResponse:
     return JSONResponse(obj, status_code=code, headers=_nocache())
 
 
+def _render_template(
+    name: str,
+    request: Request,
+    context: Optional[Dict[str, Any]] = None,
+    status_code: int = 200,
+):
+    payload: Dict[str, Any] = {"request": request}
+    if context:
+        payload.update(context)
+    response = templates.TemplateResponse(name, payload, status_code=status_code)
+    for key, value in _nocache().items():
+        response.headers.setdefault(key, value)
+    return response
+
+
+class _WebhookReplayProtector:
+    """Track recently processed webhook signatures to block replay attempts."""
+
+    def __init__(self, ttl_seconds: int, capacity: int) -> None:
+        self._ttl = max(ttl_seconds, 0)
+        self._capacity = max(capacity, 1)
+        self._seen: Dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def _purge(self, now: float) -> None:
+        if not self._seen or self._ttl <= 0:
+            if self._ttl <= 0:
+                self._seen.clear()
+            return
+        cutoff = now - self._ttl
+        expired = [key for key, ts in self._seen.items() if ts < cutoff]
+        for key in expired:
+            self._seen.pop(key, None)
+
+    def register(self, signature: str) -> bool:
+        """Return ``True`` when the signature is new, ``False`` when replayed."""
+
+        now = time.time()
+        with self._lock:
+            self._purge(now)
+            if signature in self._seen:
+                return False
+            if len(self._seen) >= self._capacity:
+                # Remove the oldest entry to make space for the newest signature.
+                oldest_key = min(self._seen.items(), key=lambda item: item[1])[0]
+                self._seen.pop(oldest_key, None)
+            self._seen[signature] = now
+            return True
+
+
+_alpaca_replay_guard = _WebhookReplayProtector(
+    ALPACA_WEBHOOK_TOLERANCE_SECONDS,
+    ALPACA_WEBHOOK_REPLAY_CAPACITY,
+)
+
+
+def _compute_webhook_signature(secret: str, timestamp: str, body: bytes) -> str:
+    message = timestamp.encode("utf-8") + b"." + body
+    digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
+    return base64.b64encode(digest).decode("ascii")
+
+
+def _parse_webhook_timestamp(raw: str) -> float:
+    cleaned = raw.strip()
+    if not cleaned:
+        raise ValueError("empty timestamp")
+    try:
+        return float(cleaned)
+    except ValueError:
+        try:
+            parsed = datetime.fromisoformat(cleaned)
+        except ValueError as exc:
+            raise ValueError("invalid timestamp") from exc
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+
+
 def _enforce_admin_portal_gate(
     request: Request, credentials: Optional[HTTPBasicCredentials]
 ) -> None:
@@ -2022,8 +2942,75 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    print(f"[NeoCortex API] {request.method} {request.url}")
+    response = await call_next(request)
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print("[NeoCortex Error]", traceback.format_exc())
+    return JSONResponse({"error": str(exc)}, status_code=500)
 if FORCE_HTTPS_REDIRECT:
     app.add_middleware(HTTPSRedirectMiddleware)
+
+
+if ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=sorted(ALLOWED_HTTP_METHODS),
+        allow_headers=["Authorization", "Content-Type", CSRF_HEADER_NAME, "X-Requested-With"],
+    )
+
+
+@app.middleware("http")
+async def _request_security_guard(request: Request, call_next):
+    request.state.client_ip = _client_ip(request)
+    request.state.client_user_agent = _client_user_agent(request)
+    request.state.client_fingerprint = _client_fingerprint(request)
+
+    method = request.method.upper()
+    if method not in ALLOWED_HTTP_METHODS:
+        return _json({"ok": False, "detail": "method not allowed"}, 405)
+
+    if not _ip_allowed(request.state.client_ip):
+        logger.warning("blocked request from disallowed IP %s", request.state.client_ip)
+        _register_auth_failure(request, request.state.client_ip)
+        return _json({"ok": False, "detail": "forbidden"}, 403)
+
+    if method == "POST" and _should_enforce_csrf(request):
+        header_token = request.headers.get(CSRF_HEADER_NAME)
+        cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+        if not header_token or not cookie_token:
+            _register_auth_failure(request, request.state.client_ip)
+            return _json({"ok": False, "detail": "csrf token missing"}, 403)
+        if header_token != cookie_token or not _validate_csrf_token(request, header_token):
+            _register_auth_failure(request, request.state.client_ip)
+            return _json({"ok": False, "detail": "csrf validation failed"}, 403)
+
+    response = await call_next(request)
+
+    if method == "GET" and "text/html" in (request.headers.get("accept", "").lower()):
+        cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+        if not cookie_token or not _validate_csrf_token(request, cookie_token):
+            cookie_token = _generate_csrf_token(request)
+        response.set_cookie(
+            CSRF_COOKIE_NAME,
+            cookie_token,
+            secure=CSRF_COOKIE_SECURE,
+            httponly=False,
+            samesite=CSRF_COOKIE_SAMESITE,
+            max_age=CSRF_TOKEN_TTL_SECONDS,
+            path="/",
+        )
+
+    return response
 
 
 if ENABLE_SECURITY_HEADERS or ENABLE_HSTS or DISABLE_SERVER_HEADER:
@@ -2036,8 +3023,12 @@ if ENABLE_SECURITY_HEADERS or ENABLE_HSTS or DISABLE_SERVER_HEADER:
             for header_name, header_value in DEFAULT_SECURITY_HEADERS.items():
                 response.headers.setdefault(header_name, header_value)
 
-        if ENABLE_HSTS and HSTS_HEADER_VALUE and request.url.scheme == "https":
-            response.headers.setdefault("Strict-Transport-Security", HSTS_HEADER_VALUE)
+        if ENABLE_HSTS and request.url.scheme == "https":
+            sts_value = _STRICT_TRANSPORT_TEMPLATE or HSTS_HEADER_VALUE
+            if sts_value:
+                response.headers["Strict-Transport-Security"] = sts_value
+        else:
+            response.headers.pop("Strict-Transport-Security", None)
 
         if DISABLE_SERVER_HEADER and "server" in response.headers:
             del response.headers["server"]
@@ -2058,6 +3049,11 @@ async def _enforce_token_expiry(request: Request, call_next):
                 token_payload = _decode_access_token(token)
             except HTTPException as exc:
                 return _json({"ok": False, "detail": exc.detail}, exc.status_code)
+            fingerprint = token_payload.get("fp")
+            request_fp = getattr(request.state, "client_fingerprint", _client_fingerprint(request))
+            if fingerprint and not secrets.compare_digest(str(fingerprint), request_fp):
+                _register_auth_failure(request, getattr(request.state, "client_ip", _client_ip(request)))
+                return _json({"ok": False, "detail": "access token context mismatch"}, 401)
             request.state.access_token_payload = token_payload
     response = await call_next(request)
     if token_payload and scheme == "bearer":
@@ -2067,6 +3063,15 @@ async def _enforce_token_expiry(request: Request, call_next):
             response.headers.setdefault("X-Access-Token-Expires-In", str(max(0, remaining)))
             if remaining <= TOKEN_REFRESH_LEEWAY_SECONDS:
                 response.headers.setdefault("X-Access-Token-Refresh", "required")
+    return response
+
+
+@app.middleware("http")
+async def _auth_failure_observer(request: Request, call_next):
+    response = await call_next(request)
+    if response.status_code in {401, 403} and not getattr(request.state, "auth_failure_logged", False):
+        ip = getattr(request.state, "client_ip", None) or _client_ip(request)
+        _register_auth_failure(None, ip)
     return response
 
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
@@ -2390,40 +3395,89 @@ class AuthReq(BaseModel):
     admin_key: Optional[str] = None
     require_admin: bool = False
     otp_code: Optional[str] = None
+    next: Optional[str] = None
 
 
-async def _auth_req_from_request(request: Request) -> AuthReq:
-    '''Parse an AuthReq from JSON, form-encoded, or query parameters.'''
+_SENSITIVE_QUERY_KEYS: Set[str] = {
+    "username",
+    "password",
+    "admin_key",
+    "adminkey",
+    "otp_code",
+    "require_admin",
+}
+
+
+_AUTH_FIELD_ALIASES: Dict[str, str] = {
+    "adminkey": "admin_key",
+    "admin-key": "admin_key",
+    "admin key": "admin_key",
+    "requireadmin": "require_admin",
+    "otp": "otp_code",
+}
+
+
+async def _auth_req_from_request(
+    request: Request,
+    data_override: Optional[Mapping[str, Any]] = None,
+) -> AuthReq:
+    '''Parse an AuthReq from JSON or form-encoded payloads.'''
 
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     data: Dict[str, Any] = {}
 
-    if "multipart/form-data" in content_type:
+    async def _parse_json(*, warn: bool = False) -> Dict[str, Any]:
+        try:
+            payload = await request.json()
+        except Exception as exc:  # pragma: no cover - defensive
+            if warn:
+                logger.warning("failed to parse json auth payload: %s", exc)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    async def _parse_form(*, warn: bool = False) -> Dict[str, Any]:
         try:
             form = await request.form()
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("failed to parse multipart auth payload: %s", exc)
-        else:
-            data = {k: v for k, v in form.items() if v is not None}
+            if warn:
+                logger.warning("failed to parse form auth payload: %s", exc)
+            return {}
+        return {k: v for k, v in form.items() if v is not None}
+
+    form_markers = ("multipart/form-data", "application/x-www-form-urlencoded")
+    json_markers = ("application/json", "text/json")
+
+    if data_override is not None:
+        items = data_override.items() if hasattr(data_override, "items") else data_override
+        if items is not None:
+            for key, value in items:
+                if value is not None:
+                    data[str(key)] = value
     else:
-        body_bytes = await request.body()
-        parsed: Optional[Dict[str, Any]] = None
-        if body_bytes:
-            try:
-                candidate = json.loads(body_bytes)
-            except json.JSONDecodeError:
-                candidate = None
-            if isinstance(candidate, dict):
-                parsed = candidate
-            else:
-                parsed_qs = parse_qs(body_bytes.decode("utf-8", errors="ignore"))
-                if parsed_qs:
-                    parsed = {k: v[-1] for k, v in parsed_qs.items() if v}
-        if parsed:
-            data = parsed
+        if any(marker in content_type for marker in form_markers):
+            data = await _parse_form(warn=True)
+        elif content_type.endswith("+json") or any(marker in content_type for marker in json_markers):
+            data = await _parse_json(warn=True)
+        else:
+            data = await _parse_json()
+            if not data:
+                data = await _parse_form()
 
     if not data and request.query_params:
-        data = dict(request.query_params)
+        provided = {
+            key.lower()
+            for key in request.query_params.keys()
+            if key and key.lower() in _SENSITIVE_QUERY_KEYS
+        }
+        if provided:
+            logger.warning(
+                "rejected authentication attempt with credentials in query string (%s)",
+                ", ".join(sorted(provided)),
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Credentials must be sent in the request body, not the URL query string.",
+            )
 
     if not data:
         raise HTTPException(status_code=400, detail="username and password required")
@@ -2434,7 +3488,11 @@ async def _auth_req_from_request(request: Request) -> AuthReq:
             value = value[-1]
         if value is None:
             continue
-        normalized[key] = value if isinstance(value, str) else str(value)
+        normalized_key = key.strip()
+        alias = _AUTH_FIELD_ALIASES.get(normalized_key.lower())
+        if alias:
+            normalized_key = alias
+        normalized[normalized_key] = value if isinstance(value, str) else str(value)
 
     try:
         return AuthReq(**normalized)
@@ -2463,6 +3521,24 @@ class WhopLoginReq(BaseModel):
     token: str
 
 
+class WhopSessionRequest(BaseModel):
+    token: str
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
+class ChatCompletionRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    history: List[ChatMessage] = Field(default_factory=list)
+    model: Optional[str] = Field(default=None, max_length=128)
+    system_prompt: Optional[str] = Field(default=None, max_length=4000)
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_output_tokens: Optional[int] = Field(default=None, ge=1, le=4096)
+
+
 class AlpacaWebhookTest(BaseModel):
     symbol: str = "SPY"
     quantity: float = 1.0
@@ -2480,6 +3556,20 @@ class PaperTradeOrderRequest(BaseModel):
     side: Literal["long", "short"] = "long"
     quantity: float = Field(default=1.0, gt=0)
     price: float = Field(default=1.0, ge=0)
+    option_type: Optional[Literal["call", "put"]] = None
+    expiry: Optional[str] = None
+    strike: Optional[float] = Field(default=None, ge=0)
+    future_month: Optional[str] = None
+    future_year: Optional[int] = Field(default=None, ge=2000, le=2100)
+
+
+class AutoTradeOrderRequest(BaseModel):
+    symbol: str
+    side: Literal["long", "short"] = "long"
+    quantity: float = Field(default=1.0, gt=0)
+    price: Optional[float] = Field(default=None, ge=0)
+    account: Literal["paper", "funded"] = "paper"
+    instrument: Literal["equity", "option", "future"] = "equity"
     option_type: Optional[Literal["call", "put"]] = None
     expiry: Optional[str] = None
     strike: Optional[float] = Field(default=None, ge=0)
@@ -2568,13 +3658,14 @@ async def whop_callback(
     return RedirectResponse(redirect_url)
 
 
-@app.get("/auth/whop/session")
-async def whop_session(token: str):
-    session = _get_whop_session(token.strip())
+@app.post("/auth/whop/session")
+async def whop_session(req: WhopSessionRequest):
+    token = (req.token or "").strip()
+    session = _get_whop_session(token)
     if not session:
         return _json({"ok": False, "detail": "Invalid or expired Whop session"}, 404)
     account = _lookup_whop_account(session["license_key"])
-    payload: Dict[str, Any] = {
+    response_payload: Dict[str, Any] = {
         "ok": True,
         "license_key": session["license_key"],
         "email": session.get("email"),
@@ -2582,12 +3673,12 @@ async def whop_session(token: str):
         "registered": account is not None,
     }
     if account:
-        payload["username"] = account["username"]
-    return _json(payload)
+        response_payload["username"] = account["username"]
+    return _json(response_payload)
 
 
 @app.post("/register/whop")
-async def register_whop(req: WhopRegistrationReq):
+async def register_whop(req: WhopRegistrationReq, request: Request):
     token = (req.token or "").strip()
     session = _get_whop_session(token)
     if not session:
@@ -2615,15 +3706,19 @@ async def register_whop(req: WhopRegistrationReq):
     base_url = (req.base_url or "").strip()
     if not base_url:
         base_url = ALPACA_BASE_URL_FUND if acct_type == "funded" else ALPACA_BASE_URL_PAPER
-    pw_hash, salt = _hash_password_sha2048(req.password)
+    pw_hash, salt, algo = _hash_password_secure(req.password)
     try:
         with _db_conn() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (username, password_hash, salt, is_admin, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO users (username, password_hash, salt, password_algo, is_admin, role, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     uname,
                     pw_hash,
                     salt,
+                    algo,
                     0,
                     ROLE_LICENSE,
                     datetime.now(timezone.utc).isoformat(),
@@ -2642,7 +3737,7 @@ async def register_whop(req: WhopRegistrationReq):
         return _json({"ok": False, "detail": str(exc)}, 500)
     _consume_whop_session(token)
     user = _load_user_record(user_id)
-    tokens = _issue_token_pair(user)
+    tokens = _issue_token_pair(user, request=request)
     resp = _json(
         {
             "ok": True,
@@ -2702,17 +3797,23 @@ async def register(request: Request):
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
-    if ADMIN_PRIVATE_KEY and (req.admin_key or "").strip() != ADMIN_PRIVATE_KEY:
+    if not ADMIN_PRIVATE_KEY:
+        return _json({"ok": False, "detail": "admin registration disabled"}, 503)
+    if (req.admin_key or "").strip() != ADMIN_PRIVATE_KEY:
         return _json({"ok": False, "detail": "invalid admin key"}, 403)
-    pw_hash, salt = _hash_password_sha2048(req.password)
+    pw_hash, salt, algo = _hash_password_secure(req.password)
     try:
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO users (username, password_hash, salt, is_admin, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO users (username, password_hash, salt, password_algo, is_admin, role, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     uname,
                     pw_hash,
                     salt,
+                    algo,
                     1,
                     ROLE_ADMIN,
                     datetime.now(timezone.utc).isoformat(),
@@ -2720,33 +3821,117 @@ async def register(request: Request):
             )
     except sqlite3.IntegrityError:
         return _json({"ok": False, "detail": "username already exists"}, 400)
+    client_ip = getattr(request.state, "client_ip", _client_ip(request))
+    user_agent = getattr(request.state, "client_user_agent", _client_user_agent(request))
+    _record_audit_event(
+        "admin.user.create",
+        username=uname,
+        ip_address=client_ip,
+        user_agent=user_agent,
+        metadata={"roles": [ROLE_ADMIN]},
+    )
     return _json({"ok": True, "created": uname})
 
-@app.post("/login")
-async def login(request: Request):
-    # Authenticate a user and return a bearer token tied to the SQLite credential store.
-    # The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
-    # manage user-specific Alpaca credentials.
-    '''
-    Authenticate a user and return a bearer token tied to the SQLite credential store.
-    The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
-    manage user-specific Alpaca credentials.
-    '''
-    req = await _auth_req_from_request(request)
+def _wants_html_response(request: Request) -> bool:
+    accept = (request.headers.get("accept") or "").lower()
+    if not accept:
+        return False
+    if "text/html" in accept or "application/xhtml+xml" in accept:
+        return True
+    return False
+
+
+def _resolve_login_redirect(candidate: Optional[str], user: Dict[str, Any]) -> str:
+    fallback = "/dashboard" if ROLE_ADMIN in set(user.get("roles", [])) else "/enduserapp"
+    if candidate:
+        value = candidate.strip()
+        if value:
+            parsed = urlparse(value)
+            if not parsed.scheme and not parsed.netloc:
+                path = parsed.path or "/"
+                if path.startswith("/"):
+                    destination = path
+                    if parsed.query:
+                        destination = f"{destination}?{parsed.query}"
+                    if parsed.fragment:
+                        destination = f"{destination}#{parsed.fragment}"
+                    return destination
+    return fallback
+
+
+def _handle_login(
+    req: AuthReq,
+    request: Request,
+    *,
+    enforce_admin: bool = False,
+    prefer_redirect: bool = False,
+    next_hint: Optional[str] = None,
+) -> Response:
     uname = req.username.strip().lower()
+    client_ip = getattr(request.state, "client_ip", _client_ip(request))
+    user_agent = getattr(request.state, "client_user_agent", _client_user_agent(request))
+    try:
+        _enforce_login_rate_limit(client_ip)
+    except HTTPException as exc:
+        _register_auth_failure(request, client_ip)
+        _record_audit_event(
+            "login.rate_limited",
+            username=uname or None,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            metadata={"detail": exc.detail},
+        )
+        raise
     if not uname or not req.password:
+        _register_auth_failure(request, client_ip)
+        _record_audit_event(
+            "login.failure",
+            username=uname or None,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            metadata={"reason": "missing-credentials"},
+        )
         return _json({"ok": False, "detail": "username and password required"}, 400)
     with _db_conn() as conn:
         row = conn.execute(
-            "SELECT id, password_hash, salt, is_admin, role, mfa_enabled, totp_secret FROM users WHERE username = ?",
+            """
+            SELECT id, password_hash, salt, password_algo, is_admin, role, mfa_enabled, totp_secret
+            FROM users
+            WHERE username = ?
+            """,
             (uname,),
         ).fetchone()
     if row is None:
+        _register_auth_failure(request, client_ip)
+        _record_audit_event(
+            "login.failure",
+            username=uname,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            metadata={"reason": "unknown-user"},
+        )
         return _json({"ok": False, "detail": "invalid credentials"}, 401)
-    expected_hash, _ = _hash_password_sha2048(req.password, row["salt"])
-    if expected_hash != row["password_hash"]:
+    if not _verify_password(req.password, row["password_hash"], row["salt"], row["password_algo"]):
+        _register_auth_failure(request, client_ip)
+        _record_audit_event(
+            "login.failure",
+            username=uname,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            metadata={"reason": "bad-password"},
+        )
         return _json({"ok": False, "detail": "invalid credentials"}, 401)
     if req.require_admin and not row["is_admin"]:
+        _register_auth_failure(request, client_ip)
+        _record_audit_event(
+            "login.failure",
+            username=uname,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            metadata={"reason": "admin-required"},
+        )
+    require_admin = enforce_admin or req.require_admin
+    if require_admin and not row["is_admin"]:
         return _json({"ok": False, "detail": "admin access required"}, 403)
     user = _load_user_record(row["id"])
     roles = set(user["roles"])
@@ -2762,10 +3947,44 @@ async def login(request: Request):
                 if recovery_ok:
                     user = _load_user_record(user["id"])
             if not otp_ok and not recovery_ok:
+                _register_auth_failure(request, client_ip)
+                _record_audit_event(
+                    "login.failure",
+                    username=uname,
+                    user_id=user["id"],
+                    ip_address=client_ip,
+                    user_agent=user_agent,
+                    metadata={"reason": "mfa-invalid"},
+                )
                 return _json({"ok": False, "detail": "otp verification failed"}, 401)
         else:
+            _register_auth_failure(request, client_ip)
+            _record_audit_event(
+                "login.failure",
+                username=uname,
+                user_id=user["id"],
+                ip_address=client_ip,
+                user_agent=user_agent,
+                metadata={"reason": "mfa-required"},
+            )
             return _json({"ok": False, "detail": "mfa enrollment required"}, 403)
-    tokens = _issue_token_pair(user)
+    _reset_login_attempts(client_ip)
+    _clear_auth_failures(client_ip)
+    _record_audit_event(
+        "login.success",
+        user_id=user["id"],
+        username=uname,
+        ip_address=client_ip,
+        user_agent=user_agent,
+        metadata={"roles": user["roles"]},
+    )
+    tokens = _issue_token_pair(user, request=request)
+    primary_role = user["roles"][0] if user["roles"] else DEFAULT_ROLE
+    redirect_path = _resolve_login_redirect(next_hint or req.next, user)
+    if prefer_redirect:
+        response: Response = RedirectResponse(url=redirect_path, status_code=303)
+        _set_auth_cookies(response, tokens)
+        return response
     resp = _json(
         {
             "ok": True,
@@ -2779,14 +3998,73 @@ async def login(request: Request):
             "session_cookie": SESSION_COOKIE_NAME,
             "refresh_cookie": REFRESH_COOKIE_NAME,
             "refresh_expires_at": tokens.get("refresh_expires_at"),
+            "token_type": "bearer",
+            "role": primary_role,
+            "redirect_to": redirect_path,
         }
     )
     _set_auth_cookies(resp, tokens)
     return resp
 
 
+def _require_user(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    return user
+
+
+def _require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    if ROLE_ADMIN not in set(user.get("roles", [])):
+        raise HTTPException(status_code=403, detail="admin access required")
+    return user
+
+
+@app.post("/login")
+async def login(request: Request):
+    """Authenticate a user and issue a bearer token."""
+
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    form_data: Optional[Mapping[str, Any]] = None
+    if content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+        with suppress(Exception):
+            form = await request.form()
+            form_data = dict(form.multi_items()) if hasattr(form, "multi_items") else dict(form.items())
+
+    req = await _auth_req_from_request(request, data_override=form_data)
+    next_hint = req.next or request.query_params.get("next")
+    prefer_redirect = bool(form_data) or _wants_html_response(request)
+    return _handle_login(
+        req,
+        request,
+        prefer_redirect=prefer_redirect,
+        next_hint=next_hint,
+    )
+
+
+@app.post("/admin/login")
+async def admin_login(request: Request):
+    """Admin-specific login endpoint that enforces elevated privileges."""
+
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    form_data: Optional[Mapping[str, Any]] = None
+    if content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+        with suppress(Exception):
+            form = await request.form()
+            form_data = dict(form.multi_items()) if hasattr(form, "multi_items") else dict(form.items())
+
+    req = await _auth_req_from_request(request, data_override=form_data)
+    next_hint = req.next or request.query_params.get("next") or ("/admin/dashboard" if form_data else None)
+    prefer_redirect = bool(form_data) or _wants_html_response(request)
+    return _handle_login(
+        req,
+        request,
+        enforce_admin=True,
+        prefer_redirect=prefer_redirect,
+        next_hint=next_hint,
+    )
+
+
 @app.post("/logout")
 async def logout(
+    request: Request,
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
     refresh_cookie: Optional[str] = Cookie(None, alias=REFRESH_COOKIE_NAME),
@@ -2794,7 +4072,26 @@ async def logout(
     scheme, header_token = _parse_authorization_header(authorization)
     access_token = header_token if scheme == "bearer" else session_token
     refresh_token = refresh_cookie
+    client_ip = getattr(request.state, "client_ip", _client_ip(request))
+    user_agent = getattr(request.state, "client_user_agent", _client_user_agent(request))
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+    if access_token:
+        try:
+            payload = _decode_access_token(access_token, verify_exp=False)
+            user_id = int(payload.get("sub")) if payload.get("sub") is not None else None
+            username = payload.get("username")
+        except HTTPException:
+            pass
     _revoke_tokens(access_token, refresh_token)
+    _record_audit_event(
+        "logout",
+        user_id=user_id,
+        username=username,
+        ip_address=client_ip,
+        user_agent=user_agent,
+    )
+    _clear_auth_failures(client_ip)
     resp = _json({"ok": True})
     _clear_auth_cookies(resp)
     return resp
@@ -2803,6 +4100,7 @@ async def logout(
 @app.post("/auth/refresh")
 async def refresh_tokens(
     payload: TokenRefreshRequest,
+    request: Request,
     authorization: Optional[str] = Header(None),
     refresh_cookie: Optional[str] = Cookie(None, alias=REFRESH_COOKIE_NAME),
 ):
@@ -2813,10 +4111,10 @@ async def refresh_tokens(
             refresh_token = token
     if not refresh_token:
         raise HTTPException(status_code=401, detail="refresh token required")
-    session = _verify_refresh_token(refresh_token)
+    session = _verify_refresh_token(refresh_token, request=request)
     _revoke_refresh_token(token_id=session["token_id"])
     user = _load_user_record(int(session["user_id"]))
-    tokens = _issue_token_pair(user)
+    tokens = _issue_token_pair(user, request=request)
     resp = _json(
         {
             "ok": True,
@@ -2830,7 +4128,7 @@ async def refresh_tokens(
     return resp
 
 
-@app.get("/auth/api-keys")
+@app.post("/auth/api-keys/list")
 async def list_api_keys(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
@@ -2843,6 +4141,7 @@ async def list_api_keys(
 @app.post("/auth/api-keys")
 async def create_api_key(
     req: APITokenCreateRequest,
+    request: Request,
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
@@ -2851,6 +4150,16 @@ async def create_api_key(
     if not requested_scopes:
         raise HTTPException(status_code=400, detail="at least one valid scope is required")
     token_data = _create_api_token(user["id"], requested_scopes, label=req.label)
+    client_ip = getattr(request.state, "client_ip", _client_ip(request))
+    user_agent = getattr(request.state, "client_user_agent", _client_user_agent(request))
+    _record_audit_event(
+        "api-key.create",
+        user_id=user["id"],
+        username=user.get("username"),
+        ip_address=client_ip,
+        user_agent=user_agent,
+        metadata={"token_id": token_data["token_id"], "scopes": token_data["scopes"], "label": token_data.get("label")},
+    )
     return _json(
         {
             "ok": True,
@@ -2865,19 +4174,33 @@ async def create_api_key(
     )
 
 
-@app.delete("/auth/api-keys/{token_id}")
+@app.post("/auth/api-keys/revoke")
 async def revoke_api_key(
-    token_id: str,
+    req: APITokenRevokeRequest,
+    request: Request,
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
     user = _require_user(authorization, session_token, required_scopes={"api-keys"})
+    token_id = req.token_id.strip()
+    if not token_id:
+        raise HTTPException(status_code=400, detail="token_id is required")
     if not _revoke_api_token(user["id"], token_id):
         raise HTTPException(status_code=404, detail="api key not found")
+    client_ip = getattr(request.state, "client_ip", _client_ip(request))
+    user_agent = getattr(request.state, "client_user_agent", _client_user_agent(request))
+    _record_audit_event(
+        "api-key.revoke",
+        user_id=user["id"],
+        username=user.get("username"),
+        ip_address=client_ip,
+        user_agent=user_agent,
+        metadata={"token_id": token_id},
+    )
     return _json({"ok": True, "token_id": token_id})
 
 
-@app.get("/auth/mfa/status")
+@app.post("/auth/mfa/status")
 async def mfa_status(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
@@ -2960,7 +4283,7 @@ async def mfa_disable(
     return _json({"ok": True, "mfa_enabled": False})
 
 
-@app.get("/alpaca/credentials")
+@app.post("/alpaca/credentials/read")
 async def list_alpaca_credentials(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
@@ -3031,7 +4354,7 @@ async def set_alpaca_credentials(
     return _json({"ok": True, "account_type": acct_type, "base_url": base_url})
 
 # --- account data: positions and P&L ---
-@app.get("/positions")
+@app.post("/positions")
 async def get_positions(
     account: str = "paper",
     authorization: Optional[str] = Header(None),
@@ -3130,7 +4453,7 @@ async def close_position(
     status_code = resp.status_code or 502
     return _json(error_body, status_code)
 
-@app.get("/pnl")
+@app.post("/pnl")
 async def get_pnl(
     account: str = "paper",
     authorization: Optional[str] = Header(None),
@@ -3190,7 +4513,7 @@ async def get_pnl(
     return _json({"ok": True, "total_pnl": total_pnl, "positions": results})
 
 
-@app.get("/strategy/liquidity-sweeps")
+@app.post("/strategy/liquidity-sweeps")
 def strategy_liquidity_sweeps(ticker: str, session_date: Optional[str] = None, interval: str = "1m"):
     ticker = (ticker or "").strip()
     if not ticker:
@@ -3235,42 +4558,58 @@ def strategy_liquidity_sweeps(ticker: str, session_date: Optional[str] = None, i
 @app.post("/alpaca/webhook")
 async def alpaca_webhook(req: Request):
     '''
-    Receive webhook callbacks from Alpaca. This endpoint accepts any JSON
-    payload and logs it. It returns ``{"ok": True}`` on success. If you set
-    ``ALPACA_WEBHOOK_SECRET`` in your environment, the request\'s header
-    ``X‑Webhook‑Signature`` will be verified against this secret using HMAC
-    SHA‑256. Mismatched signatures return a 400.
+    Receive webhook callbacks from Alpaca. All requests must include a valid
+    ``ALPACA_WEBHOOK_SECRET`` signature unless
+    ``ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS`` is explicitly enabled. The
+    signature is calculated as ``base64(hmac_sha256(secret, f"{timestamp}.{body}"))``
+    and supplied via ``X-Webhook-Signature`` alongside an ``X-Webhook-Timestamp``
+    header to prevent replay attacks.
     '''
+
     body_bytes = await req.body()
     try:
-        payload = await req.json()
+        payload = json.loads(body_bytes.decode("utf-8"))
     except Exception:
         payload = None
-    # optional signature verification
-    secret = os.getenv("ALPACA_WEBHOOK_SECRET")
-    if secret:
-        sig_header = req.headers.get("X-Webhook-Signature")
-        if not sig_header:
+
+    if not ALPACA_WEBHOOK_SECRET and not ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS:
+        return _json({"ok": False, "detail": "webhook secret not configured"}, 503)
+
+    if ALPACA_WEBHOOK_SECRET:
+        signature = req.headers.get(ALPACA_WEBHOOK_SIGNATURE_HEADER)
+        if not signature:
             return _json({"ok": False, "detail": "missing signature"}, 400)
 
-        import hmac, hashlib, base64
+        timestamp_header = req.headers.get(ALPACA_WEBHOOK_TIMESTAMP_HEADER)
+        if not timestamp_header:
+            return _json({"ok": False, "detail": "missing timestamp"}, 400)
 
-    sig_header = req.headers.get("X-Webhook-Signature")
-    if secret:
-        import hmac, hashlib, base64
+        timestamp_header = timestamp_header.strip()
+        if not timestamp_header:
+            return _json({"ok": False, "detail": "missing timestamp"}, 400)
 
-        if not sig_header:
-            return _json({"ok": False, "detail": "missing signature"}, 400)
+        try:
+            timestamp_value = _parse_webhook_timestamp(timestamp_header)
+        except ValueError:
+            return _json({"ok": False, "detail": "invalid timestamp"}, 400)
 
-        if not sig_header:
-            return _json({"ok": False, "detail": "missing signature"}, 400)
+        now = time.time()
+        tolerance = ALPACA_WEBHOOK_TOLERANCE_SECONDS
+        if tolerance and now - timestamp_value > tolerance:
+            return _json({"ok": False, "detail": "stale webhook"}, 400)
+        if tolerance and timestamp_value - now > tolerance:
+            return _json({"ok": False, "detail": "timestamp too far in future"}, 400)
 
-        import hmac, hashlib, base64
-      
-        digest = hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()
-        expected = base64.b64encode(digest).decode()
-        if not hmac.compare_digest(expected, sig_header):
+        expected_signature = _compute_webhook_signature(
+            ALPACA_WEBHOOK_SECRET,
+            timestamp_header,
+            body_bytes,
+        )
+        if not hmac.compare_digest(expected_signature, signature):
             return _json({"ok": False, "detail": "invalid signature"}, 400)
+
+        if tolerance and not _alpaca_replay_guard.register(expected_signature):
+            return _json({"ok": False, "detail": "webhook replay detected"}, 409)
 
     # In a production system you might persist the payload to a database or
     # notify other services. Here we simply print it to stdout.
@@ -3279,7 +4618,24 @@ async def alpaca_webhook(req: Request):
 
 
 @app.post("/alpaca/webhook/test")
-def alpaca_webhook_test(req: AlpacaWebhookTest):
+async def alpaca_webhook_test(
+    req: AlpacaWebhookTest,
+    request: Request,
+    credentials: HTTPBasicCredentials = Depends(ADMIN_PORTAL_HTTP_BASIC),
+):
+    gating_configured = bool(
+        ADMIN_PORTAL_GATE_TOKEN or (ADMIN_PORTAL_BASIC_USER and ADMIN_PORTAL_BASIC_PASS)
+    )
+    if ALPACA_WEBHOOK_TEST_REQUIRE_AUTH:
+        if not gating_configured:
+            raise HTTPException(
+                status_code=503,
+                detail="admin authentication must be configured to use the webhook test endpoint",
+            )
+        _enforce_admin_portal_gate(request, credentials)
+    elif gating_configured:
+        _enforce_admin_portal_gate(request, credentials)
+
     payload = req.raw.copy() if isinstance(req.raw, dict) else {
         "event": req.event,
         "order": {
@@ -3291,16 +4647,15 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
         },
     }
     payload.setdefault("event", req.event)
-    payload.setdefault("timestamp", req.timestamp or datetime.now(timezone.utc).isoformat())
+    timestamp_value = payload.get("timestamp") or req.timestamp
+    if not timestamp_value:
+        timestamp_value = datetime.now(timezone.utc).isoformat()
+    payload["timestamp"] = timestamp_value
 
     body_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     signature = None
-    secret = os.getenv("ALPACA_WEBHOOK_SECRET")
-    if secret:
-        import hmac, hashlib, base64
-
-        digest = hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()
-        signature = base64.b64encode(digest).decode()
+    if ALPACA_WEBHOOK_SECRET:
+        signature = _compute_webhook_signature(ALPACA_WEBHOOK_SECRET, timestamp_value, body_bytes)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     symbol_component = _sanitize_filename_component(req.symbol or "")
@@ -3322,7 +4677,7 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
     )
 
 
-@app.get("/alpaca/webhook/tests")
+@app.post("/alpaca/webhook/tests")
 def alpaca_webhook_tests():
     '''Return recently generated Alpaca webhook test artifacts.'''
     tests = []
@@ -3350,7 +4705,7 @@ def alpaca_webhook_tests():
     return _json({"ok": True, "tests": tests})
 
 
-@app.get("/papertrade/status")
+@app.post("/papertrade/status")
 async def papertrade_status():
     async with PAPERTRADE_STATE_LOCK:
         _load_papertrade_state()
@@ -3427,6 +4782,190 @@ async def papertrade_orders(req: PaperTradeOrderRequest):
     response_order.pop("noise_seed", None)
 
     return _json({"ok": True, "order": response_order, "dashboard": dashboard})
+
+
+@app.post("/trade/auto")
+async def trade_auto(
+    req: AutoTradeOrderRequest,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    """Execute an order through Alpaca when approved by the AI trainer."""
+
+    user = _require_user(authorization, session_token, required_scopes={"trade"})
+
+    symbol = (req.symbol or "").strip().upper()
+    if not symbol:
+        return _json({"ok": False, "detail": "symbol is required"}, 400)
+
+    account_type = "funded" if req.account == "funded" else "paper"
+    quantity = float(req.quantity)
+    price = float(req.price) if req.price is not None else None
+    if price is not None and price <= 0:
+        price = None
+
+    order_summary = {
+        "symbol": symbol,
+        "quantity": round(quantity, 6),
+        "side": req.side,
+        "price": round(price, 4) if price is not None else None,
+        "instrument": req.instrument,
+    }
+
+    ai_payload = {
+        "instrument": req.instrument,
+        "symbol": symbol,
+        "side": req.side,
+        "quantity": quantity,
+        "price": price or 0.0,
+        "option_type": req.option_type,
+        "expiry": req.expiry,
+        "strike": req.strike,
+        "future_month": req.future_month,
+        "future_year": req.future_year,
+    }
+    ai_decision = _run_ai_trainer(ai_payload)
+    if ai_decision.get("action") != "execute":
+        detail = ai_decision.get("message") or "Neo Cortex AI parked the order for review."
+        return _json(
+            {
+                "ok": True,
+                "executed": False,
+                "ai": ai_decision,
+                "detail": detail,
+                "account": account_type,
+                "order": order_summary,
+            }
+        )
+
+    creds = _resolve_alpaca_credentials(account_type, user["id"])
+    key = creds.get("key")
+    secret = creds.get("secret")
+    base_url = creds.get("base_url")
+    if not key or not secret or not base_url:
+        return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
+
+    def _format_qty(value: float) -> str:
+        if not math.isfinite(value) or value <= 0:
+            return "1"
+        if abs(value - round(value)) < 1e-6:
+            return str(int(round(value)))
+        return f"{value:.6f}".rstrip("0").rstrip(".")
+
+    qty_str = _format_qty(quantity)
+    order_payload: Dict[str, Any] = {
+        "symbol": symbol,
+        "qty": qty_str,
+        "side": "buy" if req.side == "long" else "sell",
+        "type": "market",
+        "time_in_force": "day",
+        "client_order_id": f"nc-{secrets.token_hex(10)}",
+    }
+    if price is not None:
+        order_payload["type"] = "limit"
+        order_payload["limit_price"] = round(price, 4)
+
+    headers = {
+        "APCA-API-KEY-ID": key,
+        "APCA-API-SECRET-KEY": secret,
+        "Content-Type": "application/json",
+    }
+
+    session = _http_session()
+    try:
+        resp = session.post(
+            f"{base_url}/v2/orders",
+            headers=headers,
+            json=order_payload,
+            timeout=20,
+        )
+    except Exception as exc:
+        return _json(
+            {
+                "ok": False,
+                "executed": False,
+                "ai": ai_decision,
+                "detail": f"Failed to submit order: {exc}",
+                "account": account_type,
+                "order": order_summary,
+                "alpaca_order": order_payload,
+            },
+            502,
+        )
+
+    alpaca_payload: Optional[Any]
+    try:
+        alpaca_payload = resp.json() if resp.content else None
+    except ValueError:
+        alpaca_payload = resp.text.strip() or None
+
+    if 200 <= resp.status_code < 300:
+        detail: Optional[str] = None
+        if isinstance(alpaca_payload, dict):
+            detail = (
+                alpaca_payload.get("status_message")
+                or alpaca_payload.get("message")
+                or alpaca_payload.get("status")
+            )
+        if not detail:
+            detail = "Alpaca accepted the order."
+        body: Dict[str, Any] = {
+            "ok": True,
+            "executed": True,
+            "ai": ai_decision,
+            "detail": detail,
+            "account": account_type,
+            "order": order_summary,
+            "alpaca": alpaca_payload,
+            "alpaca_order": order_payload,
+        }
+        return _json(body, resp.status_code or 200)
+
+    error_detail: Optional[str] = None
+    if isinstance(alpaca_payload, dict):
+        error_detail = (
+            alpaca_payload.get("message")
+            or alpaca_payload.get("error")
+            or alpaca_payload.get("detail")
+        )
+    if not error_detail:
+        error_detail = resp.text.strip() or f"Alpaca order rejected with HTTP {resp.status_code}"
+
+    error_body: Dict[str, Any] = {
+        "ok": False,
+        "executed": False,
+        "ai": ai_decision,
+        "detail": error_detail,
+        "account": account_type,
+        "order": order_summary,
+        "alpaca_order": order_payload,
+    }
+    if alpaca_payload is not None:
+        error_body["alpaca"] = alpaca_payload
+
+    return _json(error_body, resp.status_code or 502)
+
+
+@app.post("/chat/completions")
+async def chat_completions(
+    req: ChatCompletionRequest,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    """Proxy chat completion requests to the configured language model."""
+
+    if not ENDUSER_CHAT_ENABLED:
+        raise HTTPException(status_code=404, detail="assistant is not enabled")
+
+    user = _require_user(authorization, session_token, required_scopes={"ml-chat"})
+    result = await _run_chat_completion(req, user)
+    body = {
+        "ok": True,
+        "reply": result["message"],
+        "model": result["model"],
+        "usage": result.get("usage", {}),
+    }
+    return _json(body)
 
 # --- ingestion: TradingView (signals + bars optional) ---
 @app.post("/webhook/tradingview")
@@ -3658,12 +5197,12 @@ async def idle_stop(name: str):
     t.cancel()
     return _json({"ok": True, "stopped": name})
 
-@app.get("/idle/status")
+@app.post("/idle/status")
 def idle_status():
     return _json({"ok": True, "running": {k: (not v.done()) for k,v in IdleTasks.items()}})
 
 # ---------- metrics/artifacts ----------
-@app.get("/metrics/latest")
+@app.post("/metrics/latest")
 def metrics_latest():
     d = _latest_run_dir()
     if not d: return _json({"ok": False, "reason":"no runs yet"})
@@ -3732,11 +5271,24 @@ def root():
     return RedirectResponse(url="/login")
 
 
-@app.get("/login")
-def login_page():
-    if not LOGIN_PAGE.exists():
-        return HTMLResponse("<h1>public/login.html missing</h1>", status_code=404, headers=_nocache())
-    return FileResponse(LOGIN_PAGE, media_type="text/html", headers=_nocache())
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return _render_template("login.html", request)
+
+
+@app.get("/admin/login", response_class=HTMLResponse)
+def admin_login_page(request: Request):
+    return _render_template("admin_login.html", request)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_portal(request: Request, user: Dict[str, Any] = Depends(_require_admin)):
+    return _render_template("admin.html", request, {"user": user})
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, user: Dict[str, Any] = Depends(_require_admin)):
+    return _render_template("dashboard.html", request, {"user": user})
 
 
 @app.get("/admin/login")
@@ -3747,22 +5299,19 @@ def admin_login_page(
     if not ADMIN_LOGIN_PAGE.exists():
         return HTMLResponse("<h1>public/admin-login.html missing</h1>", status_code=404, headers=_nocache())
     return FileResponse(ADMIN_LOGIN_PAGE, media_type="text/html", headers=_nocache())
+@app.get("/enduserapp", response_class=HTMLResponse)
+def enduserapp(request: Request, user: Dict[str, Any] = Depends(_require_user)):
+    return _render_template("enduserapp.html", request, {"user": user})
 
 
-@app.get("/dashboard")
-def dashboard():
-    html = PUBLIC_DIR / "dashboard.html"
-    if not html.exists():
-        return HTMLResponse("<h1>public/dashboard.html missing</h1>", status_code=404, headers=_nocache())
-    return FileResponse(html, media_type="text/html", headers=_nocache())
+@app.get("/radar", response_class=HTMLResponse)
+def radar(request: Request, user: Dict[str, Any] = Depends(_require_user)):
+    return _render_template("radar.html", request, {"user": user})
 
 
 @app.get("/liquidity")
 def liquidity_ui():
-    html = LIQUIDITY_DIR / "index.html"
-    if not html.exists():
-        return HTMLResponse("<h1>public/liquidity/index.html missing</h1>", status_code=404, headers=_nocache())
-    return FileResponse(html, media_type="text/html", headers=_nocache())
+    return RedirectResponse(url="/radar")
 
 if __name__ == "__main__":
     print(json.dumps(run_preflight(), indent=2))

@@ -17,6 +17,8 @@ __all__ = [
     "Request",
     "Header",
     "Cookie",
+    "Depends",
+    "Form",
 ]
 
 __version__ = "0.1.0-stub"
@@ -52,6 +54,30 @@ def Header(default: Any = None, *, alias: Optional[str] = None) -> HeaderInfo:
 
 def Cookie(default: Any = None, *, alias: Optional[str] = None) -> CookieInfo:
     return CookieInfo(default=default, alias=alias)
+
+
+class FormInfo:
+    __slots__ = ("default", "alias")
+
+    def __init__(self, default: Any = inspect._empty, alias: Optional[str] = None) -> None:
+        self.default = default
+        self.alias = alias
+
+
+def Form(default: Any = inspect._empty, *, alias: Optional[str] = None) -> FormInfo:
+    return FormInfo(default=default, alias=alias)
+
+
+class DependencyInfo:
+    __slots__ = ("dependency", "use_cache")
+
+    def __init__(self, dependency: Optional[Callable[..., Any]], *, use_cache: bool = True) -> None:
+        self.dependency = dependency
+        self.use_cache = use_cache
+
+
+def Depends(dependency: Optional[Callable[..., Any]] = None, *, use_cache: bool = True) -> DependencyInfo:
+    return DependencyInfo(dependency, use_cache=use_cache)
 
 
 class Headers:
@@ -101,10 +127,13 @@ class Request:
         self._body = body
         self._json: Any = ...
         self._json_loaded = False
+        self._form: Optional[Dict[str, Any]] = None
+        self._form_loaded = False
         host = self.headers.get("host", "localhost")
         self.url = RequestURL(scheme=scheme, netloc=host, path=self.path, query=self.query)
         self.client = client
         self.cookies = self._parse_cookies(self.headers.get("cookie"))
+        self.state = SimpleNamespace()
 
     @staticmethod
     def _parse_cookies(header_value: Optional[str]) -> Dict[str, str]:
@@ -132,6 +161,17 @@ class Request:
 
     async def text(self) -> str:
         return self._body.decode("utf-8")
+
+    async def form(self) -> Dict[str, Any]:
+        if not self._form_loaded:
+            if not self._body:
+                data: Dict[str, Any] = {}
+            else:
+                parsed = parse_qs(self._body.decode("utf-8"), keep_blank_values=True)
+                data = {key: values[-1] if isinstance(values, list) else values for key, values in parsed.items()}
+            self._form = data
+            self._form_loaded = True
+        return self._form or {}
 
 
 class _Route:
@@ -175,6 +215,7 @@ class FastAPI:
         self._lifespan_factory = lifespan
         self._lifespan_cm = lifespan(self) if lifespan else None
         self._http_middleware: List[Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]] = []
+        self._exception_handlers: List[Tuple[Type[BaseException], Callable[[Request, BaseException], Any]]] = []
 
     def mount(self, path: str, app: Any, name: Optional[str] = None) -> None:
         prefix = path.rstrip("/") or "/"
@@ -237,6 +278,13 @@ class FastAPI:
 
         return decorator
 
+    def exception_handler(self, exc_class: Type[BaseException]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            self._exception_handlers.append((exc_class, func))
+            return func
+
+        return decorator
+
     async def _startup(self) -> None:
         if self._lifespan_cm is not None:
             await self._lifespan_cm.__aenter__()
@@ -253,7 +301,10 @@ class FastAPI:
         for middleware in reversed(self._http_middleware):
             handler = self._wrap_http_middleware(middleware, handler)
 
-        return await handler(request)
+        try:
+            return await handler(request)
+        except Exception as exc:  # pragma: no cover - defensive
+            return await self._handle_exception(request, exc)
 
     async def _dispatch_request(self, request: Request) -> Response:
         path = request.path
@@ -276,12 +327,23 @@ class FastAPI:
             path_params = {k: v for k, v in match.groupdict().items()}
             try:
                 result = await self._call_endpoint(route, request, path_params)
-            except HTTPException as exc:
-                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
             except Exception as exc:  # pragma: no cover - unexpected error path
-                return JSONResponse({"detail": f"Internal Server Error: {exc}"}, status_code=500)
+                return await self._handle_exception(request, exc)
             return self._to_response(result, route.response_class)
         raise HTTPException(404, "Not Found")
+
+    async def _handle_exception(self, request: Request, exc: Exception) -> Response:
+        for exc_type, handler in reversed(self._exception_handlers):
+            if isinstance(exc, exc_type):
+                result = handler(request, exc)
+                if inspect.isawaitable(result):
+                    result = await result
+                if isinstance(result, Response):
+                    return result
+                return self._to_response(result, None)
+        if isinstance(exc, HTTPException):
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+        return JSONResponse({"detail": f"Internal Server Error: {exc}"}, status_code=500)
 
     async def _call_endpoint(self, route: _Route, request: Request, path_params: Dict[str, str]) -> Any:
         endpoint = route.endpoint
@@ -311,6 +373,26 @@ class FastAPI:
                 cookie_name = default.alias or name
                 value = request.cookies.get(cookie_name, default.default)
                 kwargs[name] = value
+                continue
+            if isinstance(default, FormInfo):
+                form_data = await request.form()
+                field_name = default.alias or name
+                if field_name in form_data:
+                    kwargs[name] = form_data[field_name]
+                elif default.default is not inspect._empty:
+                    kwargs[name] = default.default
+                else:
+                    raise HTTPException(400, f"Missing required form field '{field_name}'")
+                continue
+            if isinstance(default, DependencyInfo):
+                dependency = default.dependency
+                if dependency is None:
+                    kwargs[name] = None
+                else:
+                    value = dependency(request)
+                    if inspect.isawaitable(value):
+                        value = await value
+                    kwargs[name] = value
                 continue
             if annotation is not inspect._empty:
                 base_model = _lookup_basemodel(annotation)

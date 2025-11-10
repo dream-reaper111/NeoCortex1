@@ -4,9 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Neo Cortex – End User Console</title>
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
   </head>
   <body>
+    {% include "partials/nav.html" %}
+
     <div id="authOverlay" class="auth-overlay" hidden>
       <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <h2 id="authTitle">Whop Membership Required</h2>
@@ -18,7 +20,7 @@
         <div class="auth-actions">
           <button type="button" class="btn primary auth-btn" id="authWhopBtn">Sign in with Whop</button>
         </div>
-        <form id="authForm" class="auth-form" autocomplete="off" hidden method="post">
+        <form id="authForm" class="auth-form" autocomplete="off" hidden>
           <h3 class="auth-section-title">Create Console Credentials</h3>
           <label for="authUsername">Console Username</label>
           <input
@@ -68,7 +70,6 @@
       <nav class="nav-links">
         <a href="#papertrade" class="nav-link">Paper Trading</a>
         <a href="#webhook" class="nav-link">Webhook</a>
-        <a href="#assistant" class="nav-link">Assistant</a>
         <a href="#tests" class="nav-link">Test Payloads</a>
         <a href="#faq" class="nav-link">FAQ</a>
       </nav>
@@ -88,7 +89,7 @@
         </header>
         <div class="card__body papertrade-body">
           <div class="papertrade-grid">
-          <form id="paperForm" class="form-grid" data-account="paper" data-mode="sim" method="post">
+            <form id="paperForm" class="form-grid" data-account="paper" data-mode="sim">
               <div class="full-width">
                 <span class="label">Execution Mode</span>
                 <select id="executionMode" name="executionMode">
@@ -231,40 +232,6 @@
         </div>
       </section>
 
-      <section id="assistant" class="card">
-        <header class="card__header">
-          <h2>Neo Cortex Assistant</h2>
-          <p class="card__subtitle">
-            Chat with the language model to troubleshoot setup issues, explore trading workflows, and learn about
-            upcoming signals.
-          </p>
-        </header>
-        <div class="card__body chat-card__body">
-          <div id="chatContainer" class="chat-container">
-            <div
-              id="chatMessages"
-              class="chat-messages"
-              aria-live="polite"
-              aria-label="Conversation with the Neo Cortex assistant"
-            ></div>
-            <form id="chatForm" class="chat-form" autocomplete="off">
-              <label for="chatPrompt" class="chat-label">Ask the assistant</label>
-              <div class="chat-input-row">
-                <textarea
-                  id="chatPrompt"
-                  name="prompt"
-                  rows="3"
-                  placeholder="How do I connect my Alpaca account?"
-                  aria-describedby="chatStatus"
-                ></textarea>
-                <button type="submit" class="btn primary chat-send">Send</button>
-              </div>
-              <p id="chatStatus" class="status chat-status" role="status" aria-live="polite"></p>
-            </form>
-          </div>
-        </div>
-      </section>
-
       <section id="webhook" class="card">
         <header class="card__header">
           <h2>Alpaca Webhook Endpoint</h2>
@@ -290,7 +257,7 @@
           <p class="card__subtitle">Generate a mock trade update and verify the webhook is reachable.</p>
         </header>
         <div class="card__body">
-          <form id="testForm" class="form-grid" method="post">
+          <form id="testForm" class="form-grid">
             <label>
               <span>Symbol</span>
               <input id="symbol" name="symbol" value="SPY" />
@@ -388,6 +355,6 @@
       <small>&copy; <span id="year"></span> Neo Cortex. Built for the Alpaca webhook integration.</small>
     </footer>
 
-    <script src="./app.js" type="module"></script>
+    <script src="{{ request.url_for('public', path='enduserapp/app.js') }}" type="module"></script>
   </body>
 </html>

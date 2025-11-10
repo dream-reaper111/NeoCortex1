@@ -26,6 +26,39 @@ display account positions and unrealized P&L from Alpaca Markets.
 - `public/liquidity/` – Mobile and desktop friendly Liquidity Sweep Radar UI
   that consumes the `/strategy/liquidity-sweeps` API.
 
+## Platform Highlights
+
+- **py-Trading API Enhancements** – Mirror trades between multiple linked
+  accounts with adjustable size factors so risk can be tuned per follower.
+- **Strategy Leaderboards** – Rank strategies by configurable metrics such as
+  Sharpe ratio or profit factor to spotlight top performers for users.
+- **Multi-User Dashboard** – Segregate data per user with OAuth2-protected
+  access controls across the entire analytics suite.
+
+## Developer Utilities
+
+- **Strategy Backtester API** – Accepts JSON definitions, transforms them into
+  Pandas data structures, and returns structured results for rapid iteration.
+- **Indicator Sandbox** – Compile Pine scripts into Python with `ta-lib`
+  bindings, enabling custom indicator experimentation inside the platform.
+- **Live Code Reloader** – Hot-swap strategies at runtime without restarting
+  the FastAPI server, drastically reducing deployment downtime.
+- **API Versioning & Docs** – Leverages FastAPI's interactive `/docs` explorer
+  so developers can quickly validate request/response schemas.
+
+## Suggested Next Builds
+
+1. **AI Portfolio Dashboard** – Deliver full analytics, attribution, and visual
+   insights across portfolios.
+2. **Broker Aggregator** – Manage and rebalance multiple brokerage accounts
+   from a unified control panel.
+3. **Model Lab** – Train, test, and export machine learning models directly
+   within NeoCortex.
+4. **Security Core v2** – Expand vault storage, auditing, and self-healing
+   watchdog capabilities.
+5. **Data Reactor** – Integrate sentiment and macroeconomic data feeds to
+   enrich strategy inputs and signals.
+
 ## Installation
 
 1. **Clone or extract** the repository and open it in Visual Studio or your
@@ -145,11 +178,10 @@ hashed with a salted 2048-bit PBKDF2-SHA512 digest before being persisted.
 #### Admin private key configuration
 
 Admin registration is gated by a shared secret so only trusted operators can
-create privileged accounts. The backend reads this secret from the
-`ADMIN_PRIVATE_KEY` environment variable during startup and falls back to the
-default value `the3istheD3T` when the variable is unset. Update the value to a
-unique string before deploying by exporting it in your shell (PowerShell
-example shown below) or placing it in a `.env` file that `server.py` will load
+create privileged accounts. The backend requires this secret at startup via the
+`ADMIN_PRIVATE_KEY` environment variable—requests to `POST /register` are
+rejected until the variable is set. Export the value in your shell (PowerShell
+example shown below) or place it in a `.env` file that `server.py` will load
 automatically if [`python-dotenv`](https://pypi.org/project/python-dotenv/)
 is installed.
 
@@ -163,9 +195,7 @@ in their payload. The key is not required for end-user logins or Whop-based
 member onboarding.
 
 1. Register an admin user with `POST /register` and a JSON body like
-   `{ "username": "alice", "password": "<strong-password>", "admin_key": "the3istheD3T" }`.
-   The private key can be overridden via the `ADMIN_PRIVATE_KEY` environment
-   variable.
+   `{ "username": "alice", "password": "<strong-password>", "admin_key": "<your-admin-key>" }`.
 2. Log in with `POST /login` using the same payload to receive a bearer
    token. Supply this token to other endpoints via
    `Authorization: Bearer <token>`.
@@ -261,7 +291,7 @@ allowing them to create local credentials and register their funding keys.
 
    - `GET /auth/whop/start` – sends the browser to Whop, filling in the
      callback URL and optional `next` destination.
-   - `GET /auth/whop/session?token=...` – validates the onboarding session and
+   - `POST /auth/whop/session` – validates the onboarding session and
      returns basic metadata (email and license).
    - `POST /register/whop` – completes registration, saving encrypted API keys
      and issuing a session cookie/bearer token.
@@ -272,14 +302,23 @@ use the hosted console simultaneously.
 ### Webhook Verification
 
 If you supply `ALPACA_WEBHOOK_SECRET`, incoming webhook requests must include
-a matching `X-Webhook-Signature` header. A mismatch yields a 400 error.
+both `X-Webhook-Signature` and `X-Webhook-Timestamp` headers. The signature is
+calculated as `base64(hmac_sha256(secret, f"{timestamp}.{body}"))`. Payloads
+missing either header, whose signatures fail comparison, or whose timestamps
+fall outside `ALPACA_WEBHOOK_TOLERANCE_SECONDS` (default 300 seconds) are
+rejected. Replay attempts reuse the same signature and will be blocked with a
+409 response. Set `ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS=1` only for local
+testing if you need to bypass signature enforcement.
 
 ### Webhook test helper
 
 Use `POST /alpaca/webhook/test` to generate a signed sample payload. The
 endpoint writes the payload to `public/alpaca_webhook_tests/` and, when a
 secret is configured, returns a base64-encoded signature that mirrors what
-Alpaca would send.
+Alpaca would send. Configure either `ADMIN_PORTAL_GATE_TOKEN` or
+`ADMIN_PORTAL_BASIC_USER`/`ADMIN_PORTAL_BASIC_PASS` and leave
+`ALPACA_WEBHOOK_TEST_REQUIRE_AUTH` at its default `true` value to restrict this
+helper to trusted operators.
 
 ## Liquidity Sweep Radar (mobile + desktop)
 
