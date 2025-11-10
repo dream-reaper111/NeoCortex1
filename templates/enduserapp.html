@@ -4,9 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Neo Cortex – End User Console</title>
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
   </head>
   <body>
+    {% include "partials/nav.html" %}
+
     <div id="authOverlay" class="auth-overlay" hidden>
       <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <h2 id="authTitle">Whop Membership Required</h2>
@@ -18,7 +20,7 @@
         <div class="auth-actions">
           <button type="button" class="btn primary auth-btn" id="authWhopBtn">Sign in with Whop</button>
         </div>
-        <form id="authForm" class="auth-form" autocomplete="off" hidden method="post">
+        <form id="authForm" class="auth-form" autocomplete="off" hidden>
           <h3 class="auth-section-title">Create Console Credentials</h3>
           <label for="authUsername">Console Username</label>
           <input
@@ -85,7 +87,7 @@
         </header>
         <div class="card__body papertrade-body">
           <div class="papertrade-grid">
-          <form id="paperForm" class="form-grid" data-account="paper" method="post">
+            <form id="paperForm" class="form-grid" data-account="paper">
               <label>
                 <span>Instrument Type</span>
                 <select id="paperInstrument" name="instrument">
@@ -242,7 +244,7 @@
           <p class="card__subtitle">Generate a mock trade update and verify the webhook is reachable.</p>
         </header>
         <div class="card__body">
-          <form id="testForm" class="form-grid" method="post">
+          <form id="testForm" class="form-grid">
             <label>
               <span>Symbol</span>
               <input id="symbol" name="symbol" value="SPY" />
@@ -340,6 +342,6 @@
       <small>&copy; <span id="year"></span> Neo Cortex. Built for the Alpaca webhook integration.</small>
     </footer>
 
-    <script src="./app.js" type="module"></script>
+    <script src="{{ request.url_for('public', path='enduserapp/app.js') }}" type="module"></script>
   </body>
 </html>

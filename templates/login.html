@@ -4,9 +4,8 @@
         <meta charset="utf-8" />
         <title>Neo Cortex AI – Member Sign In</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="stylesheet" href="/public/assets/neocortex-theme.css" />
-        <link rel="stylesheet" href="/public/enduserapp/style.css" />
-        <link rel="stylesheet" href="assets/neocortex-theme.css" />
+        <link rel="stylesheet" href="{{ request.url_for('public', path='assets/neocortex-theme.css') }}" />
+        <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
         <style>
                 .login-screen {
                         width: min(460px, 100%);
@@ -81,7 +80,7 @@
                                 <p class="login-subtitle">Sign in to the Neo Cortex AI console to manage webhook credentials and monitor trading agents.</p>
                         </header>
                         <div id="notice" class="login-notice" hidden></div>
-                        <form id="loginForm" method="post">
+                        <form id="loginForm">
                                 <div>
                                         <label for="username">Username</label>
                                         <input id="username" name="username" type="text" autocomplete="username" placeholder="yourname" required />
