@@ -3091,10 +3091,24 @@ async def log_requests(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def admin_redirect_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except HTTPException as exc:
+        if (
+            exc.status_code == HTTP_403_FORBIDDEN
+            and request.method.upper() == "GET"
+            and "text/html" in (request.headers.get("accept", "").lower())
+        ):
+            return RedirectResponse("/login?error=not_admin")
+        raise
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     if isinstance(exc, HTTPException):
-        if exc.status_code == HTTP_403_FORBIDDEN and str(exc.detail) == "not_admin":
+        if exc.status_code == HTTP_403_FORBIDDEN and str(exc.detail) in {"not_admin", "Admin access only"}:
             return RedirectResponse(url="/login?error=not_admin", status_code=302)
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
     print("[NeoCortex Error]", traceback.format_exc())
@@ -3227,7 +3241,21 @@ async def _auth_failure_observer(request: Request, call_next):
         _register_auth_failure(None, ip)
     return response
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+@app.middleware("http")
+async def csp_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self' data: blob: https: 'unsafe-inline' 'unsafe-eval';"
+        "img-src 'self' data: blob: https:;"
+        "style-src 'self' 'unsafe-inline' https:;"
+        "font-src 'self' https: data:;"
+        "connect-src 'self' https: wss:;"
+    )
+    return response
+
+
+app.mount("/static", StaticFiles(directory=str(PUBLIC_DIR)), name="static")
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
@@ -4165,10 +4193,27 @@ def _require_user(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str,
     return user
 
 
-def require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    if ROLE_ADMIN not in set(user.get("roles", [])):
-        raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="not_admin")
-    return user
+def require_admin(
+    request: Request, user: Optional[Dict[str, Any]] = Depends(get_current_user)
+) -> Dict[str, Any]:
+    candidate: Optional[Dict[str, Any]]
+    if isinstance(user, Request) or not isinstance(user, Mapping):
+        candidate = getattr(request.state, "user", None)
+    else:
+        candidate = user
+    if not candidate or "roles" not in candidate:
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN,
+            detail="Admin access only",
+        )
+    roles = candidate.get("roles") or []
+    if ROLE_ADMIN not in set(roles):
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN,
+            detail="Admin access only",
+        )
+    request.state.user = candidate
+    return candidate
 
 
 def _require_admin(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
