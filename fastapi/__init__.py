@@ -18,6 +18,7 @@ __all__ = [
     "Header",
     "Cookie",
     "Depends",
+    "Form",
 ]
 
 __version__ = "0.1.0-stub"
@@ -53,6 +54,18 @@ def Header(default: Any = None, *, alias: Optional[str] = None) -> HeaderInfo:
 
 def Cookie(default: Any = None, *, alias: Optional[str] = None) -> CookieInfo:
     return CookieInfo(default=default, alias=alias)
+
+
+class FormInfo:
+    __slots__ = ("default", "alias")
+
+    def __init__(self, default: Any = inspect._empty, alias: Optional[str] = None) -> None:
+        self.default = default
+        self.alias = alias
+
+
+def Form(default: Any = inspect._empty, *, alias: Optional[str] = None) -> FormInfo:
+    return FormInfo(default=default, alias=alias)
 
 
 class DependencyInfo:
@@ -114,6 +127,8 @@ class Request:
         self._body = body
         self._json: Any = ...
         self._json_loaded = False
+        self._form: Optional[Dict[str, Any]] = None
+        self._form_loaded = False
         host = self.headers.get("host", "localhost")
         self.url = RequestURL(scheme=scheme, netloc=host, path=self.path, query=self.query)
         self.client = client
@@ -145,6 +160,17 @@ class Request:
 
     async def text(self) -> str:
         return self._body.decode("utf-8")
+
+    async def form(self) -> Dict[str, Any]:
+        if not self._form_loaded:
+            if not self._body:
+                data: Dict[str, Any] = {}
+            else:
+                parsed = parse_qs(self._body.decode("utf-8"), keep_blank_values=True)
+                data = {key: values[-1] if isinstance(values, list) else values for key, values in parsed.items()}
+            self._form = data
+            self._form_loaded = True
+        return self._form or {}
 
 
 class _Route:
@@ -324,6 +350,16 @@ class FastAPI:
                 cookie_name = default.alias or name
                 value = request.cookies.get(cookie_name, default.default)
                 kwargs[name] = value
+                continue
+            if isinstance(default, FormInfo):
+                form_data = await request.form()
+                field_name = default.alias or name
+                if field_name in form_data:
+                    kwargs[name] = form_data[field_name]
+                elif default.default is not inspect._empty:
+                    kwargs[name] = default.default
+                else:
+                    raise HTTPException(400, f"Missing required form field '{field_name}'")
                 continue
             if isinstance(default, DependencyInfo):
                 dependency = default.dependency
