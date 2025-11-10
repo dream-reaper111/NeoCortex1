@@ -7,7 +7,7 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac
+import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re
 from urllib.parse import parse_qs, quote, urlencode
 import importlib.util
 from pathlib import Path
@@ -292,6 +292,22 @@ DEFAULT_SECURITY_HEADERS: Dict[str, str] = {
     "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
 }
 
+
+def _is_subpath(base: Path, candidate: Path) -> bool:
+    try:
+        candidate.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+SAFE_FILENAME_COMPONENT = re.compile(r"[^A-Z0-9_-]")
+
+
+def _sanitize_filename_component(value: str) -> str:
+    cleaned = SAFE_FILENAME_COMPONENT.sub("_", value.upper())
+    return cleaned or "UNKNOWN"
+
 API_HOST   = os.getenv("API_HOST","0.0.0.0")
 API_PORT   = int(os.getenv("API_PORT","8000"))
 RUNS_ROOT  = Path(os.getenv("RUNS_ROOT","artifacts")).resolve()
@@ -303,6 +319,7 @@ LIQUIDITY_ASSETS = LIQUIDITY_DIR / "assets"
 LIQUIDITY_ASSETS.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
+ALPACA_TEST_DIR = ALPACA_TEST_DIR.resolve()
 
 LOGIN_PAGE = PUBLIC_DIR / "login.html"
 ADMIN_LOGIN_PAGE = PUBLIC_DIR / "admin-login.html"
@@ -2819,8 +2836,12 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
         signature = base64.b64encode(digest).decode()
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    fname = f"test-{req.symbol.upper()}-{stamp}.json"
-    path = ALPACA_TEST_DIR / fname
+    symbol_component = _sanitize_filename_component(req.symbol or "")
+    fname = f"test-{symbol_component}-{stamp}.json"
+    path = (ALPACA_TEST_DIR / fname).resolve()
+    if not _is_subpath(ALPACA_TEST_DIR, path):
+        raise HTTPException(status_code=400, detail="invalid symbol for artifact path")
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     return _json(

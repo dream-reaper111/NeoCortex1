@@ -539,19 +539,41 @@ TV_X_COLUMNS   = ["tv_entry_recent","tv_exit_recent"]
 FA_X_COLUMNS   = [c for _, c in FA_KEYS]
 EXT_X_COLUMNS  = ["robinhood_bar_recent","webull_bar_recent"]
 
+def _is_within(base: Path, candidate: Path) -> bool:
+    try:
+        candidate.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+def _ensure_artifact_dir(path: Path) -> Path:
+    runs_root = RUNS_ROOT.resolve()
+    resolved = path.resolve()
+    if not _is_within(runs_root, resolved):
+        raise ValueError(f"refusing to operate on artifact path outside {runs_root}: {resolved}")
+    resolved.mkdir(parents=True, exist_ok=True)
+    return resolved
+
 def _ensure_dir(p: Path):
-    p.mkdir(parents=True, exist_ok=True)
+    _ensure_artifact_dir(p)
+
+def _artifact_file(run_dir: Path, filename: str) -> Path:
+    safe_dir = _ensure_artifact_dir(run_dir)
+    name = Path(filename).name
+    if name != filename:
+        raise ValueError(f"invalid artifact filename: {filename}")
+    return safe_dir / name
 
 def _open_jsonl(path: Path):
-    _ensure_dir(path.parent)
-    return path.open("a", encoding="utf-8")
+    safe_path = _artifact_file(path.parent, path.name)
+    return safe_path.open("a", encoding="utf-8")
 
 def _emit_jsonl(fh, obj):
     fh.write(json.dumps(obj, separators=(",",":")) + "\n"); fh.flush()
 
 def _write_nn_graph(run_dir: Path, layers: List[int], model_name: str):
     obj = {"title": "Neural Network", "model": f"{model_name} " + "+".join(map(str,layers)), "layers":[{"size":s} for s in layers]}
-    (run_dir / "nn_graph.json").write_text(json.dumps(obj, indent=2))
+    _artifact_file(run_dir, "nn_graph.json").write_text(json.dumps(obj, indent=2))
 
 def _make_nn_emitter(run_dir: Path):
     _ensure_dir(run_dir)
@@ -965,8 +987,8 @@ def train_for_ticker(
     parent_run_dir: Optional[Path] = None
 ) -> Dict[str, Any]:
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    run_dir = (parent_run_dir or RUNS_ROOT) / f"run-{ts}-{ticker.upper()}"
-    run_dir.mkdir(parents=True, exist_ok=True)
+    base_dir = parent_run_dir or RUNS_ROOT
+    run_dir = _ensure_artifact_dir(base_dir / f"run-{ts}-{ticker.upper()}")
 
     log_emit = _make_train_logger(run_dir)
     nn_emit = _make_nn_emitter(run_dir)
@@ -1053,7 +1075,7 @@ def train_for_ticker(
         "mode": os.getenv("PINE_MODE", "STD"),
         "timeframe": os.getenv("PINE_TF", "HTF")
     }
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
+    _artifact_file(run_dir, "metrics.json").write_text(json.dumps(metrics, indent=2))
     print(f"\n[{ticker}] Saved artifacts -> {run_dir}\n")
     return metrics
 
@@ -1101,8 +1123,7 @@ def main():
 
     ext_sources = [s.strip() for s in (args.ext_sources or "").split(",") if s.strip()]
     parent_ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    parent_run_dir = RUNS_ROOT / f"run-{parent_ts}"
-    parent_run_dir.mkdir(parents=True, exist_ok=True)
+    parent_run_dir = _ensure_artifact_dir(RUNS_ROOT / f"run-{parent_ts}")
 
     def _onepass():
         results: List[Dict[str, Any]] = []
@@ -1159,8 +1180,9 @@ def main():
             "results": results,
             "errors": errors
         }
-        (parent_run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
-        print(f"\nSummary saved -> {parent_run_dir/'summary.json'}\n")
+        summary_path = _artifact_file(parent_run_dir, "summary.json")
+        summary_path.write_text(json.dumps(summary, indent=2))
+        print(f"\nSummary saved -> {summary_path}\n")
 
     if args.idle:
         while True:
