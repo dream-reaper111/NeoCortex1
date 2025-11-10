@@ -1,360 +1,351 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Neo Cortex – End User Console</title>
-    <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
-  </head>
-  <body>
-    {% include "partials/nav.html" %}
-
-    <div id="authOverlay" class="auth-overlay" hidden>
-      <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+{% extends 'base.html' %}
+{% block title %}NeoCortex – End User Console{% endblock %}
+{% block content %}
+<div id="authOverlay" class="auth-overlay" hidden>
+    <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <h2 id="authTitle">Whop Membership Required</h2>
         <p class="auth-subtitle">
-          Sign in with your Whop account to access the Neo Cortex end user console. Admins can manage the platform
-          through the dashboard login.
+            Sign in with your Whop account to access the NeoCortex end user console. Admins can manage the platform through the dashboard login.
         </p>
         <div id="authWhopNotice" class="auth-notice" hidden></div>
         <div class="auth-actions">
-          <button type="button" class="btn primary auth-btn" id="authWhopBtn">Sign in with Whop</button>
+            <button type="button" class="btn primary auth-btn" id="authWhopBtn">Sign in with Whop</button>
         </div>
         <form id="authForm" class="auth-form" autocomplete="off" hidden>
-          <h3 class="auth-section-title">Create Console Credentials</h3>
-          <label for="authUsername">Console Username</label>
-          <input
-            id="authUsername"
-            name="username"
-            type="text"
-            autocomplete="username"
-            placeholder="yourname"
-            required
-          />
-          <label for="authPassword">Console Password</label>
-          <input
-            id="authPassword"
-            name="password"
-            type="password"
-            autocomplete="new-password"
-            placeholder="••••••••"
-            required
-          />
-          <div id="authWhopExtras" class="auth-whop-extras" hidden>
-            <h3>Funding Credentials</h3>
-            <label for="authAccountType">Account Type</label>
-            <select id="authAccountType" name="accountType">
-              <option value="funded">Funded (live)</option>
-              <option value="paper">Paper</option>
-            </select>
-            <label for="authApiKey">Alpaca API Key</label>
-            <input id="authApiKey" name="apiKey" type="text" autocomplete="off" placeholder="PK..." />
-            <label for="authApiSecret">Alpaca API Secret</label>
-            <input id="authApiSecret" name="apiSecret" type="password" autocomplete="off" placeholder="SK..." />
-            <label for="authBaseUrl">API Base URL (optional)</label>
-            <input id="authBaseUrl" name="baseUrl" type="url" placeholder="https://api.alpaca.markets" />
-          </div>
+            <h3 class="auth-section-title">Create Console Credentials</h3>
+            <label for="authUsername">Console Username</label>
+            <input
+                id="authUsername"
+                name="username"
+                type="text"
+                autocomplete="username"
+                placeholder="yourname"
+                required
+            />
+            <label for="authPassword">Console Password</label>
+            <input
+                id="authPassword"
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                placeholder="••••••••"
+                required
+            />
+            <div id="authWhopExtras" class="auth-whop-extras" hidden>
+                <h3>Funding Credentials</h3>
+                <label for="authAccountType">Account Type</label>
+                <select id="authAccountType" name="accountType">
+                    <option value="funded">Funded (live)</option>
+                    <option value="paper">Paper</option>
+                </select>
+                <label for="authApiKey">Alpaca API Key</label>
+                <input id="authApiKey" name="apiKey" type="text" autocomplete="off" placeholder="PK..." />
+                <label for="authApiSecret">Alpaca API Secret</label>
+                <input id="authApiSecret" name="apiSecret" type="password" autocomplete="off" placeholder="SK..." />
+                <label for="authBaseUrl">API Base URL (optional)</label>
+                <input id="authBaseUrl" name="baseUrl" type="url" placeholder="https://api.alpaca.markets" />
+            </div>
         </form>
         <button type="button" class="btn primary auth-btn" id="authRegisterBtn" hidden>
-          Complete Membership Setup
+            Complete Membership Setup
         </button>
         <p id="authMessage" class="auth-message"></p>
-      </div>
     </div>
+</div>
 
-    <header class="page-header">
-      <div class="brand">
-        <h1>Neo Cortex End User Console</h1>
+<header class="page-header">
+    <div class="brand">
+        <h1>NeoCortex End User Console</h1>
         <p class="subtitle">Manage Alpaca webhook integration and quick diagnostics.</p>
-      </div>
-      <nav class="nav-links">
+    </div>
+    <nav class="nav-links">
         <a href="#papertrade" class="nav-link">Paper Trading</a>
         <a href="#webhook" class="nav-link">Webhook</a>
         <a href="#tests" class="nav-link">Test Payloads</a>
         <a href="#faq" class="nav-link">FAQ</a>
-      </nav>
-      <div class="user-actions">
+    </nav>
+    <div class="user-actions">
         <span id="userBadge" class="user-badge">Whop sign-in required</span>
         <button type="button" class="btn inline ghost" id="logoutBtn" hidden>Sign out</button>
-      </div>
-    </header>
+    </div>
+</header>
 
-    <main>
-      <section id="papertrade" class="card">
+<main>
+    <section id="papertrade" class="card">
         <header class="card__header">
-          <h2>AI Trading Console</h2>
-          <p class="card__subtitle">
-            Use the Neo Cortex AI trainer to simulate orders or forward approved trades to your Alpaca accounts.
-          </p>
+            <h2>AI Trading Console</h2>
+            <p class="card__subtitle">
+                Use the NeoCortex AI trainer to simulate orders or forward approved trades to your Alpaca accounts.
+            </p>
         </header>
         <div class="card__body papertrade-body">
-          <div class="papertrade-grid">
-            <form id="paperForm" class="form-grid" data-account="paper" data-mode="sim">
-              <div class="full-width">
-                <span class="label">Execution Mode</span>
-                <select id="executionMode" name="executionMode">
-                  <option value="sim" selected>Simulated AI (no broker execution)</option>
-                  <option value="paper">Alpaca Paper (auto trader)</option>
-                  <option value="funded">Alpaca Live (auto trader)</option>
-                </select>
-                <p id="executionHelp" class="form-note">
-                  Orders are simulated locally. The AI trainer will score each trade without contacting Alpaca.
-                </p>
-              </div>
-              <label>
-                <span>Instrument Type</span>
-                <select id="paperInstrument" name="instrument">
-                  <option value="option">Option</option>
-                  <option value="future">Future</option>
-                </select>
-              </label>
-              <label>
-                <span>Symbol</span>
-                <input id="paperSymbol" name="symbol" placeholder="AAPL" required />
-              </label>
-              <label class="option-field">
-                <span>Expiration</span>
-                <input id="paperExpiry" name="expiry" type="date" />
-              </label>
-              <label class="option-field">
-                <span>Strike</span>
-                <input id="paperStrike" name="strike" type="number" step="0.01" min="0" />
-              </label>
-              <label class="option-field">
-                <span>Option Side</span>
-                <select id="paperOptionType" name="option_type">
-                  <option value="call">Call</option>
-                  <option value="put">Put</option>
-                </select>
-              </label>
-              <label class="future-field hidden">
-                <span>Contract Month</span>
-                <input id="paperFutureMonth" name="future_month" placeholder="DEC" />
-              </label>
-              <label class="future-field hidden">
-                <span>Contract Year</span>
-                <input id="paperFutureYear" name="future_year" type="number" min="2024" max="2100" />
-              </label>
-              <label>
-                <span>Quantity</span>
-                <input id="paperQuantity" name="quantity" type="number" min="0.01" step="0.01" value="1" />
-              </label>
-              <label>
-                <span>Limit Price</span>
-                <input id="paperPrice" name="price" type="number" min="0" step="0.01" value="1" />
-              </label>
-              <div class="full-width">
-                <span class="label">Position Bias</span>
-                <div class="side-toggle" role="radiogroup" aria-label="Position bias">
-                  <label class="toggle">
-                    <input type="radio" name="paperSide" value="long" checked />
-                    <span>Long</span>
-                  </label>
-                  <label class="toggle">
-                    <input type="radio" name="paperSide" value="short" />
-                    <span>Short</span>
-                  </label>
+            <div class="papertrade-grid">
+                <form id="paperForm" class="form-grid" data-account="paper" data-mode="sim">
+                    <div class="full-width">
+                        <span class="label">Execution Mode</span>
+                        <select id="executionMode" name="executionMode">
+                            <option value="sim" selected>Simulated AI (no broker execution)</option>
+                            <option value="paper">Alpaca Paper (auto trader)</option>
+                            <option value="funded">Alpaca Live (auto trader)</option>
+                        </select>
+                        <p id="executionHelp" class="form-note">
+                            Orders are simulated locally. The AI trainer will score each trade without contacting Alpaca.
+                        </p>
+                    </div>
+                    <label>
+                        <span>Instrument Type</span>
+                        <select id="paperInstrument" name="instrument">
+                            <option value="option">Option</option>
+                            <option value="future">Future</option>
+                        </select>
+                    </label>
+                    <label>
+                        <span>Symbol</span>
+                        <input id="paperSymbol" name="symbol" placeholder="AAPL" required />
+                    </label>
+                    <label class="option-field">
+                        <span>Expiration</span>
+                        <input id="paperExpiry" name="expiry" type="date" />
+                    </label>
+                    <label class="option-field">
+                        <span>Strike</span>
+                        <input id="paperStrike" name="strike" type="number" step="0.01" min="0" />
+                    </label>
+                    <label class="option-field">
+                        <span>Option Side</span>
+                        <select id="paperOptionType" name="option_type">
+                            <option value="call">Call</option>
+                            <option value="put">Put</option>
+                        </select>
+                    </label>
+                    <label class="future-field hidden">
+                        <span>Contract Month</span>
+                        <input id="paperFutureMonth" name="future_month" placeholder="DEC" />
+                    </label>
+                    <label class="future-field hidden">
+                        <span>Contract Year</span>
+                        <input id="paperFutureYear" name="future_year" type="number" min="2024" max="2100" />
+                    </label>
+                    <label>
+                        <span>Quantity</span>
+                        <input id="paperQuantity" name="quantity" type="number" min="0.01" step="0.01" value="1" />
+                    </label>
+                    <label>
+                        <span>Limit Price</span>
+                        <input id="paperPrice" name="price" type="number" min="0" step="0.01" value="1" />
+                    </label>
+                    <div class="full-width">
+                        <span class="label">Position Bias</span>
+                        <div class="side-toggle" role="radiogroup" aria-label="Position bias">
+                            <label class="toggle">
+                                <input type="radio" name="paperSide" value="long" checked />
+                                <span>Long</span>
+                            </label>
+                            <label class="toggle">
+                                <input type="radio" name="paperSide" value="short" />
+                                <span>Short</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-actions full-width">
+                        <button type="submit" class="btn primary" id="sendPaperOrder">Send to AI Trader</button>
+                        <span id="paperStatus" class="status"></span>
+                    </div>
+                </form>
+                <div class="ai-panel">
+                    <div class="pnl-widget">
+                        <header class="pnl-header">
+                            <h3>Live P&amp;L</h3>
+                            <small id="pnlTimestamp" class="pnl-timestamp">--</small>
+                        </header>
+                        <div class="pnl-values">
+                            <div class="pnl-total" id="pnlTotal">$0.00</div>
+                            <div class="pnl-split">
+                                <span>Longs: <strong id="pnlLong">$0.00</strong></span>
+                                <span>Shorts: <strong id="pnlShort">$0.00</strong></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ai-status" id="aiStatus">Neo Cortex AI standing by…</div>
                 </div>
-              </div>
-              <div class="form-actions full-width">
-                <button type="submit" class="btn primary" id="sendPaperOrder">Send to AI Trader</button>
-                <span id="paperStatus" class="status"></span>
-              </div>
+            </div>
+            <div class="position-actions">
+                <span id="positionsStatus" class="status" role="status" aria-live="polite"></span>
+            </div>
+            <div class="position-grid">
+                <div class="position-column">
+                    <header class="position-header">
+                        <h3>Long Positions</h3>
+                    </header>
+                    <table class="position-table" id="longTable">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Instrument</th>
+                                <th>Entry</th>
+                                <th>Last</th>
+                                <th>P&amp;L</th>
+                                <th>Status</th>
+                                <th class="actions-header">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="7" class="empty">No long positions yet.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="position-column">
+                    <header class="position-header">
+                        <h3>Short Positions</h3>
+                    </header>
+                    <table class="position-table" id="shortTable">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Instrument</th>
+                                <th>Entry</th>
+                                <th>Last</th>
+                                <th>P&amp;L</th>
+                                <th>Status</th>
+                                <th class="actions-header">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="7" class="empty">No short positions yet.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="webhook" class="card">
+        <header class="card__header">
+            <h2>Alpaca Webhook Endpoint</h2>
+        </header>
+        <div class="card__body">
+            <p>
+                Share the following URL with Alpaca under <strong>API Settings → Webhook URL</strong>.
+                Alpaca will POST trade updates to this server, and you will see confirmations below.
+            </p>
+            <div class="webhook-url">
+                <code id="webhookUrl">https://example.com/alpaca/webhook</code>
+                <button type="button" id="copyWebhook" class="btn">Copy</button>
+            </div>
+            <p class="note">
+                If you are tunnelling the API through Ngrok, make sure you update Alpaca every time the public URL changes.
+            </p>
+        </div>
+    </section>
+
+    <section id="tests" class="card">
+        <header class="card__header">
+            <h2>Send a Test Payload</h2>
+            <p class="card__subtitle">Generate a mock trade update and verify the webhook is reachable.</p>
+        </header>
+        <div class="card__body">
+            <form id="testForm" class="form-grid">
+                <label>
+                    <span>Symbol</span>
+                    <input id="symbol" name="symbol" value="SPY" />
+                </label>
+                <label>
+                    <span>Quantity</span>
+                    <input id="quantity" name="quantity" type="number" min="0" step="0.01" value="1" />
+                </label>
+                <label>
+                    <span>Fill Price</span>
+                    <input id="price" name="price" type="number" min="0" step="0.01" value="0" />
+                </label>
+                <label>
+                    <span>Side</span>
+                    <select id="side" name="side">
+                        <option value="buy">Buy</option>
+                        <option value="sell">Sell</option>
+                    </select>
+                </label>
+                <label>
+                    <span>Status</span>
+                    <select id="status" name="status">
+                        <option value="filled">Filled</option>
+                        <option value="partially_filled">Partially Filled</option>
+                        <option value="canceled">Canceled</option>
+                    </select>
+                </label>
+                <label>
+                    <span>Event Type</span>
+                    <select id="event" name="event">
+                        <option value="trade_update">Trade Update</option>
+                        <option value="order_filled">Order Filled</option>
+                        <option value="order_canceled">Order Canceled</option>
+                    </select>
+                </label>
+                <label class="full-width">
+                    <span>Timestamp (optional)</span>
+                    <input id="timestamp" name="timestamp" placeholder="2024-01-01T15:04:05Z" />
+                </label>
+                <label class="full-width">
+                    <span>Raw JSON Override (optional)</span>
+                    <textarea id="raw" name="raw" rows="4" placeholder='{"event":"trade_update"}'></textarea>
+                </label>
+                <div class="form-actions full-width">
+                    <button type="submit" class="btn primary" id="sendTest">Send Test</button>
+                    <span id="testStatus" class="status"></span>
+                </div>
             </form>
-            <div class="ai-panel">
-              <div class="pnl-widget">
-                <header class="pnl-header">
-                  <h3>Live P&amp;L</h3>
-                  <small id="pnlTimestamp" class="pnl-timestamp">--</small>
+
+            <details class="response-panel" open>
+                <summary>Latest Response</summary>
+                <pre id="responseOutput">Awaiting test…</pre>
+            </details>
+
+            <div class="artifact-list">
+                <header class="artifact-list__header">
+                    <h3>Recent Test Artifacts</h3>
+                    <button type="button" id="refreshTests" class="btn">Refresh</button>
                 </header>
-                <div class="pnl-values">
-                  <div class="pnl-total" id="pnlTotal">$0.00</div>
-                  <div class="pnl-split">
-                    <span>Longs: <strong id="pnlLong">$0.00</strong></span>
-                    <span>Shorts: <strong id="pnlShort">$0.00</strong></span>
-                  </div>
-                </div>
-              </div>
-              <div class="ai-status" id="aiStatus">Neo Cortex AI standing by…</div>
+                <p class="note">Each test saves the payload under <code>public/alpaca_webhook_tests</code>. You can download the JSON files for auditing.</p>
+                <ul id="artifactList" class="artifact-list__items"></ul>
             </div>
-          </div>
-          <div class="position-actions">
-            <span id="positionsStatus" class="status" role="status" aria-live="polite"></span>
-          </div>
-          <div class="position-grid">
-            <div class="position-column">
-              <header class="position-header">
-                <h3>Long Positions</h3>
-              </header>
-              <table class="position-table" id="longTable">
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th>Instrument</th>
-                    <th>Entry</th>
-                    <th>Last</th>
-                    <th>P&amp;L</th>
-                    <th>Status</th>
-                    <th class="actions-header">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td colspan="7" class="empty">No long positions yet.</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="position-column">
-              <header class="position-header">
-                <h3>Short Positions</h3>
-              </header>
-              <table class="position-table" id="shortTable">
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th>Instrument</th>
-                    <th>Entry</th>
-                    <th>Last</th>
-                    <th>P&amp;L</th>
-                    <th>Status</th>
-                    <th class="actions-header">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td colspan="7" class="empty">No short positions yet.</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
-      </section>
+    </section>
 
-      <section id="webhook" class="card">
+    <section id="faq" class="card">
         <header class="card__header">
-          <h2>Alpaca Webhook Endpoint</h2>
-        </header>
-        <div class="card__body">
-          <p>
-            Share the following URL with Alpaca under <strong>API Settings → Webhook URL</strong>.
-            Alpaca will POST trade updates to this server, and you will see confirmations below.
-          </p>
-          <div class="webhook-url">
-            <code id="webhookUrl">https://example.com/alpaca/webhook</code>
-            <button type="button" id="copyWebhook" class="btn">Copy</button>
-          </div>
-          <p class="note">
-            If you are tunnelling the API through Ngrok, make sure you update Alpaca every time the public URL changes.
-          </p>
-        </div>
-      </section>
-
-      <section id="tests" class="card">
-        <header class="card__header">
-          <h2>Send a Test Payload</h2>
-          <p class="card__subtitle">Generate a mock trade update and verify the webhook is reachable.</p>
-        </header>
-        <div class="card__body">
-          <form id="testForm" class="form-grid">
-            <label>
-              <span>Symbol</span>
-              <input id="symbol" name="symbol" value="SPY" />
-            </label>
-            <label>
-              <span>Quantity</span>
-              <input id="quantity" name="quantity" type="number" min="0" step="0.01" value="1" />
-            </label>
-            <label>
-              <span>Fill Price</span>
-              <input id="price" name="price" type="number" min="0" step="0.01" value="0" />
-            </label>
-            <label>
-              <span>Side</span>
-              <select id="side" name="side">
-                <option value="buy">Buy</option>
-                <option value="sell">Sell</option>
-              </select>
-            </label>
-            <label>
-              <span>Status</span>
-              <select id="status" name="status">
-                <option value="filled">Filled</option>
-                <option value="partially_filled">Partially Filled</option>
-                <option value="canceled">Canceled</option>
-              </select>
-            </label>
-            <label>
-              <span>Event Type</span>
-              <select id="event" name="event">
-                <option value="trade_update">Trade Update</option>
-                <option value="order_filled">Order Filled</option>
-                <option value="order_canceled">Order Canceled</option>
-              </select>
-            </label>
-            <label class="full-width">
-              <span>Timestamp (optional)</span>
-              <input id="timestamp" name="timestamp" placeholder="2024-01-01T15:04:05Z" />
-            </label>
-            <label class="full-width">
-              <span>Raw JSON Override (optional)</span>
-              <textarea id="raw" name="raw" rows="4" placeholder='{"event":"trade_update"}'></textarea>
-            </label>
-            <div class="form-actions full-width">
-              <button type="submit" class="btn primary" id="sendTest">Send Test</button>
-              <span id="testStatus" class="status"></span>
-            </div>
-          </form>
-
-          <details class="response-panel" open>
-            <summary>Latest Response</summary>
-            <pre id="responseOutput">Awaiting test…</pre>
-          </details>
-
-          <div class="artifact-list">
-            <header class="artifact-list__header">
-              <h3>Recent Test Artifacts</h3>
-              <button type="button" id="refreshTests" class="btn">Refresh</button>
-            </header>
-            <p class="note">Each test saves the payload under <code>public/alpaca_webhook_tests</code>. You can download the JSON files for auditing.</p>
-            <ul id="artifactList" class="artifact-list__items"></ul>
-          </div>
-        </div>
-      </section>
-
-      <section id="faq" class="card">
-        <header class="card__header">
-          <h2>Frequently Asked Questions</h2>
+            <h2>Frequently Asked Questions</h2>
         </header>
         <div class="card__body faq">
-          <details open>
-            <summary>Why do I see a JSON response when visiting the webhook URL in a browser?</summary>
-            <p>
-              The webhook endpoint is designed for Alpaca to call via HTTP POST. When accessed directly in a browser (HTTP GET), the API returns a basic JSON message.
-              Use the form above to send a POST request that mirrors Alpaca&#39;s behaviour.
-            </p>
-          </details>
-          <details>
-            <summary>Where can I find the files produced by test payloads?</summary>
-            <p>
-              Tests are stored on disk inside <code>public/alpaca_webhook_tests</code>. The table above links to each file so that you can inspect the payload and share it with teammates.
-            </p>
-          </details>
-          <details>
-            <summary>How do I reset the Alpaca webhook URL?</summary>
-            <p>
-              Update the URL shown at the top of this page inside Alpaca&#39;s dashboard whenever your public endpoint changes (for example, when Ngrok rotates URLs).
-            </p>
-          </details>
+            <details open>
+                <summary>Why do I see a JSON response when visiting the webhook URL in a browser?</summary>
+                <p>
+                    The webhook endpoint is designed for Alpaca to call via HTTP POST. When accessed directly in a browser (HTTP GET), the API returns a basic JSON message.
+                    Use the form above to send a POST request that mirrors Alpaca's behaviour.
+                </p>
+            </details>
+            <details>
+                <summary>Where can I find the files produced by test payloads?</summary>
+                <p>
+                    Tests are stored on disk inside <code>public/alpaca_webhook_tests</code>. The table above links to each file so that you can inspect the payload and share it with teammates.
+                </p>
+            </details>
+            <details>
+                <summary>How do I reset the Alpaca webhook URL?</summary>
+                <p>
+                    Update the URL shown at the top of this page inside Alpaca's dashboard whenever your public endpoint changes (for example, when Ngrok rotates URLs).
+                </p>
+            </details>
         </div>
-      </section>
-    </main>
+    </section>
+</main>
 
-    <footer class="page-footer">
-      <small>&copy; <span id="year"></span> Neo Cortex. Built for the Alpaca webhook integration.</small>
-    </footer>
-
-    <script src="{{ request.url_for('public', path='enduserapp/app.js') }}" type="module"></script>
-  </body>
-</html>
+<footer class="page-footer">
+    <small>&copy; <span id="year"></span> Neo Cortex. Built for the Alpaca webhook integration.</small>
+</footer>
+{% endblock %}
+{% block extra_scripts %}
+<script src="{{ request.url_for('public', path='enduserapp/app.js') }}" type="module"></script>
+{% endblock %}

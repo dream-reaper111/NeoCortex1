@@ -1,802 +1,731 @@
-<!doctype html>
-<html lang="en">
-<head>
-        <meta charset="utf-8" />
-        <title>Neo Cortex AI Dashboard</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='assets/neocortex-theme.css') }}" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
-        <style>
-                body {
-                        margin: 0;
-                }
+{% extends 'base.html' %}
+{% block title %}NeoCortex AI Dashboard{% endblock %}
+{% block content %}
+<section class="dashboard-page">
+    <header class="nc-hero dashboard-topbar">
+        <div class="nc-inline">
+            <h1>NeoCortex AI Dashboard</h1>
+            <span id="userBadge" class="nc-pill">Signed out</span>
+            <span id="gpu-pill" class="nc-pill">GPU: <em class="nc-text-muted">loading…</em></span>
+            <span id="run-pill" class="nc-pill">Run: <span class="nc-text-muted">-</span></span>
+        </div>
+        <p class="nc-text-muted">
+            Monitor live training metrics, manage synthetic data ingestion, and stream neural network diagnostics.
+        </p>
+        <div class="dashboard-actions nc-text-small">
+            <button type="button" class="nc-btn nc-btn--ghost" id="logoutBtn">Log out</button>
+            <a href="/preflight" target="_blank" class="nc-btn nc-btn--ghost">Preflight JSON</a>
+            <button type="button" class="nc-btn nc-btn--muted" id="refreshBtn">Refresh</button>
+        </div>
+    </header>
 
-                .dashboard-page {
-                        display: flex;
-                        flex-direction: column;
-                        gap: clamp(24px, 5vw, 32px);
-                        padding: clamp(24px, 5vw, 36px);
-                }
+    <div class="nc-status-bar">
+        <div class="nc-status-bar__item">
+            <span class="nc-status-bar__label">Account Connection</span>
+            <span class="nc-status-bar__value" id="accountStatus">Checking…</span>
+        </div>
+        <div class="nc-status-bar__item">
+            <span class="nc-status-bar__label">Ngrok Tunnel</span>
+            <span class="nc-status-bar__value" id="tunnelStatus">{{ request.url.hostname if request.url else '-' }}</span>
+        </div>
+        <div class="nc-status-bar__item">
+            <span class="nc-status-bar__label">Last Update</span>
+            <span class="nc-status-bar__value" id="lastUpdated">—</span>
+        </div>
+        <div class="nc-status-bar__item">
+            <span class="nc-status-bar__label">AI Insights</span>
+            <span class="nc-status-bar__value" id="insightStatus">Idle</span>
+        </div>
+    </div>
 
-                .dashboard-topbar h1 {
-                        margin: 0;
-                        font-size: clamp(1.4rem, 2.6vw, 1.8rem);
-                        letter-spacing: 0.3px;
-                }
-
-                .dashboard-topbar .nc-pill {
-                        font-size: 0.75rem;
-                        background: rgba(168, 85, 247, 0.24);
-                        border-color: rgba(192, 132, 252, 0.32);
-                }
-
-                .dashboard-topbar .nc-text-muted {
-                        font-size: 0.85rem;
-                }
-
-                .dashboard-row {
-                        display: flex;
-                        flex-wrap: wrap;
-                        gap: clamp(16px, 3vw, 24px);
-                }
-
-                .dashboard-card {
-                        flex: 1 1 320px;
-                        padding: clamp(20px, 4vw, 28px);
-                }
-
-                .dashboard-card-flex {
-                        flex: 1 1 680px;
-                }
-
-                .dashboard-grid {
-                        gap: 16px;
-                }
-
-                .dashboard-inline,
-                .dashboard-actions {
-                        display: flex;
-                        align-items: center;
-                        gap: 12px;
-                        flex-wrap: wrap;
-                }
-
-                .dashboard-actions {
-                        margin-top: 12px;
-                }
-
-                .dashboard-note {
-                        margin-top: 8px;
-                }
-
-                .dashboard-media {
-                        display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-                        gap: clamp(12px, 3vw, 20px);
-                }
-
-                .dashboard-media img {
-                        width: 100%;
-                        border-radius: 16px;
-                        border: 1px solid rgba(192, 132, 252, 0.28);
-                        background: rgba(18, 5, 34, 0.68);
-                        box-shadow: 0 18px 34px rgba(10, 2, 24, 0.4);
-                }
-
-                .dashboard-split {
-                        display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-                        gap: clamp(16px, 3vw, 24px);
-                }
-
-                .dashboard-canvas {
-                        width: 100%;
-                        display: block;
-                        background: rgba(14, 4, 28, 0.88);
-                        border: 1px solid rgba(192, 132, 252, 0.24);
-                        border-radius: 16px;
-                        box-shadow: 0 16px 32px rgba(10, 2, 24, 0.36);
-                }
-
-                .dashboard-table {
-                        width: 100%;
-                        border-collapse: collapse;
-                }
-
-                .dashboard-table th,
-                .dashboard-table td {
-                        border-bottom: 1px solid rgba(192, 132, 252, 0.18);
-                        padding: 8px 10px;
-                        text-align: left;
-                }
-
-                .dashboard-pre-small {
-                        max-height: 180px;
-                }
-
-                .dashboard-check label {
-                        text-transform: none;
-                        letter-spacing: 0.15px;
-                        font-size: 0.85rem;
-                }
-
-                .dashboard-card h2 {
-                        margin-top: 0;
-                        margin-bottom: 16px;
-                }
-
-                .kvs {
-                        display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-                        gap: 16px;
-                }
-
-                .kv {
-                        padding: 12px 14px;
-                        border-radius: 16px;
-                        border: 1px solid rgba(192, 132, 252, 0.28);
-                        background: rgba(18, 5, 34, 0.78);
-                        box-shadow: 0 12px 28px rgba(10, 2, 24, 0.32);
-                }
-
-                .kv .k {
-                        color: var(--text-muted);
-                        font-size: 0.8rem;
-                        letter-spacing: 0.25px;
-                        text-transform: uppercase;
-                        margin-bottom: 4px;
-                }
-
-                .kv .v {
-                        font-weight: 600;
-                        font-size: 1rem;
-                }
-
-                .mono {
-                        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-                }
-
-                .small {
-                        font-size: 0.8rem;
-                }
-
-                .ok {
-                        color: var(--success);
-                }
-
-                .warn {
-                        color: var(--warning);
-                }
-
-                .danger {
-                        color: var(--danger);
-                }
-
-                @media (max-width: 700px) {
-                        .dashboard-topbar {
-                                flex-direction: column;
-                                align-items: flex-start;
-                                gap: 18px;
-                        }
-                }
-        </style>
-</head>
-<body>
-
-        {% include "partials/nav.html" %}
-
-        <main class="nc-page dashboard-page">
-                <div class="nc-topbar dashboard-topbar">
-                        <div class="nc-inline">
-                                <h1>Neo Cortex AI</h1>
-                                <span id="gpu-pill" class="nc-pill nc-text-small">GPU: <em class="nc-text-muted">loading…</em></span>
-                                <span id="run-pill" class="nc-pill nc-text-small">Run: <span class="nc-text-muted">-</span></span>
-                        </div>
-                        <div class="nc-inline nc-text-small dashboard-inline">
-                                <span id="userBadge" class="nc-pill nc-text-small">Signed out</span>
-                                <span class="nc-text-muted">•</span>
-                                <a href="#" id="logoutBtn">Log out</a>
-                                <span class="nc-text-muted">•</span>
-                                <a href="/preflight" target="_blank">Preflight JSON</a>
-                                <span class="nc-text-muted">•</span>
-                                <a href="#" id="refreshBtn">Refresh</a>
-                        </div>
+    <section class="dashboard-row dashboard-media">
+        <article class="nc-card dashboard-card dashboard-card-flex">
+            <h2>Train Model</h2>
+            <div class="nc-grid nc-grid-auto dashboard-grid">
+                <div><label for="ticker">Ticker</label><input id="ticker" value="SPY" placeholder="e.g., SPY, AAPL, BTC-USD" /></div>
+                <div>
+                    <label for="interval">Interval</label>
+                    <select id="interval">
+                        <option>1m</option>
+                        <option>2m</option>
+                        <option>5m</option>
+                        <option>15m</option>
+                        <option selected>1h</option>
+                        <option>1d</option>
+                    </select>
                 </div>
+                <div>
+                    <label for="mode">Mode</label>
+                    <select id="mode"><option selected>HFT</option><option>LFT</option></select>
+                </div>
+                <div>
+                    <label for="pine_mode">Pine Mode</label>
+                    <select id="pine_mode"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
+                </div>
+                <div>
+                    <label for="aggr">Aggressiveness</label>
+                    <select id="aggr"><option>chill</option><option selected>normal</option><option>spicy</option><option>insane</option></select>
+                </div>
+                <div>
+                    <label for="sides">Sides</label>
+                    <select id="sides"><option>LONG</option><option>SHORT</option><option selected>BOTH</option></select>
+                </div>
+                <div><label for="max_iter">Max Iter</label><input id="max_iter" type="number" value="300" min="50" step="50" /></div>
+                <div>
+                    <label for="source">Data Source</label>
+                    <select id="source"><option value="yfinance">yfinance</option><option value="ingest">ingest</option><option value="both" selected>both</option></select>
+                </div>
+                <div class="nc-inline dashboard-check"><input id="merge_sources" type="checkbox" checked /><label for="merge_sources">Merge Sources (prefer latest)</label></div>
+                <div class="nc-inline dashboard-check"><input id="use_fa" type="checkbox" checked /><label for="use_fa">Use Fundamentals (from /ingest/fundamentals)</label></div>
+                <div>
+                    <label for="rangeMode">Range Mode</label>
+                    <select id="rangeMode"><option value="period" selected>Period</option><option value="dates">Start/End</option></select>
+                </div>
+                <div id="periodWrap">
+                    <label for="period">Period</label>
+                    <select id="period"><option>1mo</option><option>3mo</option><option selected>6mo</option><option>1y</option><option>2y</option><option>5y</option></select>
+                </div>
+                <div id="startWrap" style="display:none"><label for="start">Start</label><input id="start" placeholder="YYYY-MM-DD" /></div>
+                <div id="endWrap" style="display:none"><label for="end">End</label><input id="end" placeholder="YYYY-MM-DD" /></div>
+                <div><label for="entry_thr">Entry Thr (opt)</label><input id="entry_thr" placeholder="auto" /></div>
+                <div><label for="z_thr">|Z| Thr (opt)</label><input id="z_thr" placeholder="auto" /></div>
+                <div><label for="vol_k">Vol k (opt)</label><input id="vol_k" placeholder="auto" /></div>
+            </div>
+            <div class="dashboard-actions">
+                <button class="nc-btn" id="trainBtn">Start Training</button>
+                <span class="nc-text-muted nc-text-small" id="trainHint">Streams log below</span>
+            </div>
+            <div id="trainResult" class="nc-text-muted nc-text-small dashboard-note"></div>
+        </article>
 
-                <section class="dashboard-row dashboard-media">
-                        <article class="nc-card dashboard-card dashboard-card-flex">
-                                <h2>Train Model</h2>
-                                <div class="nc-grid nc-grid-auto dashboard-grid">
-                                        <div><label for="ticker">Ticker</label><input id="ticker" value="SPY" placeholder="e.g., SPY, AAPL, BTC-USD" /></div>
-                                        <div>
-                                                <label for="interval">Interval</label>
-                                                <select id="interval">
-                                                        <option>1m</option>
-                                                        <option>2m</option>
-                                                        <option>5m</option>
-                                                        <option>15m</option>
-                                                        <option selected>1h</option>
-                                                        <option>1d</option>
-                                                </select>
-                                        </div>
-                                        <div>
-                                                <label for="mode">Mode</label>
-                                                <select id="mode"><option selected>HFT</option><option>LFT</option></select>
-                                        </div>
-                                        <div>
-                                                <label for="pine_mode">Pine Mode</label>
-                                                <select id="pine_mode"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
-                                        </div>
-                                        <div>
-                                                <label for="aggr">Aggressiveness</label>
-                                                <select id="aggr"><option>chill</option><option selected>normal</option><option>spicy</option><option>insane</option></select>
-                                        </div>
-                                        <div>
-                                                <label for="sides">Sides</label>
-                                                <select id="sides"><option>LONG</option><option>SHORT</option><option selected>BOTH</option></select>
-                                        </div>
-                                        <div><label for="max_iter">Max Iter</label><input id="max_iter" type="number" value="300" min="50" step="50" /></div>
-                                        <div>
-                                                <label for="source">Data Source</label>
-                                                <select id="source"><option value="yfinance">yfinance</option><option value="ingest">ingest</option><option value="both" selected>both</option></select>
-                                        </div>
-                                        <div class="nc-inline dashboard-check"><input id="merge_sources" type="checkbox" checked /><label for="merge_sources">Merge Sources (prefer latest)</label></div>
-                                        <div class="nc-inline dashboard-check"><input id="use_fa" type="checkbox" checked /><label for="use_fa">Use Fundamentals (from /ingest/fundamentals)</label></div>
+        <article class="nc-card dashboard-card">
+            <h2>Latest Metrics</h2>
+            <div class="nc-inline dashboard-inline">
+                <label for="sideSelect">View Side</label>
+                <select id="sideSelect"><option value="long" selected>LONG</option><option value="short">SHORT</option></select>
+            </div>
+            <div id="metrics" class="kvs"></div>
+            <div class="nc-text-muted nc-text-small" id="updated">updated: -</div>
+            <div class="nc-text-muted nc-text-small" id="ingest">webhooks: -</div>
+        </article>
+    </section>
 
-                                        <div>
-                                                <label for="rangeMode">Range Mode</label>
-                                                <select id="rangeMode"><option value="period" selected>Period</option><option value="dates">Start/End</option></select>
-                                        </div>
-                                        <div id="periodWrap">
-                                                <label for="period">Period</label>
-                                                <select id="period"><option>1mo</option><option>3mo</option><option selected>6mo</option><option>1y</option><option>2y</option><option>5y</option></select>
-                                        </div>
-                                        <div id="startWrap" style="display:none"><label for="start">Start</label><input id="start" placeholder="YYYY-MM-DD" /></div>
-                                        <div id="endWrap" style="display:none"><label for="end">End</label><input id="end" placeholder="YYYY-MM-DD" /></div>
+    <section class="dashboard-row">
+        <article class="nc-card dashboard-card">
+            <h2>Price Preview</h2>
+            <img id="img_price" src="" alt="Price Preview" onerror="this.style.display='none'" />
+        </article>
+        <article class="nc-card dashboard-card">
+            <h2>Confusion Matrix</h2>
+            <img id="img_cm" src="" alt="Confusion Matrix" onerror="this.style.display='none'" />
+        </article>
+        <article class="nc-card dashboard-card">
+            <h2>ROC Curve</h2>
+            <img id="img_roc" src="" alt="ROC" onerror="this.style.display='none'" />
+        </article>
+        <article class="nc-card dashboard-card">
+            <h2>Feature Importance</h2>
+            <img id="img_feat" src="" alt="Feature Importance" onerror="this.style.display='none'" />
+        </article>
+    </section>
 
-                                        <div><label for="entry_thr">Entry Thr (opt)</label><input id="entry_thr" placeholder="auto" /></div>
-                                        <div><label for="z_thr">|Z| Thr (opt)</label><input id="z_thr" placeholder="auto" /></div>
-                                        <div><label for="vol_k">Vol k (opt)</label><input id="vol_k" placeholder="auto" /></div>
-                                </div>
-                                <div class="dashboard-actions">
-                                        <button class="nc-btn" id="trainBtn">Start Training</button>
-                                        <span class="nc-text-muted nc-text-small" id="trainHint">Streams log below</span>
-                                </div>
-                                <div id="trainResult" class="nc-text-muted nc-text-small dashboard-note"></div>
-                        </article>
+    <section class="dashboard-split">
+        <article class="nc-card dashboard-card">
+            <h2>Live P&amp;L (Pred)</h2>
+            <canvas id="equityCanvas" class="dashboard-canvas" width="800" height="210"></canvas>
+            <div class="nc-text-muted nc-text-small">Streaming from <code class="mono">/stream/training</code></div>
+            <div id="pnlStats" class="nc-text-small">-</div>
+        </article>
+        <article class="nc-card dashboard-card">
+            <h2>Neural Net (Live)</h2>
+            <canvas id="nnCanvas" class="dashboard-canvas" width="640" height="320"></canvas>
+            <div class="nc-text-muted nc-text-small">Graph: <code class="mono">/nn/graph</code> • Stats: <code class="mono">/stream/nn</code></div>
+            <pre id="nnStats" class="dashboard-pre-small nc-text-small mono"></pre>
+            <div class="dashboard-actions nc-text-small">
+                <button class="nc-btn nc-btn--secondary" id="reloadNNBtn">Reload Graph</button>
+            </div>
+        </article>
+    </section>
 
-                        <article class="nc-card dashboard-card">
-                                <h2>Latest Metrics</h2>
-                                <div class="nc-inline dashboard-inline">
-                                        <label for="sideSelect">View Side</label>
-                                        <select id="sideSelect"><option value="long" selected>LONG</option><option value="short">SHORT</option></select>
-                                </div>
-                                <div id="metrics" class="kvs"></div>
-                                <div class="nc-text-muted nc-text-small" id="updated">updated: -</div>
-                                <div class="nc-text-muted nc-text-small" id="ingest">webhooks: -</div>
-                        </article>
-                </section>
+    <section class="dashboard-row">
+        <article class="nc-card dashboard-card dashboard-card-flex" data-tabs>
+            <div class="nc-tabs">
+                <button type="button" class="nc-tab is-active" data-tab="#tab-positions">Open Positions</button>
+                <button type="button" class="nc-tab" data-tab="#tab-history">Trade History</button>
+                <button type="button" class="nc-tab" data-tab="#tab-insights">AI Insights</button>
+                <button type="button" class="nc-tab" data-tab="#tab-risk">Risk Metrics</button>
+            </div>
+            <div class="nc-tab-panel is-active" id="tab-positions">
+                <table class="dashboard-table nc-text-small" id="tradesTable">
+                    <thead><tr><th>Time</th><th>Side</th><th>Price</th><th>PnL</th><th>Reason</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="nc-tab-panel" id="tab-history">
+                <pre id="log" class="dashboard-pre-small mono"></pre>
+            </div>
+            <div class="nc-tab-panel" id="tab-insights">
+                <div id="aiInsights" class="kvs"></div>
+            </div>
+            <div class="nc-tab-panel" id="tab-risk">
+                <div id="riskMetrics" class="kvs"></div>
+            </div>
+        </article>
+    </section>
 
-                <section class="dashboard-row">
-                        <article class="nc-card dashboard-card">
-                                <h2>Price Preview</h2>
-                                <img id="img_price" src="" alt="Price Preview" onerror="this.style.display='none'" />
-                        </article>
-                        <article class="nc-card dashboard-card">
-                                <h2>Confusion Matrix</h2>
-                                <img id="img_cm" src="" alt="Confusion Matrix" onerror="this.style.display='none'" />
-                        </article>
-                        <article class="nc-card dashboard-card">
-                                <h2>ROC Curve</h2>
-                                <img id="img_roc" src="" alt="ROC" onerror="this.style.display='none'" />
-                        </article>
-                        <article class="nc-card dashboard-card">
-                                <h2>Feature Importance</h2>
-                                <img id="img_feat" src="" alt="Feature Importance" onerror="this.style.display='none'" />
-                        </article>
-                </section>
+    <section class="dashboard-row">
+        <article class="nc-card dashboard-card dashboard-card-flex">
+            <h2>Idle / Parallel Trainer</h2>
+            <div class="nc-grid nc-grid-auto dashboard-grid">
+                <div><label for="idle_name">Idle Name</label><input id="idle_name" value="nightly" /></div>
+                <div><label for="idle_every">Every (sec)</label><input id="idle_every" value="3600" /></div>
+                <div><label for="idle_period">Period</label><input id="idle_period" value="6mo" /></div>
+                <div>
+                    <label for="idle_interval">Interval</label>
+                    <select id="idle_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
+                </div>
+                <div>
+                    <label for="idle_tickers">Tickers JSON</label>
+                    <textarea id="idle_tickers" rows="3">["AAPL","MSFT","SPY"]</textarea>
+                </div>
+                <div>
+                    <label for="idle_pine">Pine Mode</label>
+                    <select id="idle_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
+                </div>
+                <div>
+                    <label for="idle_mode">Mode</label>
+                    <select id="idle_mode"><option selected>HFT</option><option>LFT</option></select>
+                </div>
+                <div>
+                    <label for="idle_source">Source</label>
+                    <select id="idle_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
+                </div>
+                <div class="nc-inline dashboard-check"><input id="idle_merge" type="checkbox" checked /><label for="idle_merge">Merge Sources</label></div>
+                <div class="nc-inline dashboard-check"><input id="idle_fa" type="checkbox" checked /><label for="idle_fa">Use Fundamentals</label></div>
+            </div>
+            <div class="dashboard-actions">
+                <button class="nc-btn" id="idleStartBtn">Start Idle</button>
+                <button class="nc-btn nc-btn--secondary" id="idleStopBtn">Stop Idle</button>
+                <button class="nc-btn nc-btn--secondary" id="idleStatusBtn">Status</button>
+                <span id="idleStatus" class="nc-text-muted nc-text-small">-</span>
+            </div>
+        </article>
 
-                <section class="dashboard-split">
-                        <article class="nc-card dashboard-card">
-                                <h2>Live P&amp;L (Pred)</h2>
-                                <canvas id="equityCanvas" class="dashboard-canvas" width="800" height="210"></canvas>
-                                <div class="nc-text-muted nc-text-small">Streaming from <code class="mono">/stream/training</code></div>
-                                <div id="pnlStats" class="nc-text-small">-</div>
-                                <h2>Trades (Live)</h2>
-                                <table class="dashboard-table nc-text-small" id="tradesTable">
-                                        <thead><tr><th>Time</th><th>Side</th><th>Price</th><th>PnL</th><th>Reason</th></tr></thead>
-                                        <tbody></tbody>
-                                </table>
-                        </article>
-                        <article class="nc-card dashboard-card">
-                                <h2>Neural Net (Live)</h2>
-                                <canvas id="nnCanvas" class="dashboard-canvas" width="640" height="320"></canvas>
-                                <div class="nc-text-muted nc-text-small">Graph: <code class="mono">/nn/graph</code> • Stats: <code class="mono">/stream/nn</code></div>
-                                <pre id="nnStats" class="dashboard-pre-small nc-text-small mono"></pre>
-                                <div class="dashboard-actions nc-text-small">
-                                        <button class="nc-btn nc-btn-secondary" id="reloadNNBtn">Reload Graph</button>
-                                </div>
-                        </article>
-                </section>
+        <article class="nc-card dashboard-card">
+            <h2>Multi / Parallel Train (once)</h2>
+            <div class="nc-grid nc-grid-auto dashboard-grid">
+                <div><label for="multi_tickers">Tickers JSON</label><textarea id="multi_tickers" rows="4">["AAPL","MSFT","SPY"]</textarea></div>
+                <div>
+                    <label for="multi_interval">Interval</label>
+                    <select id="multi_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
+                </div>
+                <div><label for="multi_period">Period</label><input id="multi_period" value="6mo" /></div>
+                <div><label for="multi_max">Max Iter</label><input id="multi_max" type="number" value="250" /></div>
+                <div>
+                    <label for="multi_pine">Pine Mode</label>
+                    <select id="multi_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
+                </div>
+                <div>
+                    <label for="multi_source">Source</label>
+                    <select id="multi_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
+                </div>
+                <div class="nc-inline dashboard-check"><input id="multi_merge" type="checkbox" checked /><label for="multi_merge">Merge Sources</label></div>
+                <div class="nc-inline dashboard-check"><input id="multi_fa" type="checkbox" checked /><label for="multi_fa">Use Fundamentals</label></div>
+            </div>
+            <div class="dashboard-actions">
+                <button class="nc-btn" id="multiBtn">Run Multi-Train</button>
+            </div>
+            <pre id="multiOut" class="dashboard-pre-small nc-text-small mono"></pre>
+        </article>
+    </section>
 
-                <section class="dashboard-row">
-                        <article class="nc-card dashboard-card dashboard-card-flex">
-                                <h2>Idle / Parallel Trainer</h2>
-                                <div class="nc-grid nc-grid-auto dashboard-grid">
-                                        <div><label for="idle_name">Idle Name</label><input id="idle_name" value="nightly" /></div>
-                                        <div><label for="idle_every">Every (sec)</label><input id="idle_every" value="3600" /></div>
-                                        <div><label for="idle_period">Period</label><input id="idle_period" value="6mo" /></div>
-                                        <div>
-                                                <label for="idle_interval">Interval</label>
-                                                <select id="idle_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
-                                        </div>
-                                        <div>
-                                                <label for="idle_tickers">Tickers JSON</label>
-                                                <textarea id="idle_tickers" rows="3">["AAPL","MSFT","SPY"]</textarea>
-                                        </div>
-                                        <div>
-                                                <label for="idle_pine">Pine Mode</label>
-                                                <select id="idle_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
-                                        </div>
-                                        <div>
-                                                <label for="idle_mode">Mode</label>
-                                                <select id="idle_mode"><option selected>HFT</option><option>LFT</option></select>
-                                        </div>
-                                        <div>
-                                                <label for="idle_source">Source</label>
-                                                <select id="idle_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
-                                        </div>
-                                        <div class="nc-inline dashboard-check"><input id="idle_merge" type="checkbox" checked /><label for="idle_merge">Merge Sources</label></div>
-                                        <div class="nc-inline dashboard-check"><input id="idle_fa" type="checkbox" checked /><label for="idle_fa">Use Fundamentals</label></div>
-                                </div>
-                                <div class="dashboard-actions">
-                                        <button class="nc-btn" id="idleStartBtn">Start Idle</button>
-                                        <button class="nc-btn nc-btn-secondary" id="idleStopBtn">Stop Idle</button>
-                                        <button class="nc-btn nc-btn-secondary" id="idleStatusBtn">Status</button>
-                                        <span id="idleStatus" class="nc-text-muted nc-text-small">-</span>
-                                </div>
-                        </article>
+    <section class="dashboard-row">
+        <article class="nc-card dashboard-card dashboard-card-flex">
+            <h2>Live Training Log</h2>
+            <pre id="logLegacy" class="dashboard-pre-small nc-text-small mono"></pre>
+            <div class="nc-text-muted nc-text-small">SSE: <code class="mono">/stream/training</code></div>
+        </article>
+    </section>
+</section>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+    const $ = (id) => document.getElementById(id);
+    const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
+    const TOKEN_KEY = 'nc_token';
+    const USERNAME_KEY = 'nc_user';
+    const COOKIE_NAME_KEY = 'nc_cookie';
+    const REFRESH_KEY = 'nc_refresh';
 
-                        <article class="nc-card dashboard-card">
-                                <h2>Multi / Parallel Train (once)</h2>
-                                <div class="nc-grid nc-grid-auto dashboard-grid">
-                                        <div><label for="multi_tickers">Tickers JSON</label><textarea id="multi_tickers" rows="4">["AAPL","MSFT","SPY"]</textarea></div>
-                                        <div>
-                                                <label for="multi_interval">Interval</label>
-                                                <select id="multi_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
-                                        </div>
-                                        <div><label for="multi_period">Period</label><input id="multi_period" value="6mo" /></div>
-                                        <div><label for="multi_max">Max Iter</label><input id="multi_max" type="number" value="250" /></div>
-                                        <div>
-                                                <label for="multi_pine">Pine Mode</label>
-                                                <select id="multi_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
-                                        </div>
-                                        <div>
-                                                <label for="multi_source">Source</label>
-                                                <select id="multi_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
-                                        </div>
-                                        <div class="nc-inline dashboard-check"><input id="multi_merge" type="checkbox" checked /><label for="multi_merge">Merge Sources</label></div>
-                                        <div class="nc-inline dashboard-check"><input id="multi_fa" type="checkbox" checked /><label for="multi_fa">Use Fundamentals</label></div>
-                                </div>
-                                <div class="dashboard-actions">
-                                        <button class="nc-btn" id="multiBtn">Run Multi-Train</button>
-                                </div>
-                                <pre id="multiOut" class="dashboard-pre-small nc-text-small mono"></pre>
-                        </article>
-                </section>
+    function authToken() {
+        return localStorage.getItem(TOKEN_KEY);
+    }
 
-                <section class="dashboard-row">
-                        <article class="nc-card dashboard-card dashboard-card-flex">
-                                <h2>Live Training Log</h2>
-                                <pre id="log" class="mono"></pre>
-                                <div class="nc-text-muted nc-text-small">SSE: <code class="mono">/stream/training</code></div>
-                        </article>
-                </section>
-        </main>
-        <script>
-                const $ = (id) => document.getElementById(id);
-                const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
-                const TOKEN_KEY = 'nc_token';
-                const USERNAME_KEY = 'nc_user';
-                const COOKIE_NAME_KEY = 'nc_cookie';
-                const REFRESH_KEY = 'nc_refresh';
+    function sessionCookieName() {
+        return localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
+    }
 
-                function authToken() {
-                        return localStorage.getItem(TOKEN_KEY);
+    (function ensureAuthenticated() {
+        const token = authToken();
+        if (!token) {
+            const dest = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.replace('/admin/login?next=' + dest);
+        }
+    })();
+
+    (function patchFetch() {
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = (input, init = {}) => {
+            const token = authToken();
+            const headers = new Headers(init.headers || {});
+            if (token && !headers.has('Authorization')) {
+                headers.set('Authorization', 'Bearer ' + token);
+            }
+            const finalInit = Object.assign({}, init, { headers });
+            if (!finalInit.credentials) {
+                finalInit.credentials = 'include';
+            }
+            return originalFetch(input, finalInit);
+        };
+    })();
+
+    function updateUserBadge() {
+        const badge = $('userBadge');
+        if (!badge) return;
+        const username = localStorage.getItem(USERNAME_KEY) || 'unknown';
+        const text = 'Signed in as ' + username;
+        badge.textContent = text;
+        const account = $('accountStatus');
+        if (account) {
+            account.textContent = 'Connected as ' + username;
+        }
+    }
+
+    updateUserBadge();
+
+    const tunnelStatusEl = $('tunnelStatus');
+    if (tunnelStatusEl) {
+        tunnelStatusEl.textContent = window.location.origin;
+    }
+
+    $('logoutBtn').addEventListener('click', async (event) => {
+        event.preventDefault();
+        try {
+            await fetch('/logout', { method: 'POST' });
+        } catch (_) { }
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USERNAME_KEY);
+        localStorage.removeItem(REFRESH_KEY);
+        const cookieName = sessionCookieName();
+        document.cookie = cookieName + '=; Max-Age=0; path=/';
+        window.location.replace('/admin/login');
+    });
+
+    function toggleRange() {
+        const m = $('rangeMode').value;
+        $('periodWrap').style.display = (m === 'period') ? 'block' : 'none';
+        $('startWrap').style.display = (m === 'dates') ? 'block' : 'none';
+        $('endWrap').style.display = (m === 'dates') ? 'block' : 'none';
+    }
+    $('rangeMode').addEventListener('change', toggleRange);
+    toggleRange();
+
+    async function loadGPU() {
+        try {
+            const r = await fetch('/gpu-info', { cache: 'no-store' });
+            const j = await r.json();
+            const pill = $('gpu-pill');
+            const insight = $('insightStatus');
+            if (j.cuda_available) {
+                const text = 'GPU: <span class="ok">ON</span> <span class="small mono">(' + (j.devices || []).join(', ') + ')</span>';
+                pill.innerHTML = text;
+                if (insight) insight.textContent = 'GPU online';
+            } else {
+                pill.innerHTML = 'GPU: <span class="danger">OFF</span> <span class="small mono">(' + (j.framework || 'none') + ')</span>';
+                if (insight) insight.textContent = 'GPU offline';
+            }
+        } catch {
+            $('gpu-pill').innerHTML = 'GPU: <span class="warn">unknown</span>';
+        }
+    }
+
+    function sideSuffix() { return ($('sideSelect').value === 'short') ? '_short' : '_long'; }
+    function refreshArtifacts() {
+        const sfx = sideSuffix();
+        $('img_price').src = cb('/artifacts/file/yfinance_price.png');
+        $('img_cm').src = cb('/artifacts/file/cm' + sfx + '.png');
+        $('img_roc').src = cb('/artifacts/file/roc' + sfx + '.png');
+        $('img_feat').src = cb('/artifacts/file/feature_importance' + sfx + '.png');
+    }
+    $('sideSelect').addEventListener('change', () => {
+        refreshArtifacts();
+        fetchMetrics();
+    });
+
+    function renderKv(target, rows) {
+        if (!target) return;
+        target.innerHTML = rows.map(([k, v]) => (
+            '<div class="kv"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'
+        )).join('');
+    }
+
+    function fmtPct(value) {
+        if (value === undefined || value === null || Number.isNaN(value)) return '-';
+        return (Number(value) * 100).toFixed(2) + '%';
+    }
+
+    function fmtNum(value, digits = 2) {
+        if (value === undefined || value === null || Number.isNaN(value)) return '-';
+        return Number(value).toFixed(digits);
+    }
+
+    async function fetchMetrics() {
+        try {
+            const r = await fetch('/metrics/latest', { cache: 'no-store' });
+            const t = await r.text();
+            let m; try { m = JSON.parse(t); } catch (_) { throw new Error('metrics parse failed: ' + t.slice(0, 200)); }
+            if (!m.ok) throw new Error(m.reason || m.detail || 'no metrics');
+
+            $('run-pill').innerHTML = 'Run: <span class="mono small">' + (m.run_dir || '-') + '</span>';
+
+            const useShort = ($('sideSelect').value === 'short');
+            const acc = useShort ? (m.accuracy_short ?? m.accuracy) : (m.accuracy_long ?? m.accuracy);
+            const auc = useShort ? (m.roc_auc_short ?? m.roc_auc) : (m.roc_auc_long ?? m.roc_auc);
+            const cbalance = useShort ? (m.class_balance_short ?? m.class_balance) : (m.class_balance_long ?? m.class_balance);
+            const kvs = $('metrics');
+            const br = useShort ? (m.backtest_pred_short ?? m.backtest_pred) : (m.backtest_pred_long ?? m.backtest_pred);
+
+            const rows = [
+                ['Run Dir', m.run_dir || '-'],
+                ['Samples', (m.n_samples ?? '-')],
+                ['Accuracy', (+acc || 0).toFixed(3)],
+                ['AUC', (+auc || 0).toFixed(3)],
+                ['Class 0', cbalance ? (cbalance['NO(0)'] ?? cbalance['EXIT(0)'] ?? '-') : '-'],
+                ['Class 1', cbalance ? (cbalance['YES(1)'] ?? cbalance['ENTRY(1)'] ?? '-') : '-'],
+                ['Features', (m.features || []).join(', ') || '-'],
+                ['Pred Return', (br?.return_pct ?? 0).toFixed(2) + '%'],
+                ['Pred Win', (br?.win_rate_pct ?? 0).toFixed(1) + '%']
+            ];
+            renderKv(kvs, rows);
+
+            $('updated').textContent = 'updated: ' + (m.time_utc || new Date().toISOString());
+            const status = $('lastUpdated');
+            if (status) status.textContent = m.time_utc || new Date().toISOString();
+
+            const s = m.ingest_stats || {};
+            $('ingest').textContent = 'webhooks: TV=' + (s.tradingview || 0) + ' • RH=' + (s.robinhood || 0) + ' • WB=' + (s.webull || 0) + ' • candles=' + (s.candles || 0) + ' • feat=' + (s.features || 0);
+
+            const insights = $('aiInsights');
+            renderKv(insights, [
+                ['Sharpe', fmtNum(m.sharpe)],
+                ['Sortino', fmtNum(m.sortino)],
+                ['Hit Rate', fmtPct(m.hit_rate)],
+                ['Exposure', fmtPct(m.exposure)],
+                ['Alpha', fmtNum(m.alpha)],
+                ['Beta', fmtNum(m.beta)]
+            ]);
+
+            const risk = $('riskMetrics');
+            renderKv(risk, [
+                ['Max Drawdown', fmtPct(m.max_drawdown_pct)],
+                ['Avg Drawdown', fmtPct(m.avg_drawdown_pct)],
+                ['VaR 95', fmtNum(m.var_95)],
+                ['VaR 99', fmtNum(m.var_99)],
+                ['Volatility', fmtPct(m.volatility)],
+                ['Skew', fmtNum(m.skew, 3)]
+            ]);
+
+            const insightStatus = $('insightStatus');
+            if (insightStatus) {
+                insightStatus.textContent = 'Metrics synced';
+            }
+
+            refreshArtifacts();
+        } catch (e) {
+            $('metrics').innerHTML = '<div class="nc-text-muted nc-text-small">No metrics yet or error: ' + (e.message || e) + '</div>';
+            const insightStatus = $('insightStatus');
+            if (insightStatus) {
+                insightStatus.textContent = 'Metrics unavailable';
+            }
+        }
+    }
+    $('refreshBtn').addEventListener('click', (e) => { e.preventDefault(); fetchMetrics(); loadGPU(); });
+
+    const logEl = $('logLegacy');
+    const eqCanvas = $('equityCanvas');
+    const eqPoints = [];
+    let equityChart = null;
+    let sseTrain = null;
+
+    function ensureEquityChart() {
+        if (!window.Chart || !eqCanvas) return null;
+        if (!equityChart) {
+            equityChart = new Chart(eqCanvas, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Equity',
+                        data: [],
+                        borderColor: '#00d4ff',
+                        backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: true
+                    }]
+                },
+                options: {
+                    animation: false,
+                    scales: {
+                        x: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(148, 163, 184, 0.1)' } },
+                        y: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(148, 163, 184, 0.1)' } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+        return equityChart;
+    }
+
+    function updateEquityChart() {
+        const chart = ensureEquityChart();
+        if (!chart) return;
+        chart.data.labels = eqPoints.map((p) => p.t.toLocaleTimeString([], { hour12: false }));
+        chart.data.datasets[0].data = eqPoints.map((p) => p.v);
+        chart.update('none');
+    }
+
+    function addTradeRow(row) {
+        const body = document.querySelector('#tradesTable tbody');
+        const tr = document.createElement('tr');
+        const pnl = (row.type === 'trade_close' && typeof row.pnl === 'number') ? row.pnl.toFixed(2) : '';
+        tr.innerHTML = `<td>${row.t?.slice(0, 19) || '-'}</td>
+                          <td>${(row.side || '').toUpperCase() || (row.type === 'trade_open' ? 'OPEN' : 'CLOSE')}</td>
+                          <td>${(row.price ?? '').toFixed ? row.price.toFixed(2) : (row.price ?? '')}</td>
+                          <td>${pnl}</td>
+                          <td>${row.reason || ''}</td>`;
+        body.prepend(tr);
+    }
+
+    function wantsShort() { return ($('sideSelect').value === 'short'); }
+
+    function startTrainSSE() {
+        try { if (sseTrain) sseTrain.close(); } catch (_) { }
+        sseTrain = new EventSource('/stream/training');
+        sseTrain.onmessage = (e) => {
+            if (!e || !e.data) return;
+            try {
+                const row = JSON.parse(e.data);
+                logEl.textContent += (row.phase ? ('[' + row.phase + '] ') : '') + JSON.stringify(row) + '\n';
+                logEl.scrollTop = logEl.scrollHeight;
+                const logTab = $('log');
+                if (logTab) {
+                    logTab.textContent = logEl.textContent;
                 }
 
-                function sessionCookieName() {
-                        return localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
+                const chosen = wantsShort() ? 'PredShort' : 'PredLong';
+                const matchesChosen = (row.entry_col === chosen) || (!row.entry_col && chosen === 'PredLong' && row.type === 'equity');
+
+                if (row.type === 'equity' && matchesChosen) {
+                    const v = Number(row.equity);
+                    if (Number.isFinite(v)) {
+                        eqPoints.push({ t: new Date(row.t || Date.now()), v });
+                        if (eqPoints.length > 800) eqPoints.shift();
+                        updateEquityChart();
+                    }
                 }
-
-                (function ensureAuthenticated() {
-                        const token = authToken();
-                        if (!token) {
-                                const dest = encodeURIComponent(window.location.pathname + window.location.search);
-                                window.location.replace('/admin/login?next=' + dest);
-                        }
-                })();
-
-                (function patchFetch() {
-                        const originalFetch = window.fetch.bind(window);
-                        window.fetch = (input, init = {}) => {
-                                const token = authToken();
-                                const headers = new Headers(init.headers || {});
-                                if (token && !headers.has('Authorization')) {
-                                        headers.set('Authorization', 'Bearer ' + token);
-                                }
-                                const finalInit = Object.assign({}, init, { headers });
-                                if (!finalInit.credentials) {
-                                        finalInit.credentials = 'include';
-                                }
-                                return originalFetch(input, finalInit);
-                        };
-                })();
-
-                function updateUserBadge() {
-                        const badge = $('userBadge');
-                        if (!badge) return;
-                        const username = localStorage.getItem(USERNAME_KEY) || 'unknown';
-                        badge.textContent = 'Signed in as ' + username;
+                if ((row.type === 'trade_open' || row.type === 'trade_close') && matchesChosen) {
+                    addTradeRow(row);
                 }
+                if (row.phase === 'backtest:done') { fetchMetrics(); }
+            } catch {
+                logEl.textContent += e.data + '\n';
+            }
+        };
+        sseTrain.onerror = () => {/* browser auto-retries */ };
+    }
 
-                updateUserBadge();
+    const nnCanvas = $('nnCanvas');
+    const nnCtx = nnCanvas.getContext('2d');
+    let nnGraph = null;
+    let sseNN = null;
 
-                $('logoutBtn').addEventListener('click', async (event) => {
-                        event.preventDefault();
-                        try {
-                                await fetch('/logout', { method: 'POST' });
-                        } catch (_) { }
-                        localStorage.removeItem(TOKEN_KEY);
-                        localStorage.removeItem(USERNAME_KEY);
-                        localStorage.removeItem(REFRESH_KEY);
-                        const cookieName = sessionCookieName();
-                        document.cookie = cookieName + '=; Max-Age=0; path=/';
-                        window.location.replace('/admin/login');
-                });
+    function drawNN(graph, stats) {
+        nnCtx.clearRect(0, 0, nnCanvas.width, nnCanvas.height);
+        if (!graph || !graph.layers) {
+            nnCtx.fillStyle = 'rgba(255,255,255,0.25)';
+            nnCtx.font = '16px Inter';
+            nnCtx.fillText('Waiting for neural graph…', 20, 40);
+            return;
+        }
+        const layers = graph.layers;
+        const padding = 40;
+        const width = nnCanvas.width - padding * 2;
+        const height = nnCanvas.height - padding * 2;
+        const layerSpacing = width / Math.max(1, layers.length - 1);
 
-                // ---- Range mode toggle ----
-                function toggleRange() {
-			const m = $('rangeMode').value;
-			$('periodWrap').style.display = (m === 'period') ? 'block' : 'none';
-			$('startWrap').style.display = (m === 'dates') ? 'block' : 'none';
-			$('endWrap').style.display = (m === 'dates') ? 'block' : 'none';
-		}
-		$('rangeMode').addEventListener('change', toggleRange);
-		toggleRange();
+        layers.forEach((layer, index) => {
+            const neurons = layer.neurons || 1;
+            const neuronSpacing = height / Math.max(1, neurons - 1);
+            for (let i = 0; i < neurons; i += 1) {
+                const x = padding + index * layerSpacing;
+                const y = padding + (neurons === 1 ? height / 2 : i * neuronSpacing);
+                nnCtx.beginPath();
+                nnCtx.arc(x, y, 10, 0, Math.PI * 2);
+                nnCtx.fillStyle = '#00d4ff';
+                nnCtx.fill();
+                nnCtx.strokeStyle = 'rgba(184, 77, 255, 0.45)';
+                nnCtx.stroke();
+            }
+        });
 
-		// ---- GPU Pill ----
-		async function loadGPU() {
-			try {
-				const r = await fetch('/gpu-info', { cache: 'no-store' });
-				const j = await r.json();
-				const pill = $('gpu-pill');
-				if (j.cuda_available) {
-					pill.innerHTML = 'GPU: <span class="ok">ON</span> <span class="small mono">(' + (j.devices || []).join(', ') + ')</span>';
-				} else {
-					pill.innerHTML = 'GPU: <span class="danger">OFF</span> <span class="small mono">(' + (j.framework || 'none') + ')</span>';
-				}
-			} catch {
-				$('gpu-pill').innerHTML = 'GPU: <span class="warn">unknown</span>';
-			}
-		}
+        nnCtx.strokeStyle = 'rgba(0, 212, 255, 0.25)';
+        nnCtx.lineWidth = 1;
+        layers.slice(0, -1).forEach((layer, index) => {
+            const nextLayer = layers[index + 1];
+            const neurons = layer.neurons || 1;
+            const nextNeurons = nextLayer.neurons || 1;
+            for (let i = 0; i < neurons; i += 1) {
+                for (let j = 0; j < nextNeurons; j += 1) {
+                    const x1 = padding + index * layerSpacing;
+                    const y1 = padding + (neurons === 1 ? height / 2 : i * (height / Math.max(1, neurons - 1)));
+                    const x2 = padding + (index + 1) * layerSpacing;
+                    const y2 = padding + (nextNeurons === 1 ? height / 2 : j * (height / Math.max(1, nextNeurons - 1)));
+                    nnCtx.beginPath();
+                    nnCtx.moveTo(x1, y1);
+                    nnCtx.lineTo(x2, y2);
+                    nnCtx.stroke();
+                }
+            }
+        });
 
-		// ---- Metrics & artifacts ----
-		function sideSuffix() { return ($('sideSelect').value === 'short') ? '_short' : '_long'; }
-		function refreshArtifacts() {
-			const sfx = sideSuffix();
-			$('img_price').src = cb('/artifacts/file/yfinance_price.png');
-			$('img_cm').src = cb('/artifacts/file/cm' + sfx + '.png');
-			$('img_roc').src = cb('/artifacts/file/roc' + sfx + '.png');
-			$('img_feat').src = cb('/artifacts/file/feature_importance' + sfx + '.png');
-		}
-		$('sideSelect').addEventListener('change', () => {
-			refreshArtifacts();
-			fetchMetrics();
-		});
+        if (stats) {
+            nnCtx.fillStyle = '#d0d0d0';
+            nnCtx.font = '12px Inter';
+            nnCtx.fillText('Loss: ' + (stats.loss ?? '-'), padding, nnCanvas.height - 40);
+            nnCtx.fillText('Acc: ' + (stats.accuracy ?? '-'), padding, nnCanvas.height - 24);
+        }
+    }
 
-		async function fetchMetrics() {
-			try {
-				const r = await fetch('/metrics/latest', { cache: 'no-store' });
-				const t = await r.text();
-				let m; try { m = JSON.parse(t); } catch (_) { throw new Error('metrics parse failed: ' + t.slice(0, 200)); }
-				if (!m.ok) throw new Error(m.reason || m.detail || 'no metrics');
+    async function loadNNGraph() {
+        try {
+            const resp = await fetch('/nn/graph', { cache: 'no-store' });
+            if (!resp.ok) throw new Error('Graph fetch failed');
+            const j = await resp.json();
+            if (j.ok && j.graph) {
+                nnGraph = j.graph;
+                drawNN(nnGraph, null);
+            } else {
+                nnGraph = null;
+                drawNN(null, null);
+            }
+        } catch (e) {
+            nnGraph = null; drawNN(null, null);
+        }
+    }
+    $('reloadNNBtn').addEventListener('click', loadNNGraph);
 
-				$('run-pill').innerHTML = 'Run: <span class="mono small">' + (m.run_dir || '-') + '</span>';
+    function startNNSSE() {
+        try { if (sseNN) sseNN.close(); } catch (_) { }
+        sseNN = new EventSource('/stream/nn');
+        sseNN.onmessage = (e) => {
+            if (!e || !e.data) return;
+            try {
+                const row = JSON.parse(e.data);
+                if (row.type === 'nn_stats') {
+                    $('nnStats').textContent = JSON.stringify(row, null, 2);
+                    drawNN(nnGraph, row);
+                }
+            } catch { }
+        };
+    }
 
-				const useShort = ($('sideSelect').value === 'short');
-				const acc = useShort ? (m.accuracy_short ?? m.accuracy) : (m.accuracy_long ?? m.accuracy);
-				const auc = useShort ? (m.roc_auc_short ?? m.roc_auc) : (m.roc_auc_long ?? m.roc_auc);
-				const cbalance = useShort ? (m.class_balance_short ?? m.class_balance) : (m.class_balance_long ?? m.class_balance);
-				const kvs = $('metrics');
-				const br = useShort ? (m.backtest_pred_short ?? m.backtest_pred) : (m.backtest_pred_long ?? m.backtest_pred);
+    $('trainBtn').addEventListener('click', async () => {
+        const btn = $('trainBtn'); btn.disabled = true;
+        $('trainResult').textContent = 'Training…';
+        const payload = {
+            ticker: $('ticker').value.trim(),
+            interval: $('interval').value,
+            max_iter: parseInt($('max_iter').value || '300', 10),
+            mode: $('mode').value,
+            pine_mode: $('pine_mode').value,
+            aggressiveness: $('aggr').value,
+            sides: $('sides').value,
+            source: $('source').value,
+            merge_sources: $('merge_sources').checked,
+            use_fundamentals: $('use_fa').checked
+        };
+        const et = $('entry_thr').value.trim(); if (et) payload.entry_thr = parseFloat(et);
+        const zt = $('z_thr').value.trim(); if (zt) payload.z_thr = parseFloat(zt);
+        const vk = $('vol_k').value.trim(); if (vk) payload.vol_k = parseFloat(vk);
 
-				const rows = [
-					['Run Dir', m.run_dir || '-'],
-					['Samples', (m.n_samples ?? '-')],
-					['Accuracy', (+acc || 0).toFixed(3)],
-					['ROC AUC', (+auc || 0).toFixed(3)],
-					['Class 0', cbalance ? (cbalance['NO(0)'] ?? cbalance['NO-ENTRY(0)'] ?? '-') : '-'],
-					['Class 1', cbalance ? (cbalance['YES(1)'] ?? cbalance['ENTRY(1)'] ?? '-') : '-'],
-					['Features', (m.features || []).join(', ') || '-'],
-					['Pred Return', (br?.return_pct ?? 0).toFixed(2) + '%'],
-					['Pred Win', (br?.win_rate_pct ?? 0).toFixed(1) + '%']
-				];
-				kvs.innerHTML = rows.map(([k, v]) => (
-					'<div class="kv"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'
-				)).join('');
+        const rm = $('rangeMode').value;
+        if (rm === 'period') { payload.period = $('period').value; }
+        else { payload.start = $('start').value || null; payload.end = $('end').value || null; }
 
-				$('updated').textContent = 'updated: ' + (m.time_utc || new Date().toISOString());
-				const s = m.ingest_stats || {};
-				$('ingest').textContent = 'webhooks: TV=' + (s.tradingview || 0) + ' • RH=' + (s.robinhood || 0) + ' • WB=' + (s.webull || 0) + ' • candles=' + (s.candles || 0) + ' • feat=' + (s.features || 0);
+        try {
+            const r = await fetch('/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const txt = await r.text(); let j;
+            try { j = JSON.parse(txt); } catch (_) { throw new Error(`HTTP ${r.status} ${r.statusText} - ${txt.slice(0, 200)}`); }
+            if (!r.ok || !j.ok) throw new Error(j.detail || j.reason || 'Train failed');
+            $('trainResult').textContent = `Done • acc=${j.train_acc} • n=${j.n}`;
+            refreshArtifacts(); fetchMetrics(); startTrainSSE(); startNNSSE();
+        } catch (err) {
+            $('trainResult').textContent = 'Error: ' + (err.message || err);
+        } finally {
+            btn.disabled = false;
+        }
+    });
 
-				refreshArtifacts();
-			} catch (e) {
-                            $('metrics').innerHTML = '<div class="nc-text-muted nc-text-small">No metrics yet or error: ' + (e.message || e) + '</div>';
-			}
-		}
-		$('refreshBtn').addEventListener('click', (e) => { e.preventDefault(); fetchMetrics(); loadGPU(); });
+    $('idleStartBtn').addEventListener('click', async () => {
+        const name = $('idle_name').value.trim() || 'idle';
+        let tickers = []; try { tickers = JSON.parse($('idle_tickers').value.trim() || '[]'); } catch (_) { }
+        const body = {
+            name, tickers,
+            every_sec: parseInt($('idle_every').value || '3600', 10),
+            period: $('idle_period').value,
+            interval: $('idle_interval').value,
+            mode: $('idle_mode').value,
+            pine_mode: $('idle_pine').value,
+            source: $('idle_source').value,
+            merge_sources: $('idle_merge').checked,
+            use_fundamentals: $('idle_fa').checked
+        };
+        const r = await fetch('/idle/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        $('idleStatus').textContent = await r.text();
+    });
+    $('idleStopBtn').addEventListener('click', async () => {
+        const name = $('idle_name').value.trim() || 'idle';
+        const r = await fetch('/idle/stop?name=' + encodeURIComponent(name), { method: 'POST' });
+        $('idleStatus').textContent = await r.text();
+    });
+    $('idleStatusBtn').addEventListener('click', async () => {
+        const r = await fetch('/idle/status', { cache: 'no-store' }); $('idleStatus').textContent = await r.text();
+    });
 
-		// ---- SSE Training Log & Equity Sparkline ----
-		const logEl = $('log');
-		const eqCanvas = $('equityCanvas');
-		const eqCtx = eqCanvas.getContext('2d');
-		const eqPoints = []; // {t: Date, v: Number}
-		let sseTrain = null;
+    $('multiBtn').addEventListener('click', async () => {
+        let tickers = []; try { tickers = JSON.parse($('multi_tickers').value.trim() || '[]'); } catch (_) { }
+        const body = {
+            tickers,
+            period: $('multi_period').value,
+            interval: $('multi_interval').value,
+            max_iter: parseInt($('multi_max').value || '250', 10),
+            pine_mode: $('multi_pine').value,
+            source: $('multi_source').value,
+            merge_sources: $('multi_merge').checked,
+            use_fundamentals: $('multi_fa').checked
+        };
+        const r = await fetch('/train/multi', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        $('multiOut').textContent = await r.text();
+    });
 
-		function drawSparkline() {
-			const W = eqCanvas.width, H = eqCanvas.height;
-			eqCtx.clearRect(0, 0, W, H);
-			if (!eqPoints.length) return;
-			const minV = Math.min(...eqPoints.map(p => p.v));
-			const maxV = Math.max(...eqPoints.map(p => p.v));
-			const rng = (maxV - minV) || 1;
-			eqCtx.beginPath();
-			eqPoints.forEach((p, i) => {
-				const x = (i / Math.max(1, eqPoints.length - 1)) * (W - 20) + 10;
-				const y = H - 10 - ((p.v - minV) / rng) * (H - 20);
-				if (i === 0) eqCtx.moveTo(x, y); else eqCtx.lineTo(x, y);
-			});
-			eqCtx.lineWidth = 2;
-			eqCtx.strokeStyle = '#78d0ff';
-			eqCtx.stroke();
-		}
-
-		function addTradeRow(row) {
-			const body = document.querySelector('#tradesTable tbody');
-			const tr = document.createElement('tr');
-			const pnl = (row.type === 'trade_close' && typeof row.pnl === 'number') ? row.pnl.toFixed(2) : '';
-			tr.innerHTML = `<td>${row.t?.slice(0, 19) || '-'}</td>
-					  <td>${(row.side || '').toUpperCase() || (row.type === 'trade_open' ? 'OPEN' : 'CLOSE')}</td>
-					  <td>${(row.price ?? '').toFixed ? row.price.toFixed(2) : (row.price ?? '')}</td>
-					  <td>${pnl}</td>
-					  <td>${row.reason || ''}</td>`;
-			body.prepend(tr);
-		}
-
-		function wantsShort() { return ($('sideSelect').value === 'short'); }
-
-		function startTrainSSE() {
-			try { if (sseTrain) sseTrain.close(); } catch (_) { }
-			sseTrain = new EventSource('/stream/training');
-			sseTrain.onmessage = (e) => {
-				if (!e || !e.data) return;
-				try {
-					const row = JSON.parse(e.data);
-					// append raw
-					logEl.textContent += (row.phase ? ('[' + row.phase + '] ') : '') + JSON.stringify(row) + '\n';
-					logEl.scrollTop = logEl.scrollHeight;
-
-					const chosen = wantsShort() ? 'PredShort' : 'PredLong';
-					const matchesChosen = (row.entry_col === chosen) || (!row.entry_col && chosen === 'PredLong' && row.type === 'equity');
-
-					if (row.type === 'equity' && matchesChosen) {
-						const v = Number(row.equity);
-						if (Number.isFinite(v)) {
-							eqPoints.push({ t: new Date(row.t || Date.now()), v });
-							if (eqPoints.length > 800) eqPoints.shift();
-							drawSparkline();
-						}
-					}
-					if ((row.type === 'trade_open' || row.type === 'trade_close') && matchesChosen) {
-						addTradeRow(row);
-					}
-					if (row.phase === 'backtest:done') { fetchMetrics(); }
-				} catch {
-					// non-JSON line
-					logEl.textContent += e.data + '\n';
-				}
-			};
-			sseTrain.onerror = () => {/* browser auto-retries */ }
-		}
-
-		// ---- NN Graph & SSE ----
-		const nnCanvas = $('nnCanvas');
-		const nnCtx = nnCanvas.getContext('2d');
-		let nnGraph = null;
-		let sseNN = null;
-
-		function drawNN(graph, stats) {
-			nnCtx.clearRect(0, 0, nnCanvas.width, nnCanvas.height);
-			if (!graph || !graph.layers || !graph.layers.length) {
-				nnCtx.fillStyle = '#7f96b2';
-				nnCtx.font = '14px ui-monospace, monospace';
-				nnCtx.fillText('NN graph not available yet…', 12, 22);
-				return;
-			}
-			const W = nnCanvas.width, H = nnCanvas.height;
-			const L = graph.layers.length;
-			const xStep = (W - 60) / Math.max(1, L - 1);
-			const radius = 7;
-			const pos = [];
-			let maxNodes = Math.max(...graph.layers.map(l => l.size || 1));
-
-			graph.layers.forEach((layer, li) => {
-				const n = layer.size || 1;
-				const yStep = (H - 40) / Math.max(1, n - 1);
-				const xs = 30 + li * xStep;
-				for (let i = 0; i < n; i++) {
-					const ys = 20 + (n === 1 ? (H / 2 - 20) : i * yStep);
-					pos.push({ li, i, x: xs, y: ys });
-				}
-			});
-
-			nnCtx.globalAlpha = .25;
-			for (let li = 0; li < L - 1; li++) {
-				const from = pos.filter(p => p.li === li);
-				const to = pos.filter(p => p.li === li + 1);
-				from.forEach(f => {
-					to.forEach(t => {
-						nnCtx.beginPath();
-						nnCtx.moveTo(f.x, f.y);
-						nnCtx.lineTo(t.x, t.y);
-						nnCtx.strokeStyle = '#3a86ff';
-						nnCtx.stroke();
-					});
-				});
-			}
-			nnCtx.globalAlpha = 1.0;
-			pos.forEach(p => {
-				nnCtx.beginPath();
-				nnCtx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-				nnCtx.fillStyle = '#9bd0ff';
-				nnCtx.fill();
-				nnCtx.strokeStyle = '#1f2a3a';
-				nnCtx.stroke();
-			});
-
-			nnCtx.fillStyle = '#9fb8d6';
-			nnCtx.font = '12px ui-monospace, monospace';
-			nnCtx.fillText((graph.title || 'NN') + ' • ' + (graph.model || '-'), 8, 14);
-			if (stats) {
-				nnCtx.fillStyle = '#b9cee3';
-				nnCtx.fillText(`epoch ${stats.epoch ?? '-'}  loss ${stats.loss?.toFixed?.(4) ?? '-'}`, 8, H - 8);
-			}
-		}
-
-		async function loadNNGraph() {
-			try {
-				const r = await fetch('/nn/graph', { cache: 'no-store' });
-				const j = await r.json();
-				if (j.ok) {
-					nnGraph = j.graph;
-					drawNN(nnGraph, null);
-				} else {
-					nnGraph = null;
-					drawNN(null, null);
-				}
-			} catch (e) {
-				nnGraph = null; drawNN(null, null);
-			}
-		}
-		$('reloadNNBtn').addEventListener('click', loadNNGraph);
-
-		function startNNSSE() {
-			try { if (sseNN) sseNN.close(); } catch (_) { }
-			sseNN = new EventSource('/stream/nn');
-			sseNN.onmessage = (e) => {
-				if (!e || !e.data) return;
-				try {
-					const row = JSON.parse(e.data);
-					if (row.type === 'nn_stats') {
-						$('nnStats').textContent = JSON.stringify(row, null, 2);
-						drawNN(nnGraph, row);
-					}
-				} catch { }
-			};
-		}
-
-		// ---- Training actions ----
-		$('trainBtn').addEventListener('click', async () => {
-			const btn = $('trainBtn'); btn.disabled = true;
-			$('trainResult').textContent = 'Training…';
-			const payload = {
-				ticker: $('ticker').value.trim(),
-				interval: $('interval').value,
-				max_iter: parseInt($('max_iter').value || '300', 10),
-				mode: $('mode').value,
-				pine_mode: $('pine_mode').value,
-				aggressiveness: $('aggr').value,
-				sides: $('sides').value,
-				source: $('source').value,
-				merge_sources: $('merge_sources').checked,
-				use_fundamentals: $('use_fa').checked
-			};
-			const et = $('entry_thr').value.trim(); if (et) payload.entry_thr = parseFloat(et);
-			const zt = $('z_thr').value.trim(); if (zt) payload.z_thr = parseFloat(zt);
-			const vk = $('vol_k').value.trim(); if (vk) payload.vol_k = parseFloat(vk);
-
-			const rm = $('rangeMode').value;
-			if (rm === 'period') { payload.period = $('period').value; }
-			else { payload.start = $('start').value || null; payload.end = $('end').value || null; }
-
-			try {
-				const r = await fetch('/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-				const txt = await r.text(); let j;
-				try { j = JSON.parse(txt); } catch (_) { throw new Error(`HTTP ${r.status} ${r.statusText} - ${txt.slice(0, 200)}`); }
-				if (!r.ok || !j.ok) throw new Error(j.detail || j.reason || 'Train failed');
-				$('trainResult').textContent = `Done • acc=${j.train_acc} • n=${j.n}`;
-				refreshArtifacts(); fetchMetrics(); startTrainSSE(); startNNSSE();
-			} catch (err) {
-				$('trainResult').textContent = 'Error: ' + (err.message || err);
-			} finally {
-				btn.disabled = false;
-			}
-		});
-
-		// ---- Idle controls ----
-		$('idleStartBtn').addEventListener('click', async () => {
-			const name = $('idle_name').value.trim() || 'idle';
-			let tickers = []; try { tickers = JSON.parse($('idle_tickers').value.trim() || '[]'); } catch (_) { }
-			const body = {
-				name, tickers,
-				every_sec: parseInt($('idle_every').value || '3600', 10),
-				period: $('idle_period').value,
-				interval: $('idle_interval').value,
-				mode: $('idle_mode').value,
-				pine_mode: $('idle_pine').value,
-				source: $('idle_source').value,
-				merge_sources: $('idle_merge').checked,
-				use_fundamentals: $('idle_fa').checked
-			};
-			const r = await fetch('/idle/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-			$('idleStatus').textContent = await r.text();
-		});
-		$('idleStopBtn').addEventListener('click', async () => {
-			const name = $('idle_name').value.trim() || 'idle';
-			const r = await fetch('/idle/stop?name=' + encodeURIComponent(name), { method: 'POST' });
-			$('idleStatus').textContent = await r.text();
-		});
-		$('idleStatusBtn').addEventListener('click', async () => {
-			const r = await fetch('/idle/status', { cache: 'no-store' }); $('idleStatus').textContent = await r.text();
-		});
-
-		// ---- Multi train ----
-		$('multiBtn').addEventListener('click', async () => {
-			let tickers = []; try { tickers = JSON.parse($('multi_tickers').value.trim() || '[]'); } catch (_) { }
-			const body = {
-				tickers,
-				period: $('multi_period').value,
-				interval: $('multi_interval').value,
-				max_iter: parseInt($('multi_max').value || '250', 10),
-				pine_mode: $('multi_pine').value,
-				source: $('multi_source').value,
-				merge_sources: $('multi_merge').checked,
-				use_fundamentals: $('multi_fa').checked
-			};
-			const r = await fetch('/train/multi', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-			$('multiOut').textContent = await r.text();
-		});
-
-		// ---- Init ----
-		window.addEventListener('resize', () => { drawSparkline(); drawNN(nnGraph, null); });
-		loadGPU();
-		fetchMetrics();
-		refreshArtifacts();
-		startTrainSSE();
-		loadNNGraph();
-		startNNSSE();
-		setInterval(fetchMetrics, 4000);
-	</script>
-</body>
-</html>
+    window.addEventListener('resize', () => { updateEquityChart(); drawNN(nnGraph, null); });
+    loadGPU();
+    fetchMetrics();
+    refreshArtifacts();
+    startTrainSSE();
+    loadNNGraph();
+    startNNSSE();
+    setInterval(fetchMetrics, 4000);
+</script>
+{% endblock %}

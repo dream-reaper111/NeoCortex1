@@ -1,3 +1,178 @@
+{% extends 'base.html' %}
+{% block title %}NeoCortex – Secure Login{% endblock %}
+{% block body_class %}auth-layout{% endblock %}
+{% block content %}
+<section class="auth-page">
+    <div class="auth-shell">
+        <article class="auth-card" data-admin="false">
+            <div class="auth-header">
+                <span class="nc-pill">Member Access</span>
+                <h1>Welcome back</h1>
+                <p class="auth-subtitle">Sign in to monitor AI trading agents, manage webhooks, and sync with your funding accounts.</p>
+            </div>
+            <div id="notice" class="auth-notice" hidden></div>
+            <form id="loginForm" class="auth-form">
+                <div class="auth-field">
+                    <label for="username">Username</label>
+                    <input id="username" name="username" type="text" autocomplete="username" placeholder="yourname" required />
+                </div>
+                <div class="auth-field">
+                    <label for="password">Password</label>
+                    <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+                </div>
+                <div class="auth-options">
+                    <label class="nc-checkbox" for="rememberMe"><input id="rememberMe" type="checkbox" /> Remember me</label>
+                    <a href="#" class="auth-links">Forgot password?</a>
+                </div>
+                <button type="submit" id="loginBtn" class="nc-btn">Sign In</button>
+            </form>
+            <div class="auth-actions">
+                <button type="button" class="nc-btn nc-btn--ghost" id="resetBtn">Reset Password</button>
+                <div id="message" class="auth-message"></div>
+            </div>
+            <footer class="auth-footer">
+                Credentials are encrypted and secured with PBKDF2-SHA512. Contact the NeoCortex operations team for new access requests.
+            </footer>
+        </article>
+    </div>
+</section>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+    const TOKEN_KEY = 'nc_token';
+    const USERNAME_KEY = 'nc_user';
+    const COOKIE_NAME_KEY = 'nc_cookie';
+    const REFRESH_KEY = 'nc_refresh';
+    const noticeEl = document.getElementById('notice');
+
+    function showNotice(text, type) {
+        if (!text) {
+            noticeEl.hidden = true;
+            noticeEl.textContent = '';
+            noticeEl.className = 'auth-notice';
+            return;
+        }
+        noticeEl.hidden = false;
+        noticeEl.textContent = text;
+        noticeEl.className = 'auth-notice' + (type ? ' ' + type : '');
+    }
+
+    function setMessage(text, type) {
+        const el = document.getElementById('message');
+        el.textContent = text || '';
+        el.className = 'auth-message' + (type ? ' ' + type : '');
+    }
+
+    function resolveNext(candidate) {
+        if (!candidate) { return '/dashboard'; }
+        try {
+            const parsed = new URL(candidate, window.location.origin);
+            if (parsed.origin !== window.location.origin) {
+                return '/dashboard';
+            }
+            return parsed.pathname + parsed.search + parsed.hash;
+        } catch (_) {
+            return '/dashboard';
+        }
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const rawNext = params.get('next');
+    const nextUrl = resolveNext(rawNext);
+
+    const sanitizedParams = new URLSearchParams();
+    if (rawNext) {
+        sanitizedParams.set('next', rawNext);
+    }
+    const sensitiveKeys = ['username', 'password'];
+    let scrubbed = false;
+    for (const key of sensitiveKeys) {
+        if (params.has(key)) {
+            scrubbed = true;
+            break;
+        }
+    }
+    const sanitizedQuery = sanitizedParams.toString();
+    const desiredSearch = sanitizedQuery ? `?${sanitizedQuery}` : '';
+    if (scrubbed || window.location.search !== desiredSearch) {
+        const newUrl = desiredSearch ? `${window.location.pathname}${desiredSearch}` : window.location.pathname;
+        window.history.replaceState(null, document.title, newUrl);
+    }
+
+    if (localStorage.getItem(TOKEN_KEY)) {
+        window.location.replace(nextUrl);
+    }
+
+    if (!localStorage.getItem(COOKIE_NAME_KEY)) {
+        localStorage.setItem(COOKIE_NAME_KEY, 'session_token');
+    }
+
+    const loginForm = document.getElementById('loginForm');
+    const usernameEl = document.getElementById('username');
+    const passwordEl = document.getElementById('password');
+    const loginBtn = document.getElementById('loginBtn');
+    const resetBtn = document.getElementById('resetBtn');
+
+    async function sendAuth(path, body) {
+        const resp = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(body)
+        });
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); }
+        catch (_) { throw new Error(`HTTP ${resp.status} ${resp.statusText}`); }
+        if (!resp.ok || !data.ok) {
+            throw new Error(data.detail || data.reason || 'Request failed');
+        }
+        return data;
+    }
+
+    loginForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const username = usernameEl.value.trim().toLowerCase();
+        const password = passwordEl.value;
+        if (!username || !password) {
+            setMessage('Enter a username and password to continue.', 'error');
+            return;
+        }
+        loginBtn.disabled = true;
+        resetBtn.disabled = true;
+        setMessage('Authenticating…');
+        try {
+            const data = await sendAuth('/login', { username, password });
+            const token = data.access_token || data.token;
+            if (!token) {
+                throw new Error('Login response missing access token');
+            }
+            localStorage.setItem(TOKEN_KEY, token);
+            localStorage.setItem(USERNAME_KEY, data.username || username);
+            if (data.refresh_token) {
+                localStorage.setItem(REFRESH_KEY, data.refresh_token);
+            } else {
+                localStorage.removeItem(REFRESH_KEY);
+            }
+            const cookieName = data.session_cookie || localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
+            localStorage.setItem(COOKIE_NAME_KEY, cookieName);
+            setMessage('Success! Redirecting…', 'success');
+            window.location.replace(nextUrl);
+        } catch (err) {
+            setMessage(err.message || 'Login failed', 'error');
+        } finally {
+            loginBtn.disabled = false;
+            resetBtn.disabled = false;
+        }
+    });
+
+    usernameEl.focus();
+
+    resetBtn.addEventListener('click', () => {
+        showNotice('Password resets are handled by your administrator. Please reach out to your support channel.', 'error');
+    });
+</script>
+{% endblock %}
 <!doctype html>
 <html lang="en">
 <head>
