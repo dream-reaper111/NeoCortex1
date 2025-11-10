@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Alpaca Webhook Endpoint</title>
+    <link rel="stylesheet" href="enduserapp/style.css" />
     <style>
       :root {
         color-scheme: light dark;
@@ -15,21 +16,21 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: radial-gradient(circle at 10% 20%, rgba(63,94,251,0.15), transparent 55%),
-                    radial-gradient(circle at 90% 10%, rgba(252,70,107,0.15), transparent 55%),
-                    radial-gradient(circle at 50% 80%, rgba(56,189,248,0.12), transparent 60%),
-                    #0f172a;
+        background: radial-gradient(circle at -5% -10%, rgba(217,70,239,0.28), transparent 55%),
+                    radial-gradient(circle at 88% 5%, rgba(99,102,241,0.25), transparent 55%),
+                    radial-gradient(circle at 25% 90%, rgba(236,72,153,0.15), transparent 60%),
+                    linear-gradient(135deg, #060014, #0b0320 48%, #05000f);
         min-height: 100vh;
       }
       .card {
         width: min(680px, 100%);
-        background: rgba(15, 23, 42, 0.85);
-        border: 1px solid rgba(148, 163, 184, 0.25);
-        border-radius: 18px;
-        padding: 2.25rem;
-        box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.5);
-        backdrop-filter: blur(14px);
-        color: #e2e8f0;
+        background: linear-gradient(145deg, rgba(32,12,60,0.92), rgba(16,4,33,0.9));
+        border: 1px solid rgba(192, 132, 252, 0.32);
+        border-radius: 22px;
+        padding: 2.5rem;
+        box-shadow: 0 32px 70px -18px rgba(10, 2, 24, 0.65);
+        backdrop-filter: blur(18px);
+        color: #f5e9ff;
       }
       h1 {
         margin-top: 0;
@@ -39,18 +40,19 @@
       p.description {
         font-size: 1rem;
         line-height: 1.55;
-        color: rgba(226, 232, 240, 0.8);
+        color: rgba(224, 196, 255, 0.78);
         margin-bottom: 1.75rem;
       }
       .url-block {
-        background: rgba(15, 23, 42, 0.75);
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        border-radius: 14px;
+        background: rgba(14, 4, 30, 0.78);
+        border: 1px solid rgba(192, 132, 252, 0.35);
+        border-radius: 16px;
         padding: 1.2rem 1.4rem;
         margin-bottom: 1.6rem;
         word-break: break-all;
         font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         font-size: 0.95rem;
+        box-shadow: 0 20px 40px -20px rgba(10, 2, 24, 0.55);
       }
       .actions {
         display: flex;
@@ -62,22 +64,22 @@
         display: inline-flex;
         align-items: center;
         gap: 0.5rem;
-        background: linear-gradient(135deg, #6366f1, #8b5cf6);
-        color: #f8fafc;
+        background: linear-gradient(135deg, rgba(236,72,153,0.95), rgba(168,85,247,0.95) 55%, rgba(129,140,248,0.92));
+        color: #fff7ff;
         padding: 0.75rem 1.3rem;
         border-radius: 999px;
         font-weight: 600;
-        box-shadow: 0 12px 25px -12px rgba(99, 102, 241, 0.6);
+        box-shadow: 0 18px 34px -16px rgba(168, 85, 247, 0.55);
         transition: transform 0.2s ease, box-shadow 0.2s ease;
       }
       .actions a:hover {
         transform: translateY(-2px);
-        box-shadow: 0 20px 35px -18px rgba(99, 102, 241, 0.75);
+        box-shadow: 0 26px 40px -18px rgba(168, 85, 247, 0.65);
       }
       footer {
         margin-top: 2rem;
         font-size: 0.85rem;
-        color: rgba(148, 163, 184, 0.75);
+        color: rgba(224, 196, 255, 0.65);
       }
       @media (max-width: 540px) {
         body {
@@ -170,6 +172,9 @@ body {
   height: 100%;
   min-height: 100%;
   padding: 1rem;
+  background: radial-gradient(circle at -10% -20%, rgba(217,70,239,0.26), transparent 55%),
+              radial-gradient(circle at 90% 5%, rgba(99,102,241,0.22), transparent 55%),
+              linear-gradient(135deg, #060014, #0b0320 50%, #05000f);
 }
 pre {
   margin-bottom: 0;
@@ -222,54 +227,52 @@ p {
 }
 @media (prefers-color-scheme: dark) {
   body {
-    background: #171823;
-    color: #f3f4f6;
+    color: #f5e9ff;
   }
   body > div > div:first-child {
-    background: #242533;
-    border: 1px solid #3b3f4f;
-    box-shadow: rgba(0, 0, 0, 0.15) 0 1px 13px 0, rgba(0, 0, 0, 0.3) 0 4px 6px -4px,
-      rgba(0, 0, 0, 0.3) 0 10px 15px -3px;
+    background: linear-gradient(140deg, rgba(32,12,60,0.92), rgba(16,4,33,0.9));
+    border: 1px solid rgba(192, 132, 252, 0.32);
+    box-shadow: rgba(10, 2, 24, 0.5) 0 20px 55px -18px;
   }
   a,
   a:visited {
-    color: #699afc;
+    color: #c084fc;
   }
   pre {
-    background: #171823;
-    border: 1px solid #3b3f4f;
+    background: rgba(14, 4, 30, 0.7);
+    border: 1px solid rgba(192, 132, 252, 0.28);
   }
   p {
-    color: rgba(255, 255, 255, 0.7);
+    color: rgba(224, 196, 255, 0.78);
   }
   body > div > div:last-child {
-    color: rgba(249, 250, 251, 0.6);
+    color: rgba(224, 196, 255, 0.6);
   }
   body > div > div:last-child > svg {
-    color: #699afc;
+    color: #c084fc;
   }
   h1 {
-    color: #fff;
+    color: #f5e9ff;
   }
 }
 @media (prefers-color-scheme: light) {
   body {
-    background: hsl(216 18% 98%);
+    background: linear-gradient(135deg, #f9f5ff, #ede9fe 60%, #faf5ff);
     color: #242533;
   }
   body > div > div:first-child {
-    background: #fff;
-    border: 1px solid hsl(222 12% 83.9%);
+    background: #ffffff;
+    border: 1px solid rgba(192, 132, 252, 0.2);
     box-shadow: rgba(0, 0, 0, 0.05) 0 1px 13px 0, rgba(0, 0, 0, 0.1) 0 4px 6px -4px,
       rgba(0, 0, 0, 0.1) 0 10px 15px -3px;
   }
   a,
   a:visited {
-    color: #2e54ea;
+    color: #7c3aed;
   }
   pre {
-    background: hsla(226, 8%, 26.5%, 0.05);
-    border: 1px solid hsl(222 12% 83.9%);
+    background: rgba(125, 86, 199, 0.05);
+    border: 1px solid rgba(192, 132, 252, 0.2);
   }
   p {
     color: rgba(23, 24, 35, 0.75);
@@ -278,7 +281,7 @@ p {
     color: rgba(23, 24, 35, 0.6);
   }
   body > div > div:last-child > svg {
-    color: #2e54ea;
+    color: #7c3aed;
   }
   h1 {
     color: #242533;
