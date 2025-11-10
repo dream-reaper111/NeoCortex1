@@ -1,4 +1,4 @@
-"""JWT helpers and authentication dependencies for the Neo Cortex UI."""
+"""JWT helpers and authentication dependencies for the NeoCortex platform."""
 
 from __future__ import annotations
 
@@ -6,13 +6,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import jwt
-from fastapi import HTTPException, Request
-
-
-HTTP_401_UNAUTHORIZED = 401
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
-from starlette import status
+
+HTTP_401_UNAUTHORIZED = 401
 
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login", auto_error=False)
 
@@ -36,7 +33,6 @@ def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta]
     return jwt.encode(payload, server.JWT_SECRET_KEY, algorithm=server.JWT_ALGORITHM)
 
 
-async def get_current_user(request: Request) -> Dict[str, Any]:
 async def get_current_user(
     request: Request, token: Optional[str] = Depends(_oauth2_scheme)
 ) -> Dict[str, Any]:
@@ -44,23 +40,20 @@ async def get_current_user(
 
     server = _server_module()
     payload = getattr(request.state, "access_token_payload", None)
-    raw_token: Optional[str] = None
-    authorization = request.headers.get("Authorization")
-    if authorization:
-        scheme, _, credentials = authorization.partition(" ")
-        if scheme.lower() == "bearer" and credentials:
-            raw_token = credentials.strip()
+    raw_token: Optional[str] = token
+
+    if raw_token is None:
+        authorization = request.headers.get("Authorization")
+        if authorization:
+            scheme, _, credentials = authorization.partition(" ")
+            if scheme.lower() == "bearer" and credentials:
+                raw_token = credentials.strip()
     if raw_token is None:
         raw_token = request.cookies.get(server.SESSION_COOKIE_NAME)
-    raw_token: Optional[str] = token or request.cookies.get(server.SESSION_COOKIE_NAME)
 
     if payload is None:
         if not raw_token:
-            raise HTTPException(
-                status_code=HTTP_401_UNAUTHORIZED,
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated",
-            )
+            raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Not authenticated")
         payload = server._decode_access_token(raw_token)
     elif raw_token is None:
         raw_token = request.cookies.get(server.SESSION_COOKIE_NAME)
@@ -68,13 +61,11 @@ async def get_current_user(
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
 
     try:
         user = server._load_user_record(int(user_id))
     except Exception as exc:  # pragma: no cover - delegated to server helper
         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Unknown user") from exc
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown user") from exc
 
     request.state.current_user = user
     request.state.access_token_payload = payload

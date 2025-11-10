@@ -133,6 +133,7 @@ class Request:
         self.url = RequestURL(scheme=scheme, netloc=host, path=self.path, query=self.query)
         self.client = client
         self.cookies = self._parse_cookies(self.headers.get("cookie"))
+        self.state = SimpleNamespace()
 
     @staticmethod
     def _parse_cookies(header_value: Optional[str]) -> Dict[str, str]:
