@@ -1,4 +1,4 @@
-"""System and security enhancements for NeoCortex."""
+"""Security and reliability components used by the quant terminal."""
 
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ class AuditLog:
             durations.append((current.timestamp - prev.timestamp).total_seconds())
         sizes = [float(event.payload.get("size", 0.0)) for event in sorted_events]
         avg_duration = sum(durations) / len(durations) if durations else 0.0
-        avg_volume = sum(sizes) / len(sizes)
+        avg_volume = sum(sizes) / len(sizes) if sizes else 0.0
         anomalies: List[AuditEvent] = []
         for event, size in zip(sorted_events, sizes):
             if avg_volume and size > avg_volume * self.anomaly_threshold:
@@ -149,3 +149,12 @@ class SystemHealthMonitor:
 
     def unhealthy_processes(self) -> List[ProcessStatus]:
         return [status for status in self._statuses.values() if not status.healthy]
+
+
+__all__ = [
+    "APIKeyVault",
+    "AccessControlList",
+    "AuditLog",
+    "ProcessStatus",
+    "SystemHealthMonitor",
+]
