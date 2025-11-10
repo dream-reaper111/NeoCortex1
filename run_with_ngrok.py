@@ -138,21 +138,30 @@ def main() -> None:
     connect_kwargs = {"bind_tls": True}
 
     basic_auth_applied = False
-    basic_auth = os.getenv("NGROK_BASIC_AUTH")
+    basic_auth = (os.getenv("NGROK_BASIC_AUTH") or "").strip()
     if not basic_auth:
         username = os.getenv("NGROK_BASIC_AUTH_USER", "").strip()
         password = os.getenv("NGROK_BASIC_AUTH_PASS", "").strip()
         if username and password:
             basic_auth = f"{username}:{password}"
+        elif username or password:
+            raise RuntimeError(
+                "Both NGROK_BASIC_AUTH_USER and NGROK_BASIC_AUTH_PASS must be provided to enable basic auth."
+            )
 
-    if not basic_auth or ":" not in basic_auth:
-        raise RuntimeError(
-            "NGROK_BASIC_AUTH credentials are required. "
-            "Set NGROK_BASIC_AUTH or NGROK_BASIC_AUTH_USER/NGROK_BASIC_AUTH_PASS before launching the tunnel."
+    if basic_auth:
+        if ":" not in basic_auth:
+            raise RuntimeError(
+                "NGROK_BASIC_AUTH must be in the format 'username:password'."
+            )
+        connect_kwargs["basic_auth"] = basic_auth
+        basic_auth_applied = True
+    else:
+        print(
+            "* NGROK basic auth is not configured; the tunnel will be publicly accessible.\n"
+            "  Set NGROK_BASIC_AUTH or NGROK_BASIC_AUTH_USER/NGROK_BASIC_AUTH_PASS to require credentials.",
+            flush=True,
         )
-
-    connect_kwargs["basic_auth"] = basic_auth
-    basic_auth_applied = True
 
     domain_env = os.getenv("NGROK_DOMAIN")
     domain = _normalize_domain(domain_env)
