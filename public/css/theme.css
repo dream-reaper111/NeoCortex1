@@ -1,8 +1,11 @@
 :root {
+  --neo-primary-start: #2b0049;
+  --neo-primary-end: #6e1b8f;
+  --neo-text-color: #ffffff;
   color-scheme: dark;
-  --nc-gradient: linear-gradient(135deg, #2b0049 0%, #6e1b8f 100%);
+  --nc-gradient: linear-gradient(135deg, var(--neo-primary-start) 0%, var(--neo-primary-end) 100%);
   --nc-panel-sheen: rgba(255, 255, 255, 0.04);
-  --nc-text-primary: #ffffff;
+  --nc-text-primary: var(--neo-text-color);
   --nc-text-muted: rgba(255, 255, 255, 0.72);
   --nc-border-glow: rgba(174, 96, 255, 0.35);
   --nc-panel-backdrop: rgba(23, 5, 38, 0.65);
@@ -21,11 +24,11 @@ html,
 body {
   margin: 0;
   min-height: 100vh;
-  background-image: var(--nc-gradient);
+  background: linear-gradient(135deg, var(--neo-primary-start), var(--neo-primary-end));
   background-attachment: fixed;
   background-size: cover;
   background-repeat: no-repeat;
-  color: var(--nc-text-primary);
+  color: var(--neo-text-color);
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -50,15 +53,22 @@ footer {
   color: inherit;
 }
 
+.card,
+.panel,
+.container {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.3);
+}
+
 .glass-panel,
 .nc-app-shell,
 .auth-card,
-.card,
 .shell,
 .nc-panel,
 .nc-surface {
-  background: linear-gradient(145deg, var(--nc-panel-backdrop), transparent 65%)
-      var(--nc-panel-sheen);
+  background: linear-gradient(145deg, var(--nc-panel-backdrop), transparent 65%) var(--nc-panel-sheen);
   background-blend-mode: lighten;
   backdrop-filter: blur(var(--nc-blur));
   border: 1px solid var(--nc-border-glow);
