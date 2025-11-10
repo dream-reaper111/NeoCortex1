@@ -862,7 +862,7 @@ WHOP_API_KEY = (os.getenv("WHOP_API_KEY") or "").strip() or None
 WHOP_API_BASE = (os.getenv("WHOP_API_BASE") or "https://api.whop.com").rstrip("/")
 WHOP_PORTAL_URL = (os.getenv("WHOP_PORTAL_URL") or "").strip() or None
 WHOP_SESSION_TTL = int(os.getenv("WHOP_SESSION_TTL", "900"))
-ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "the3istheD3T").strip()
+ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "").strip()
 ADMIN_PORTAL_BASIC_USER = (os.getenv("ADMIN_PORTAL_BASIC_USER") or "").strip()
 ADMIN_PORTAL_BASIC_PASS = (os.getenv("ADMIN_PORTAL_BASIC_PASS") or "").strip()
 ADMIN_PORTAL_BASIC_REALM = (
@@ -876,6 +876,38 @@ DISABLE_ACCESS_LOGS = _env_flag("DISABLE_ACCESS_LOGS", default=True)
 ADMIN_PORTAL_HTTP_BASIC = HTTPBasic(auto_error=False)
 if DISABLE_ACCESS_LOGS:
     logging.getLogger("uvicorn.access").disabled = True
+
+ALPACA_WEBHOOK_SECRET = (os.getenv("ALPACA_WEBHOOK_SECRET") or "").strip()
+ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS = _env_flag(
+    "ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS", default=False
+)
+ALPACA_WEBHOOK_SIGNATURE_HEADER = (
+    os.getenv("ALPACA_WEBHOOK_SIGNATURE_HEADER", "X-Webhook-Signature") or "X-Webhook-Signature"
+).strip()
+ALPACA_WEBHOOK_TIMESTAMP_HEADER = (
+    os.getenv("ALPACA_WEBHOOK_TIMESTAMP_HEADER", "X-Webhook-Timestamp") or "X-Webhook-Timestamp"
+).strip()
+ALPACA_WEBHOOK_TOLERANCE_SECONDS = max(
+    0,
+    int(os.getenv("ALPACA_WEBHOOK_TOLERANCE_SECONDS", "300")),
+)
+ALPACA_WEBHOOK_REPLAY_CAPACITY = max(
+    1,
+    int(os.getenv("ALPACA_WEBHOOK_REPLAY_CAPACITY", "2048")),
+)
+ALPACA_WEBHOOK_TEST_REQUIRE_AUTH = _env_flag(
+    "ALPACA_WEBHOOK_TEST_REQUIRE_AUTH", default=True
+)
+
+if not ADMIN_PRIVATE_KEY:
+    logger.warning(
+        "ADMIN_PRIVATE_KEY is not configured; the /register admin bootstrap endpoint will refuse requests until it is set."
+    )
+
+if not ALPACA_WEBHOOK_SECRET and not ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS:
+    logger.warning(
+        "ALPACA_WEBHOOK_SECRET is not configured. Incoming /alpaca/webhook requests will be rejected until it is provided."
+    )
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -1903,6 +1935,69 @@ def _json(obj: Any, code: int = 200) -> JSONResponse:
     return JSONResponse(obj, status_code=code, headers=_nocache())
 
 
+class _WebhookReplayProtector:
+    """Track recently processed webhook signatures to block replay attempts."""
+
+    def __init__(self, ttl_seconds: int, capacity: int) -> None:
+        self._ttl = max(ttl_seconds, 0)
+        self._capacity = max(capacity, 1)
+        self._seen: Dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def _purge(self, now: float) -> None:
+        if not self._seen or self._ttl <= 0:
+            if self._ttl <= 0:
+                self._seen.clear()
+            return
+        cutoff = now - self._ttl
+        expired = [key for key, ts in self._seen.items() if ts < cutoff]
+        for key in expired:
+            self._seen.pop(key, None)
+
+    def register(self, signature: str) -> bool:
+        """Return ``True`` when the signature is new, ``False`` when replayed."""
+
+        now = time.time()
+        with self._lock:
+            self._purge(now)
+            if signature in self._seen:
+                return False
+            if len(self._seen) >= self._capacity:
+                # Remove the oldest entry to make space for the newest signature.
+                oldest_key = min(self._seen.items(), key=lambda item: item[1])[0]
+                self._seen.pop(oldest_key, None)
+            self._seen[signature] = now
+            return True
+
+
+_alpaca_replay_guard = _WebhookReplayProtector(
+    ALPACA_WEBHOOK_TOLERANCE_SECONDS,
+    ALPACA_WEBHOOK_REPLAY_CAPACITY,
+)
+
+
+def _compute_webhook_signature(secret: str, timestamp: str, body: bytes) -> str:
+    message = timestamp.encode("utf-8") + b"." + body
+    digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
+    return base64.b64encode(digest).decode("ascii")
+
+
+def _parse_webhook_timestamp(raw: str) -> float:
+    cleaned = raw.strip()
+    if not cleaned:
+        raise ValueError("empty timestamp")
+    try:
+        return float(cleaned)
+    except ValueError:
+        try:
+            parsed = datetime.fromisoformat(cleaned)
+        except ValueError as exc:
+            raise ValueError("invalid timestamp") from exc
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+
+
 def _enforce_admin_portal_gate(
     request: Request, credentials: Optional[HTTPBasicCredentials]
 ) -> None:
@@ -2692,7 +2787,9 @@ async def register(request: Request):
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
-    if ADMIN_PRIVATE_KEY and (req.admin_key or "").strip() != ADMIN_PRIVATE_KEY:
+    if not ADMIN_PRIVATE_KEY:
+        return _json({"ok": False, "detail": "admin registration disabled"}, 503)
+    if (req.admin_key or "").strip() != ADMIN_PRIVATE_KEY:
         return _json({"ok": False, "detail": "invalid admin key"}, 403)
     pw_hash, salt = _hash_password_sha2048(req.password)
     try:
@@ -3225,42 +3322,58 @@ def strategy_liquidity_sweeps(ticker: str, session_date: Optional[str] = None, i
 @app.post("/alpaca/webhook")
 async def alpaca_webhook(req: Request):
     '''
-    Receive webhook callbacks from Alpaca. This endpoint accepts any JSON
-    payload and logs it. It returns ``{"ok": True}`` on success. If you set
-    ``ALPACA_WEBHOOK_SECRET`` in your environment, the request\'s header
-    ``X‑Webhook‑Signature`` will be verified against this secret using HMAC
-    SHA‑256. Mismatched signatures return a 400.
+    Receive webhook callbacks from Alpaca. All requests must include a valid
+    ``ALPACA_WEBHOOK_SECRET`` signature unless
+    ``ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS`` is explicitly enabled. The
+    signature is calculated as ``base64(hmac_sha256(secret, f"{timestamp}.{body}"))``
+    and supplied via ``X-Webhook-Signature`` alongside an ``X-Webhook-Timestamp``
+    header to prevent replay attacks.
     '''
+
     body_bytes = await req.body()
     try:
-        payload = await req.json()
+        payload = json.loads(body_bytes.decode("utf-8"))
     except Exception:
         payload = None
-    # optional signature verification
-    secret = os.getenv("ALPACA_WEBHOOK_SECRET")
-    if secret:
-        sig_header = req.headers.get("X-Webhook-Signature")
-        if not sig_header:
+
+    if not ALPACA_WEBHOOK_SECRET and not ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS:
+        return _json({"ok": False, "detail": "webhook secret not configured"}, 503)
+
+    if ALPACA_WEBHOOK_SECRET:
+        signature = req.headers.get(ALPACA_WEBHOOK_SIGNATURE_HEADER)
+        if not signature:
             return _json({"ok": False, "detail": "missing signature"}, 400)
 
-        import hmac, hashlib, base64
+        timestamp_header = req.headers.get(ALPACA_WEBHOOK_TIMESTAMP_HEADER)
+        if not timestamp_header:
+            return _json({"ok": False, "detail": "missing timestamp"}, 400)
 
-    sig_header = req.headers.get("X-Webhook-Signature")
-    if secret:
-        import hmac, hashlib, base64
+        timestamp_header = timestamp_header.strip()
+        if not timestamp_header:
+            return _json({"ok": False, "detail": "missing timestamp"}, 400)
 
-        if not sig_header:
-            return _json({"ok": False, "detail": "missing signature"}, 400)
+        try:
+            timestamp_value = _parse_webhook_timestamp(timestamp_header)
+        except ValueError:
+            return _json({"ok": False, "detail": "invalid timestamp"}, 400)
 
-        if not sig_header:
-            return _json({"ok": False, "detail": "missing signature"}, 400)
+        now = time.time()
+        tolerance = ALPACA_WEBHOOK_TOLERANCE_SECONDS
+        if tolerance and now - timestamp_value > tolerance:
+            return _json({"ok": False, "detail": "stale webhook"}, 400)
+        if tolerance and timestamp_value - now > tolerance:
+            return _json({"ok": False, "detail": "timestamp too far in future"}, 400)
 
-        import hmac, hashlib, base64
-      
-        digest = hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()
-        expected = base64.b64encode(digest).decode()
-        if not hmac.compare_digest(expected, sig_header):
+        expected_signature = _compute_webhook_signature(
+            ALPACA_WEBHOOK_SECRET,
+            timestamp_header,
+            body_bytes,
+        )
+        if not hmac.compare_digest(expected_signature, signature):
             return _json({"ok": False, "detail": "invalid signature"}, 400)
+
+        if tolerance and not _alpaca_replay_guard.register(expected_signature):
+            return _json({"ok": False, "detail": "webhook replay detected"}, 409)
 
     # In a production system you might persist the payload to a database or
     # notify other services. Here we simply print it to stdout.
@@ -3269,7 +3382,24 @@ async def alpaca_webhook(req: Request):
 
 
 @app.post("/alpaca/webhook/test")
-def alpaca_webhook_test(req: AlpacaWebhookTest):
+async def alpaca_webhook_test(
+    req: AlpacaWebhookTest,
+    request: Request,
+    credentials: HTTPBasicCredentials = Depends(ADMIN_PORTAL_HTTP_BASIC),
+):
+    gating_configured = bool(
+        ADMIN_PORTAL_GATE_TOKEN or (ADMIN_PORTAL_BASIC_USER and ADMIN_PORTAL_BASIC_PASS)
+    )
+    if ALPACA_WEBHOOK_TEST_REQUIRE_AUTH:
+        if not gating_configured:
+            raise HTTPException(
+                status_code=503,
+                detail="admin authentication must be configured to use the webhook test endpoint",
+            )
+        _enforce_admin_portal_gate(request, credentials)
+    elif gating_configured:
+        _enforce_admin_portal_gate(request, credentials)
+
     payload = req.raw.copy() if isinstance(req.raw, dict) else {
         "event": req.event,
         "order": {
@@ -3281,16 +3411,15 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
         },
     }
     payload.setdefault("event", req.event)
-    payload.setdefault("timestamp", req.timestamp or datetime.now(timezone.utc).isoformat())
+    timestamp_value = payload.get("timestamp") or req.timestamp
+    if not timestamp_value:
+        timestamp_value = datetime.now(timezone.utc).isoformat()
+    payload["timestamp"] = timestamp_value
 
     body_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     signature = None
-    secret = os.getenv("ALPACA_WEBHOOK_SECRET")
-    if secret:
-        import hmac, hashlib, base64
-
-        digest = hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()
-        signature = base64.b64encode(digest).decode()
+    if ALPACA_WEBHOOK_SECRET:
+        signature = _compute_webhook_signature(ALPACA_WEBHOOK_SECRET, timestamp_value, body_bytes)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     symbol_component = _sanitize_filename_component(req.symbol or "")
