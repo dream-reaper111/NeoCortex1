@@ -45,13 +45,15 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
+import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, tempfile, stat, ipaddress, traceback
+from urllib.parse import quote, urlencode
 import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, tempfile, stat, ipaddress
-from urllib.parse import parse_qs, quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager, suppress
-from typing import Any, Dict, List, Optional, Tuple, Literal, Set, Iterable
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Literal, Set
 from types import SimpleNamespace
 from collections import defaultdict, deque
 
@@ -94,7 +96,14 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when optional depende
 
         async def __call__(self, scope, receive, send):  # pragma: no cover - pass-through behaviour
             await self.app(scope, receive, send)
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    StreamingResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 try:
     from fastapi.templating import Jinja2Templates
@@ -2153,7 +2162,7 @@ def _issue_token_pair(user: Dict[str, Any], *, request: Request) -> Dict[str, An
     }
 
 
-def _set_auth_cookies(response: JSONResponse, tokens: Dict[str, Any]) -> None:
+def _set_auth_cookies(response: Response, tokens: Dict[str, Any]) -> None:
     access_token = tokens["access_token"]
     refresh_token = tokens["refresh_token"]
     response.set_cookie(
@@ -2176,7 +2185,7 @@ def _set_auth_cookies(response: JSONResponse, tokens: Dict[str, Any]) -> None:
     )
 
 
-def _clear_auth_cookies(response: JSONResponse) -> None:
+def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(
         SESSION_COOKIE_NAME,
         path="/",
@@ -2930,6 +2939,19 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    print(f"[NeoCortex API] {request.method} {request.url}")
+    response = await call_next(request)
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print("[NeoCortex Error]", traceback.format_exc())
+    return JSONResponse({"error": str(exc)}, status_code=500)
 if FORCE_HTTPS_REDIRECT:
     app.add_middleware(HTTPSRedirectMiddleware)
 
@@ -3370,6 +3392,7 @@ class AuthReq(BaseModel):
     admin_key: Optional[str] = None
     require_admin: bool = False
     otp_code: Optional[str] = None
+    next: Optional[str] = None
 
 
 _SENSITIVE_QUERY_KEYS: Set[str] = {
@@ -3382,35 +3405,60 @@ _SENSITIVE_QUERY_KEYS: Set[str] = {
 }
 
 
-async def _auth_req_from_request(request: Request) -> AuthReq:
+_AUTH_FIELD_ALIASES: Dict[str, str] = {
+    "adminkey": "admin_key",
+    "admin-key": "admin_key",
+    "admin key": "admin_key",
+    "requireadmin": "require_admin",
+    "otp": "otp_code",
+}
+
+
+async def _auth_req_from_request(
+    request: Request,
+    data_override: Optional[Mapping[str, Any]] = None,
+) -> AuthReq:
     '''Parse an AuthReq from JSON or form-encoded payloads.'''
 
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     data: Dict[str, Any] = {}
 
-    if "multipart/form-data" in content_type:
+    async def _parse_json(*, warn: bool = False) -> Dict[str, Any]:
+        try:
+            payload = await request.json()
+        except Exception as exc:  # pragma: no cover - defensive
+            if warn:
+                logger.warning("failed to parse json auth payload: %s", exc)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    async def _parse_form(*, warn: bool = False) -> Dict[str, Any]:
         try:
             form = await request.form()
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("failed to parse multipart auth payload: %s", exc)
-        else:
-            data = {k: v for k, v in form.items() if v is not None}
+            if warn:
+                logger.warning("failed to parse form auth payload: %s", exc)
+            return {}
+        return {k: v for k, v in form.items() if v is not None}
+
+    form_markers = ("multipart/form-data", "application/x-www-form-urlencoded")
+    json_markers = ("application/json", "text/json")
+
+    if data_override is not None:
+        items = data_override.items() if hasattr(data_override, "items") else data_override
+        if items is not None:
+            for key, value in items:
+                if value is not None:
+                    data[str(key)] = value
     else:
-        body_bytes = await request.body()
-        parsed: Optional[Dict[str, Any]] = None
-        if body_bytes:
-            try:
-                candidate = json.loads(body_bytes)
-            except json.JSONDecodeError:
-                candidate = None
-            if isinstance(candidate, dict):
-                parsed = candidate
-            else:
-                parsed_qs = parse_qs(body_bytes.decode("utf-8", errors="ignore"))
-                if parsed_qs:
-                    parsed = {k: v[-1] for k, v in parsed_qs.items() if v}
-        if parsed:
-            data = parsed
+        if any(marker in content_type for marker in form_markers):
+            data = await _parse_form(warn=True)
+        elif content_type.endswith("+json") or any(marker in content_type for marker in json_markers):
+            data = await _parse_json(warn=True)
+        else:
+            data = await _parse_json()
+            if not data:
+                data = await _parse_form()
 
     if not data and request.query_params:
         provided = {
@@ -3437,7 +3485,11 @@ async def _auth_req_from_request(request: Request) -> AuthReq:
             value = value[-1]
         if value is None:
             continue
-        normalized[key] = value if isinstance(value, str) else str(value)
+        normalized_key = key.strip()
+        alias = _AUTH_FIELD_ALIASES.get(normalized_key.lower())
+        if alias:
+            normalized_key = alias
+        normalized[normalized_key] = value if isinstance(value, str) else str(value)
 
     try:
         return AuthReq(**normalized)
@@ -3777,7 +3829,41 @@ async def register(request: Request):
     )
     return _json({"ok": True, "created": uname})
 
-def _handle_login(req: AuthReq, request: Request, *, enforce_admin: bool = False) -> JSONResponse:
+def _wants_html_response(request: Request) -> bool:
+    accept = (request.headers.get("accept") or "").lower()
+    if not accept:
+        return False
+    if "text/html" in accept or "application/xhtml+xml" in accept:
+        return True
+    return False
+
+
+def _resolve_login_redirect(candidate: Optional[str], user: Dict[str, Any]) -> str:
+    fallback = "/dashboard" if ROLE_ADMIN in set(user.get("roles", [])) else "/enduserapp"
+    if candidate:
+        value = candidate.strip()
+        if value:
+            parsed = urlparse(value)
+            if not parsed.scheme and not parsed.netloc:
+                path = parsed.path or "/"
+                if path.startswith("/"):
+                    destination = path
+                    if parsed.query:
+                        destination = f"{destination}?{parsed.query}"
+                    if parsed.fragment:
+                        destination = f"{destination}#{parsed.fragment}"
+                    return destination
+    return fallback
+
+
+def _handle_login(
+    req: AuthReq,
+    request: Request,
+    *,
+    enforce_admin: bool = False,
+    prefer_redirect: bool = False,
+    next_hint: Optional[str] = None,
+) -> Response:
     uname = req.username.strip().lower()
     client_ip = getattr(request.state, "client_ip", _client_ip(request))
     user_agent = getattr(request.state, "client_user_agent", _client_user_agent(request))
@@ -3891,6 +3977,11 @@ def _handle_login(req: AuthReq, request: Request, *, enforce_admin: bool = False
     )
     tokens = _issue_token_pair(user, request=request)
     primary_role = user["roles"][0] if user["roles"] else DEFAULT_ROLE
+    redirect_path = _resolve_login_redirect(next_hint or req.next, user)
+    if prefer_redirect:
+        response: Response = RedirectResponse(url=redirect_path, status_code=303)
+        _set_auth_cookies(response, tokens)
+        return response
     resp = _json(
         {
             "ok": True,
@@ -3906,6 +3997,7 @@ def _handle_login(req: AuthReq, request: Request, *, enforce_admin: bool = False
             "refresh_expires_at": tokens.get("refresh_expires_at"),
             "token_type": "bearer",
             "role": primary_role,
+            "redirect_to": redirect_path,
         }
     )
     _set_auth_cookies(resp, tokens)
@@ -3926,16 +4018,45 @@ def _require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str
 async def login(request: Request):
     """Authenticate a user and issue a bearer token."""
 
-    req = await _auth_req_from_request(request)
-    return _handle_login(req, request)
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    form_data: Optional[Mapping[str, Any]] = None
+    if content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+        with suppress(Exception):
+            form = await request.form()
+            form_data = dict(form.multi_items()) if hasattr(form, "multi_items") else dict(form.items())
+
+    req = await _auth_req_from_request(request, data_override=form_data)
+    next_hint = req.next or request.query_params.get("next")
+    prefer_redirect = bool(form_data) or _wants_html_response(request)
+    return _handle_login(
+        req,
+        request,
+        prefer_redirect=prefer_redirect,
+        next_hint=next_hint,
+    )
 
 
 @app.post("/admin/login")
 async def admin_login(request: Request):
     """Admin-specific login endpoint that enforces elevated privileges."""
 
-    req = await _auth_req_from_request(request)
-    return _handle_login(req, request, enforce_admin=True)
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    form_data: Optional[Mapping[str, Any]] = None
+    if content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+        with suppress(Exception):
+            form = await request.form()
+            form_data = dict(form.multi_items()) if hasattr(form, "multi_items") else dict(form.items())
+
+    req = await _auth_req_from_request(request, data_override=form_data)
+    next_hint = req.next or request.query_params.get("next") or ("/admin/dashboard" if form_data else None)
+    prefer_redirect = bool(form_data) or _wants_html_response(request)
+    return _handle_login(
+        req,
+        request,
+        enforce_admin=True,
+        prefer_redirect=prefer_redirect,
+        next_hint=next_hint,
+    )
 
 
 @app.post("/logout")

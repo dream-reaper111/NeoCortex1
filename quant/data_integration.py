@@ -1,9 +1,9 @@
-"""Data integration layer feeding models with alternative data."""
+"""Data integration utilities for enriching the AI stack."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Dict
+from dataclasses import dataclass, field
+from typing import Callable, Dict, Iterable, List
 
 
 @dataclass
@@ -29,11 +29,6 @@ class DataIntegrationLayer:
         for name, feed in self._feeds.items():
             aggregated[name] = feed.fetcher()
         return aggregated
-"""Data integration utilities for enriching the AI stack."""
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List
 
 
 @dataclass
@@ -92,3 +87,13 @@ class TickStorage:
         """Placeholder for writing to Parquet or DuckDB."""
 
         return list(self.store)
+
+
+__all__ = [
+    "DataIntegrationLayer",
+    "SentimentFeedIntegrator",
+    "OptionsAnalytics",
+    "EconomicCalendarGuard",
+    "OnChainMetrics",
+    "TickStorage",
+]
