@@ -14,8 +14,7 @@ pyngrok
 pyngrok>=7.1
 python-dotenv
 python-dotenv>=1.0
-requests
-requests>=2.31
+requests==2.32.4
 cryptography
 PyJWT
 pyotp

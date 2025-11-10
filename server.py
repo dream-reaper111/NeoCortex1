@@ -7,7 +7,7 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac
+import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re
 from urllib.parse import parse_qs, quote, urlencode
 import importlib.util
 from pathlib import Path
@@ -19,7 +19,7 @@ try:
     import pandas as pd
 except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
     class _PandasStub:
-        """Lazy stub that raises a helpful error when pandas is unavailable."""
+        '''Lazy stub that raises a helpful error when pandas is unavailable.'''
 
         def __getattr__(self, name: str) -> Any:
             raise ModuleNotFoundError(
@@ -32,7 +32,7 @@ from fastapi import FastAPI, HTTPException, Request, Header, Cookie
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 class _FallbackHTTPSRedirectMiddleware:
-    """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
+    '''Minimal HTTPS redirect middleware compatible with FastAPI's interface.'''
 
     def __init__(self, app):
         self.app = app
@@ -100,7 +100,7 @@ except Exception:  # pragma: no cover - fallback for trimmed fastapi distro or r
     from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 except ModuleNotFoundError:  # pragma: no cover - fallback for trimmed fastapi distro
     class HTTPSRedirectMiddleware:
-        """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
+        '''Minimal HTTPS redirect middleware compatible with FastAPI's interface.'''
 
         def __init__(self, app):
             self.app = app
@@ -156,7 +156,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
-    """Interpret an environment variable as a boolean flag."""
+    '''Interpret an environment variable as a boolean flag.'''
 
     raw = os.getenv(name)
     if raw is None:
@@ -231,7 +231,7 @@ with suppress(ModuleNotFoundError):
 
 if "Fernet" not in globals():  # pragma: no cover - optional dependency fallback
     class InvalidToken(Exception):
-        """Raised when decrypting stored credentials with an invalid token."""
+        '''Raised when decrypting stored credentials with an invalid token.'''
 
     class _MissingCryptographyFernet:
         def __init__(self, *_args, **_kwargs):
@@ -299,6 +299,22 @@ DEFAULT_SECURITY_HEADERS: Dict[str, str] = {
     "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
 }
 
+
+def _is_subpath(base: Path, candidate: Path) -> bool:
+    try:
+        candidate.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+SAFE_FILENAME_COMPONENT = re.compile(r"[^A-Z0-9_-]")
+
+
+def _sanitize_filename_component(value: str) -> str:
+    cleaned = SAFE_FILENAME_COMPONENT.sub("_", value.upper())
+    return cleaned or "UNKNOWN"
+
 API_HOST   = os.getenv("API_HOST","0.0.0.0")
 API_PORT   = int(os.getenv("API_PORT","8000"))
 RUNS_ROOT  = Path(os.getenv("RUNS_ROOT","artifacts")).resolve()
@@ -310,6 +326,7 @@ LIQUIDITY_ASSETS = LIQUIDITY_DIR / "assets"
 LIQUIDITY_ASSETS.mkdir(parents=True, exist_ok=True)
 ALPACA_TEST_DIR = PUBLIC_DIR / "alpaca_webhook_tests"
 ALPACA_TEST_DIR.mkdir(parents=True, exist_ok=True)
+ALPACA_TEST_DIR = ALPACA_TEST_DIR.resolve()
 
 LOGIN_PAGE = PUBLIC_DIR / "login.html"
 ADMIN_LOGIN_PAGE = PUBLIC_DIR / "admin-login.html"
@@ -345,7 +362,7 @@ NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
 
 
 def _load_ngrok_template(path: Path) -> str:
-    """Best-effort loader for the ngrok cloud endpoint HTML template."""
+    '''Best-effort loader for the ngrok cloud endpoint HTML template.'''
 
     try:
         return path.read_text(encoding="utf-8")
@@ -367,7 +384,7 @@ NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
 
 
 def _load_ngrok_template(path: Path) -> str:
-    """Best-effort loader for the ngrok cloud endpoint HTML template."""
+    '''Best-effort loader for the ngrok cloud endpoint HTML template.'''
 
     try:
         return path.read_text(encoding="utf-8")
@@ -389,7 +406,7 @@ NGROK_ENDPOINT_TEMPLATE_PATH = PUBLIC_DIR / "ngrok-cloud-endpoint.html"
 
 
 def _load_ngrok_template(path: Path) -> str:
-    """Best-effort loader for the ngrok cloud endpoint HTML template."""
+    '''Best-effort loader for the ngrok cloud endpoint HTML template.'''
 
     try:
         return path.read_text(encoding="utf-8")
@@ -688,7 +705,7 @@ def _db_conn() -> sqlite3.Connection:
 def _init_auth_db() -> None:
     with _db_conn() as conn:
         conn.execute(
-            """
+            '''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
@@ -697,7 +714,7 @@ def _init_auth_db() -> None:
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )
-            """
+            '''
         )
         info = conn.execute("PRAGMA table_info(users)").fetchall()
         column_names = {row["name"] for row in info}
@@ -714,7 +731,7 @@ def _init_auth_db() -> None:
         if "mfa_recovery_codes" not in column_names:
             conn.execute("ALTER TABLE users ADD COLUMN mfa_recovery_codes TEXT")
         conn.execute(
-            """
+            '''
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
                 token_hash TEXT,
@@ -724,7 +741,7 @@ def _init_auth_db() -> None:
                 last_used_at TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
-            """
+            '''
         )
         session_info = conn.execute("PRAGMA table_info(sessions)").fetchall()
         session_columns = {row["name"] for row in session_info}
@@ -735,7 +752,7 @@ def _init_auth_db() -> None:
         if "last_used_at" not in session_columns:
             conn.execute("ALTER TABLE sessions ADD COLUMN last_used_at TEXT")
         conn.execute(
-            """
+            '''
             CREATE TABLE IF NOT EXISTS alpaca_credentials (
                 user_id INTEGER NOT NULL,
                 account_type TEXT NOT NULL,
@@ -746,10 +763,10 @@ def _init_auth_db() -> None:
                 PRIMARY KEY (user_id, account_type),
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
-            """
+            '''
         )
         conn.execute(
-            """
+            '''
             CREATE TABLE IF NOT EXISTS api_tokens (
                 token_id TEXT PRIMARY KEY,
                 token_hash TEXT NOT NULL,
@@ -761,24 +778,24 @@ def _init_auth_db() -> None:
                 revoked INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
-            """
+            '''
         )
         api_info = conn.execute("PRAGMA table_info(api_tokens)").fetchall()
         api_columns = {row["name"] for row in api_info}
         if "label" not in api_columns:
             conn.execute("ALTER TABLE api_tokens ADD COLUMN label TEXT")
         conn.execute(
-            """
+            '''
             CREATE TABLE IF NOT EXISTS credential_key_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 key_version TEXT NOT NULL,
                 rotated_at TEXT NOT NULL,
                 total_records INTEGER NOT NULL DEFAULT 0
             )
-            """
+            '''
         )
         conn.execute(
-            """
+            '''
             CREATE TABLE IF NOT EXISTS whop_sessions (
                 token TEXT PRIMARY KEY,
                 license_key TEXT NOT NULL,
@@ -787,10 +804,10 @@ def _init_auth_db() -> None:
                 created_at TEXT NOT NULL,
                 consumed_at TEXT
             )
-            """
+            '''
         )
         conn.execute(
-            """
+            '''
             CREATE TABLE IF NOT EXISTS whop_accounts (
                 license_key TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL UNIQUE,
@@ -798,7 +815,7 @@ def _init_auth_db() -> None:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
-            """
+            '''
         )
 
 
@@ -848,7 +865,10 @@ def _reload_credential_keys() -> None:
 def _credentials_cipher(version: Optional[str] = None) -> Tuple[str, Fernet]:
     if not _CREDENTIAL_KEYSET_CACHE:
         _reload_credential_keys()
-    assert _CREDENTIAL_KEYSET_CACHE
+    if not _CREDENTIAL_KEYSET_CACHE:
+        raise CredentialEncryptionError(
+            "No credential encryption keys are configured and an ephemeral key could not be generated."
+        )
     key_version = version or _ACTIVE_CREDENTIAL_KEY_VERSION
     if key_version not in _CREDENTIAL_KEYSET_CACHE:
         raise CredentialEncryptionError(f"Unknown credential key version '{key_version}'")
@@ -923,11 +943,11 @@ def _rotate_encrypted_credentials(target_version: Optional[str] = None) -> int:
             enc_key = f"enc:{target_version}:{target_cipher.encrypt(decrypted_key.encode('utf-8')).decode('utf-8')}"
             enc_secret = f"enc:{target_version}:{target_cipher.encrypt(decrypted_secret.encode('utf-8')).decode('utf-8')}"
             conn.execute(
-                """
+                '''
                 UPDATE alpaca_credentials
                 SET api_key = ?, api_secret = ?, updated_at = ?
                 WHERE user_id = ? AND account_type = ?
-                """,
+                ''',
                 (
                     enc_key,
                     enc_secret,
@@ -958,10 +978,10 @@ def _create_whop_session(license_key: str, email: Optional[str], metadata: Optio
     payload = json.dumps(metadata or {}, separators=(",", ":")) if metadata else None
     with _db_conn() as conn:
         conn.execute(
-            """
+            '''
             INSERT OR REPLACE INTO whop_sessions (token, license_key, email, metadata, created_at, consumed_at)
             VALUES (?, ?, ?, ?, ?, NULL)
-            """,
+            ''',
             (
                 token,
                 license_key,
@@ -1021,12 +1041,12 @@ def _lookup_whop_account(license_key: str) -> Optional[Dict[str, Any]]:
         return None
     with _db_conn() as conn:
         row = conn.execute(
-            """
+            '''
             SELECT wa.user_id, u.username
             FROM whop_accounts wa
             JOIN users u ON u.id = wa.user_id
             WHERE wa.license_key = ?
-            """,
+            ''',
             (license_key,),
         ).fetchone()
     if row is None:
@@ -1035,6 +1055,8 @@ def _lookup_whop_account(license_key: str) -> Optional[Dict[str, Any]]:
 
 
 def _link_whop_account(license_key: str, user_id: int) -> None:
+    '''Link a Whop account to a user in the local credential store.'''
+    pass
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -1139,10 +1161,10 @@ def _create_refresh_token(user_id: int) -> Tuple[str, str, datetime]:
     token_hash = _hash_token(token)
     with _db_conn() as conn:
         conn.execute(
-            """
+            '''
             INSERT OR REPLACE INTO sessions (token, token_hash, user_id, created_at, expires_at, last_used_at)
             VALUES (?, ?, ?, ?, ?, ?)
-            """,
+            ''',
             (
                 token_id,
                 token_hash,
@@ -1394,19 +1416,20 @@ def _create_api_token(user_id: int, scopes: Set[str], label: Optional[str] = Non
     now = datetime.now(timezone.utc).isoformat()
     with _db_conn() as conn:
         conn.execute(
-            """
+            '''
             INSERT INTO whop_accounts (license_key, user_id, created_at, updated_at)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(license_key) DO UPDATE SET
                 user_id = excluded.user_id,
                 updated_at = excluded.updated_at
-            """,
+            ''',
             (license_key, user_id, now, now),
         )
-
+        conn.execute(
+            '''
             INSERT INTO api_tokens (token_id, token_hash, user_id, scopes, label, created_at, revoked)
             VALUES (?, ?, ?, ?, ?, ?, 0)
-            """,
+            ''',
             (token_id, token_hash, user_id, scope_str, label, now),
         )
     return {
@@ -1421,12 +1444,12 @@ def _create_api_token(user_id: int, scopes: Set[str], label: Optional[str] = Non
 def _list_api_tokens(user_id: int) -> List[Dict[str, Any]]:
     with _db_conn() as conn:
         rows = conn.execute(
-            """
+            '''
             SELECT token_id, scopes, label, created_at, last_used_at, revoked
             FROM api_tokens
             WHERE user_id = ?
             ORDER BY created_at DESC
-            """,
+            ''',
             (user_id,),
         ).fetchall()
     tokens: List[Dict[str, Any]] = []
@@ -1484,11 +1507,11 @@ def _get_user_from_api_key(token: str, *, required_scopes: Optional[Set[str]] = 
     token_hash = _hash_token(token)
     with _db_conn() as conn:
         row = conn.execute(
-            """
+            '''
             SELECT token_id, token_hash, user_id, scopes, revoked
             FROM api_tokens
             WHERE token_hash = ?
-            """,
+            ''',
             (token_hash,),
         ).fetchone()
         if row is None or row["revoked"]:
@@ -1562,7 +1585,7 @@ def _verify_whop_license(license_key: str) -> Dict[str, Any]:
 
 
 def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
-    """Derive a 2048-bit PBKDF2-SHA512 digest and return ``(hash_hex, salt_hex)``."""
+    '''Derive a 2048-bit PBKDF2-SHA512 digest and return (hash_hex, salt_hex).'''
     if salt is None:
         salt = secrets.token_hex(32)
     salt_bytes = bytes.fromhex(salt)
@@ -1579,11 +1602,11 @@ def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[s
 def _fetch_user_credentials(user_id: int, account_type: str) -> Optional[sqlite3.Row]:
     with _db_conn() as conn:
         return conn.execute(
-            """
+            '''
             SELECT api_key, api_secret, base_url
             FROM alpaca_credentials
             WHERE user_id = ? AND account_type = ?
-            """,
+            ''',
             (user_id, account_type),
         ).fetchone()
 
@@ -1599,7 +1622,7 @@ def _save_user_credentials(
     stored_secret = _encrypt_secret(api_secret)
     with _db_conn() as conn:
         conn.execute(
-            """
+            '''
             INSERT INTO alpaca_credentials (user_id, account_type, api_key, api_secret, base_url, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, account_type) DO UPDATE SET
@@ -1607,7 +1630,7 @@ def _save_user_credentials(
                 api_secret = excluded.api_secret,
                 base_url = excluded.base_url,
                 updated_at = excluded.updated_at
-            """,
+            ''',
             (
                 user_id,
                 account_type,
@@ -1630,7 +1653,7 @@ def _save_user_credentials(
     stored_secret = _encrypt_secret(api_secret)
     with _db_conn() as conn:
         conn.execute(
-            """
+            '''
             INSERT INTO alpaca_credentials (user_id, account_type, api_key, api_secret, base_url, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, account_type) DO UPDATE SET
@@ -1638,7 +1661,7 @@ def _save_user_credentials(
                 api_secret = excluded.api_secret,
                 base_url = excluded.base_url,
                 updated_at = excluded.updated_at
-            """,
+            ''',
             (
                 user_id,
                 account_type,
@@ -1915,7 +1938,7 @@ def root():
 
 @app.get("/ngrok/cloud-endpoint", response_class=HTMLResponse)
 async def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
-    """Render a friendly landing page for ngrok Cloud Endpoints."""
+    '''Render a friendly landing page for ngrok Cloud Endpoints.'''
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if not host:
@@ -1952,7 +1975,7 @@ class AuthReq(BaseModel):
 
 
 async def _auth_req_from_request(request: Request) -> AuthReq:
-    """Parse an AuthReq from JSON, form-encoded, or query parameters."""
+    '''Parse an AuthReq from JSON, form-encoded, or query parameters.'''
 
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     data: Dict[str, Any] = {}
@@ -2253,6 +2276,10 @@ async def whop_login(req: WhopLoginReq):
 async def register(request: Request):
     # Create a new user account backed by the SQLite credential store. Passwords are
     # hashed with a 2048-bit PBKDF2-SHA512 digest and salted prior to being persisted.
+    '''
+    Create a new user account backed by the SQLite credential store. Passwords are
+    hashed with a 2048-bit PBKDF2-SHA512 digest and salted prior to being persisted.
+    '''
     req = await _auth_req_from_request(request)
     uname = req.username.strip().lower()
     if not uname or not req.password:
@@ -2282,6 +2309,11 @@ async def login(request: Request):
     # Authenticate a user and return a bearer token tied to the SQLite credential store.
     # The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
     # manage user-specific Alpaca credentials.
+    '''
+    Authenticate a user and return a bearer token tied to the SQLite credential store.
+    The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
+    manage user-specific Alpaca credentials.
+    '''
     req = await _auth_req_from_request(request)
     uname = req.username.strip().lower()
     if not uname or not req.password:
@@ -2512,6 +2544,8 @@ async def list_alpaca_credentials(
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
     # Return the Alpaca credential entries associated with the authenticated user.
+
+    '''Return the Alpaca credential entries associated with the authenticated user.'''
     user = _require_user(authorization, session_token, required_scopes={"credentials"})
     query = (
         "SELECT account_type, api_key, base_url, updated_at\n"
@@ -2521,6 +2555,16 @@ async def list_alpaca_credentials(
     )
     with _db_conn() as conn:
         rows = conn.execute(query, (user["id"],)).fetchall()
+
+        rows = conn.execute(
+            '''
+            SELECT account_type, api_key, base_url, updated_at
+            FROM alpaca_credentials
+            WHERE user_id = ?
+            ORDER BY account_type
+            ''',
+            (user["id"],),
+        ).fetchall()
     credentials = []
     for row in rows:
         try:
@@ -2545,7 +2589,7 @@ async def set_alpaca_credentials(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
-    # Create or update Alpaca API credentials for the authenticated user.
+    '''Create or update Alpaca API credentials for the authenticated user.'''
     user = _require_user(authorization, session_token, required_scopes={"credentials"})
     acct_type = (req.account_type or "paper").strip().lower()
     if acct_type not in {"paper", "funded"}:
@@ -2571,7 +2615,7 @@ async def get_positions(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
-    # Fetch the current positions for the specified Alpaca account.
+    '''Fetch the current positions for the specified Alpaca account.'''
 
     acct_type = (account or "paper").lower()
     user = None
@@ -2606,7 +2650,7 @@ async def close_position(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
-    # Close a single Alpaca position for the authenticated user.
+    '''Close a single Alpaca position for the authenticated user.'''
 
     if not symbol:
         return _json({"ok": False, "detail": "symbol is required"}, 400)
@@ -2670,7 +2714,7 @@ async def get_pnl(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
-    # Compute unrealized profit and loss for the authenticated user's Alpaca account.
+    '''Compute unrealized P&L for the authenticated user\'s Alpaca account.'''
 
     acct_type = (account or "paper").lower()
     user = None
@@ -2768,11 +2812,13 @@ def strategy_liquidity_sweeps(ticker: str, session_date: Optional[str] = None, i
 # illustrative only.
 @app.post("/alpaca/webhook")
 async def alpaca_webhook(req: Request):
-    # Receive webhook callbacks from Alpaca. This endpoint accepts any JSON
-    # payload and logs it. It returns ``{"ok": True}`` on success. If you set
-    # ``ALPACA_WEBHOOK_SECRET`` in your environment, the request's header
-    # ``X-Webhook-Signature`` will be verified against this secret using HMAC
-    # SHA-256. Mismatched signatures return a 400.
+    '''
+    Receive webhook callbacks from Alpaca. This endpoint accepts any JSON
+    payload and logs it. It returns ``{"ok": True}`` on success. If you set
+    ``ALPACA_WEBHOOK_SECRET`` in your environment, the request\'s header
+    ``X‑Webhook‑Signature`` will be verified against this secret using HMAC
+    SHA‑256. Mismatched signatures return a 400.
+    '''
     body_bytes = await req.body()
     try:
         payload = await req.json()
@@ -2835,8 +2881,12 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
         signature = base64.b64encode(digest).decode()
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    fname = f"test-{req.symbol.upper()}-{stamp}.json"
-    path = ALPACA_TEST_DIR / fname
+    symbol_component = _sanitize_filename_component(req.symbol or "")
+    fname = f"test-{symbol_component}-{stamp}.json"
+    path = (ALPACA_TEST_DIR / fname).resolve()
+    if not _is_subpath(ALPACA_TEST_DIR, path):
+        raise HTTPException(status_code=400, detail="invalid symbol for artifact path")
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     return _json(
@@ -2852,7 +2902,7 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
 
 @app.get("/alpaca/webhook/tests")
 def alpaca_webhook_tests():
-    # Return recently generated Alpaca webhook test artifacts.
+    '''Return recently generated Alpaca webhook test artifacts.'''
     tests = []
     for file_path in sorted(ALPACA_TEST_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
@@ -2991,13 +3041,15 @@ async def webhook_tv(req: Request):
 # --- webhook: Alpaca broker (disabled) ---
 @app.post("/webhook/alpaca")
 async def webhook_alpaca(req: Request):
-    # Placeholder for a future Alpaca trade execution webhook.
+    '''
+    Placeholder for a future Alpaca trade execution webhook.
 
-    # Executing high-stakes financial transactions (such as buying or selling securities)
-    # is disabled in this environment. Any POSTed payload will be ignored and an error
-    # response returned. To integrate live trading functionality, you would need to
-    # use the Alpaca Orders API with appropriate safeguards, and run the code outside
-    # of this assistant.
+    Executing high‑stakes financial transactions (such as buying or selling securities)
+    is disabled in this environment. Any POSTed payload will be ignored and an error
+    response returned. To integrate live trading functionality, you would need to
+    use the Alpaca Orders API with appropriate safeguards, and run the code outside
+    of this assistant.
+    '''
     return _json({"ok": False, "detail": "Trade execution via Alpaca is disabled in this environment"}, 403)
 
 # --- ingestion: generic candles (Robinhood/Webull) ---
