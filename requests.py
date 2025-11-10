@@ -39,6 +39,8 @@ def get(url: str, *, headers: Optional[Dict[str, str]] = None, timeout: Optional
 def post(url: str, data: bytes, *, headers: Optional[Dict[str, str]] = None, timeout: Optional[float] = None) -> Response:
     req = urllib.request.Request(url, data=data, headers=headers or {}, method="POST")
     try:
+        if not url.startswith(('https://', 'http://')):
+            raise ValueError("URL must start with 'https://' or 'http://'")
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # type: ignore[arg-type]
             body = resp.read()
             status = resp.getcode() or 0
