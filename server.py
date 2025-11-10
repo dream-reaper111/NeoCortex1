@@ -3263,7 +3263,6 @@ async def whop_callback(
 
 
 @app.post("/auth/whop/session")
-async def whop_session(req: WhopLoginReq):
 async def whop_session(req: WhopSessionRequest):
     token = (req.token or "").strip()
     session = _get_whop_session(token)
@@ -3437,8 +3436,7 @@ async def register(request: Request):
     )
     return _json({"ok": True, "created": uname})
 
-def _handle_login(req: AuthReq, *, enforce_admin: bool = False) -> JSONResponse:
-def _perform_login(req: AuthReq) -> JSONResponse:
+def _handle_login(req: AuthReq, request: Request, *, enforce_admin: bool = False) -> JSONResponse:
     uname = req.username.strip().lower()
     client_ip = getattr(request.state, "client_ip", _client_ip(request))
     user_agent = getattr(request.state, "client_user_agent", _client_user_agent(request))
@@ -3551,7 +3549,6 @@ def _perform_login(req: AuthReq) -> JSONResponse:
         metadata={"roles": user["roles"]},
     )
     tokens = _issue_token_pair(user, request=request)
-    tokens = _issue_token_pair(user)
     primary_role = user["roles"][0] if user["roles"] else DEFAULT_ROLE
     resp = _json(
         {
@@ -3589,7 +3586,7 @@ async def login(request: Request):
     """Authenticate a user and issue a bearer token."""
 
     req = await _auth_req_from_request(request)
-    return _handle_login(req)
+    return _handle_login(req, request)
 
 
 @app.post("/admin/login")
@@ -3597,38 +3594,7 @@ async def admin_login(request: Request):
     """Admin-specific login endpoint that enforces elevated privileges."""
 
     req = await _auth_req_from_request(request)
-    return _handle_login(req, enforce_admin=True)
-@app.post("/login")
-async def login(request: Request):
-    # Authenticate a user and return a bearer token tied to the SQLite credential store.
-    # The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
-    # manage user-specific Alpaca credentials.
-    '''
-    Authenticate a user and return a bearer token tied to the SQLite credential store.
-    The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
-    manage user-specific Alpaca credentials.
-    '''
-    req = await _auth_req_from_request(request)
-    return _perform_login(req)
-
-
-@app.post("/admin/login")
-async def admin_login(
-    username: str = Form(...),
-    password: str = Form(...),
-    adminKey: Optional[str] = Form(None),
-    otp_code: Optional[str] = Form(None),
-):
-    '''Handle admin portal authentication via form submissions.'''
-
-    req = AuthReq(
-        username=username,
-        password=password,
-        admin_key=adminKey,
-        require_admin=True,
-        otp_code=otp_code,
-    )
-    return _perform_login(req)
+    return _handle_login(req, request, enforce_admin=True)
 
 
 @app.post("/logout")
