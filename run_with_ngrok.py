@@ -57,7 +57,6 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 
 try:
     # Import the FastAPI app from server.py
-    from server import app, DISABLE_ACCESS_LOGS  # type: ignore
     from server import app, DISABLE_ACCESS_LOGS, ensure_runtime_directories  # type: ignore
 except Exception as e:
     raise ImportError(
@@ -132,13 +131,6 @@ def main() -> None:
             flush=True,
         )
         print("  Install pyngrok to enable tunnelling: pip install pyngrok", flush=True)
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
-            port=port,
-            log_level="info",
-            access_log=not DISABLE_ACCESS_LOGS,
-        )
         _uvicorn_run(app, host="0.0.0.0", port=port, log_level="info")
         return
 
