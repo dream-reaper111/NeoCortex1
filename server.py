@@ -45,8 +45,8 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, tempfile, stat, ipaddress
-from urllib.parse import parse_qs, quote, urlencode
+import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, tempfile, stat, ipaddress, traceback
+from urllib.parse import quote, urlencode
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -2930,6 +2930,24 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    print(f"[NeoCortex API] {request.method} {request.url}")
+    response = await call_next(request)
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print("[NeoCortex ERROR]", traceback.format_exc())
+    if "text/html" in (request.headers.get("accept", "") or ""):
+        return HTMLResponse(
+            f"<html><body><h2>Internal Server Error</h2><pre>{str(exc)}</pre></body></html>",
+            status_code=500,
+        )
+    return JSONResponse({"error": str(exc)}, status_code=500)
 if FORCE_HTTPS_REDIRECT:
     app.add_middleware(HTTPSRedirectMiddleware)
 
@@ -3388,29 +3406,35 @@ async def _auth_req_from_request(request: Request) -> AuthReq:
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     data: Dict[str, Any] = {}
 
-    if "multipart/form-data" in content_type:
+    async def _parse_json(*, warn: bool = False) -> Dict[str, Any]:
+        try:
+            payload = await request.json()
+        except Exception as exc:  # pragma: no cover - defensive
+            if warn:
+                logger.warning("failed to parse json auth payload: %s", exc)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    async def _parse_form(*, warn: bool = False) -> Dict[str, Any]:
         try:
             form = await request.form()
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("failed to parse multipart auth payload: %s", exc)
-        else:
-            data = {k: v for k, v in form.items() if v is not None}
+            if warn:
+                logger.warning("failed to parse form auth payload: %s", exc)
+            return {}
+        return {k: v for k, v in form.items() if v is not None}
+
+    form_markers = ("multipart/form-data", "application/x-www-form-urlencoded")
+    json_markers = ("application/json", "text/json")
+
+    if any(marker in content_type for marker in form_markers):
+        data = await _parse_form(warn=True)
+    elif content_type.endswith("+json") or any(marker in content_type for marker in json_markers):
+        data = await _parse_json(warn=True)
     else:
-        body_bytes = await request.body()
-        parsed: Optional[Dict[str, Any]] = None
-        if body_bytes:
-            try:
-                candidate = json.loads(body_bytes)
-            except json.JSONDecodeError:
-                candidate = None
-            if isinstance(candidate, dict):
-                parsed = candidate
-            else:
-                parsed_qs = parse_qs(body_bytes.decode("utf-8", errors="ignore"))
-                if parsed_qs:
-                    parsed = {k: v[-1] for k, v in parsed_qs.items() if v}
-        if parsed:
-            data = parsed
+        data = await _parse_json()
+        if not data:
+            data = await _parse_form()
 
     if not data and request.query_params:
         provided = {

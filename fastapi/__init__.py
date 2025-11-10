@@ -215,6 +215,7 @@ class FastAPI:
         self._lifespan_factory = lifespan
         self._lifespan_cm = lifespan(self) if lifespan else None
         self._http_middleware: List[Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]] = []
+        self._exception_handlers: List[Tuple[Type[BaseException], Callable[[Request, BaseException], Any]]] = []
 
     def mount(self, path: str, app: Any, name: Optional[str] = None) -> None:
         prefix = path.rstrip("/") or "/"
@@ -277,6 +278,13 @@ class FastAPI:
 
         return decorator
 
+    def exception_handler(self, exc_class: Type[BaseException]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            self._exception_handlers.append((exc_class, func))
+            return func
+
+        return decorator
+
     async def _startup(self) -> None:
         if self._lifespan_cm is not None:
             await self._lifespan_cm.__aenter__()
@@ -293,7 +301,10 @@ class FastAPI:
         for middleware in reversed(self._http_middleware):
             handler = self._wrap_http_middleware(middleware, handler)
 
-        return await handler(request)
+        try:
+            return await handler(request)
+        except Exception as exc:  # pragma: no cover - defensive
+            return await self._handle_exception(request, exc)
 
     async def _dispatch_request(self, request: Request) -> Response:
         path = request.path
@@ -316,12 +327,23 @@ class FastAPI:
             path_params = {k: v for k, v in match.groupdict().items()}
             try:
                 result = await self._call_endpoint(route, request, path_params)
-            except HTTPException as exc:
-                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
             except Exception as exc:  # pragma: no cover - unexpected error path
-                return JSONResponse({"detail": f"Internal Server Error: {exc}"}, status_code=500)
+                return await self._handle_exception(request, exc)
             return self._to_response(result, route.response_class)
         raise HTTPException(404, "Not Found")
+
+    async def _handle_exception(self, request: Request, exc: Exception) -> Response:
+        for exc_type, handler in reversed(self._exception_handlers):
+            if isinstance(exc, exc_type):
+                result = handler(request, exc)
+                if inspect.isawaitable(result):
+                    result = await result
+                if isinstance(result, Response):
+                    return result
+                return self._to_response(result, None)
+        if isinstance(exc, HTTPException):
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+        return JSONResponse({"detail": f"Internal Server Error: {exc}"}, status_code=500)
 
     async def _call_endpoint(self, route: _Route, request: Request, path_params: Dict[str, str]) -> Any:
         endpoint = route.endpoint
