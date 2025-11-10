@@ -20,3 +20,8 @@ starlette==0.47.2
 torch
 uvicorn[standard]>=0.30
 yfinance
+celery>=5.3
+redis>=5.0
+prometheus-client>=0.20
+webauthn>=1.8
+websocket-client>=1.7

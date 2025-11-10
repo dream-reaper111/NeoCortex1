@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neocortex-celery-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: neocortex-celery-worker
+  template:
+    metadata:
+      labels:
+        app: neocortex-celery-worker
+    spec:
+      containers:
+        - name: celery-worker
+          image: neocortex/celery-worker:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: neocortex-secrets
+            - configMapRef:
+                name: neocortex-config
+          command: ["celery", "-A", "services.model_orchestration.worker_app", "worker", "--loglevel=INFO"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: neocortex-celery-beat
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: celery-beat
+              image: neocortex/celery-beat:latest
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef:
+                    name: neocortex-secrets
+                - configMapRef:
+                    name: neocortex-config
+              command: ["celery", "-A", "services.model_orchestration.worker_app", "beat", "--loglevel=INFO"]

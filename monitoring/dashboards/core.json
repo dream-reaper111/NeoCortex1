@@ -1,0 +1,29 @@
+{
+  "id": null,
+  "title": "NeoCortex Overview",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 0,
+  "panels": [
+    {
+      "type": "graph",
+      "title": "API Latency",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"fastapi\"}[5m])) by (le))"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "PnL (Mock)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(pnl_total)"
+        }
+      ]
+    }
+  ]
+}
