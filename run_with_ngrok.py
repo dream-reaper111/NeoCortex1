@@ -54,7 +54,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 
 try:
     # Import the FastAPI app from server.py
-    from server import app  # type: ignore
+    from server import app, DISABLE_ACCESS_LOGS  # type: ignore
 except Exception as e:
     raise ImportError(
         "Unable to import FastAPI app from server.py. Please ensure that the "
@@ -96,7 +96,13 @@ def main() -> None:
             flush=True,
         )
         print("  Install pyngrok to enable tunnelling: pip install pyngrok", flush=True)
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info",
+            access_log=not DISABLE_ACCESS_LOGS,
+        )
         return
 
     auth_token = os.getenv("NGROK_AUTH_TOKEN")
@@ -167,7 +173,13 @@ def main() -> None:
     print(f"  {public_url}/alpaca/webhook", flush=True)
 
     try:
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info",
+            access_log=not DISABLE_ACCESS_LOGS,
+        )
     finally:
         try:
             ngrok.disconnect(tunnel.public_url)
