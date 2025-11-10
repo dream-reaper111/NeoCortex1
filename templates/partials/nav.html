@@ -93,7 +93,21 @@
         </div>
 </div>
 <script>
-        (function () {
+        document.addEventListener('DOMContentLoaded', () => {
+                if (typeof attachGlobalErrorHandlers === 'function') {
+                        attachGlobalErrorHandlers();
+                } else if (!window.__ncErrorHandlerAttached) {
+                        window.__ncErrorHandlerAttached = true;
+                        window.addEventListener('error', (event) => {
+                                if (!event) { return; }
+                                console.error('[NeoCortex UI]', event.message, event.error);
+                        });
+                        window.addEventListener('unhandledrejection', (event) => {
+                                if (!event) { return; }
+                                console.error('[NeoCortex UI]', event.reason);
+                        });
+                }
+
                 const TOKEN_KEY = 'nc_token';
                 const USERNAME_KEY = 'nc_user';
                 const COOKIE_NAME_KEY = 'nc_cookie';
@@ -113,7 +127,7 @@
                 const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
                 links.forEach((link) => {
                         const href = link.getAttribute('href');
-                        if (!href) return;
+                        if (!href) { return; }
                         const normalized = href.replace(/\/+$/, '') || '/';
                         if (normalized === currentPath) {
                                 link.classList.add('active');
@@ -134,5 +148,5 @@
                                 window.location.href = '/login';
                         });
                 }
-        })();
+        });
 </script>

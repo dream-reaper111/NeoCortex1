@@ -4,8 +4,8 @@
         <meta charset="utf-8" />
         <title>Neo Cortex AI Dashboard</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='assets/neocortex-theme.css') }}" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
+        <link rel="stylesheet" href="{{ request.url_for('static', path='/assets/neocortex-theme.css') }}" />
+        <link rel="stylesheet" href="{{ request.url_for('static', path='/enduserapp/style.css') }}" />
         <style>
                 body {
                         margin: 0;
@@ -394,7 +394,25 @@
                 </section>
         </main>
         <script>
-                const $ = (id) => document.getElementById(id);
+                function attachGlobalErrorHandlers() {
+                        if (window.__ncErrorHandlerAttached) {
+                                return;
+                        }
+                        window.__ncErrorHandlerAttached = true;
+                        window.addEventListener('error', (event) => {
+                                if (!event) { return; }
+                                console.error('[NeoCortex UI]', event.message, event.error);
+                        });
+                        window.addEventListener('unhandledrejection', (event) => {
+                                if (!event) { return; }
+                                console.error('[NeoCortex UI]', event.reason);
+                        });
+                }
+
+                document.addEventListener('DOMContentLoaded', () => {
+                        attachGlobalErrorHandlers();
+
+                        const $ = (id) => document.getElementById(id);
                 const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
                 const TOKEN_KEY = 'nc_token';
                 const USERNAME_KEY = 'nc_user';
@@ -425,6 +443,7 @@
                                 if (token && !headers.has('Authorization')) {
                                         headers.set('Authorization', 'Bearer ' + token);
                                 }
+                                headers.set('X-Requested-With', headers.get('X-Requested-With') || 'fetch');
                                 const finalInit = Object.assign({}, init, { headers });
                                 if (!finalInit.credentials) {
                                         finalInit.credentials = 'include';
@@ -796,7 +815,8 @@
 		startTrainSSE();
 		loadNNGraph();
 		startNNSSE();
-		setInterval(fetchMetrics, 4000);
-	</script>
+                setInterval(fetchMetrics, 4000);
+                });
+        </script>
 </body>
 </html>

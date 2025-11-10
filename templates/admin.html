@@ -4,8 +4,8 @@
         <meta charset="utf-8" />
         <title>Neo Cortex Admin Control Center</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='assets/neocortex-theme.css') }}" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
+        <link rel="stylesheet" href="{{ request.url_for('static', path='/assets/neocortex-theme.css') }}" />
+        <link rel="stylesheet" href="{{ request.url_for('static', path='/enduserapp/style.css') }}" />
         <style>
                 body {
                         margin: 0;
@@ -211,84 +211,106 @@
 
                 <footer class="admin-footer">
                         The navigation above is safe to share via your ngrok URL — all assets resolve from
-                        {{ request.url_for('public', path='') }}.
+                        {{ request.url_for('static', path='') }}.
                 </footer>
         </main>
 
         <script>
-                const TOKEN_KEY = 'nc_token';
-
-                function authToken() {
-                        return localStorage.getItem(TOKEN_KEY);
+                function attachGlobalErrorHandlers() {
+                        if (window.__ncErrorHandlerAttached) {
+                                return;
+                        }
+                        window.__ncErrorHandlerAttached = true;
+                        window.addEventListener('error', (event) => {
+                                if (!event) { return; }
+                                console.error('[NeoCortex UI]', event.message, event.error);
+                        });
+                        window.addEventListener('unhandledrejection', (event) => {
+                                if (!event) { return; }
+                                console.error('[NeoCortex UI]', event.reason);
+                        });
                 }
 
-                (function patchFetch() {
-                        const originalFetch = window.fetch.bind(window);
-                        window.fetch = (input, init = {}) => {
-                                const token = authToken();
-                                const headers = new Headers(init.headers || {});
-                                if (token && !headers.has('Authorization')) {
-                                        headers.set('Authorization', 'Bearer ' + token);
-                                }
-                                const finalInit = Object.assign({}, init, { headers });
-                                if (!finalInit.credentials) {
-                                        finalInit.credentials = 'include';
-                                }
-                                return originalFetch(input, finalInit);
-                        };
-                })();
+                document.addEventListener('DOMContentLoaded', () => {
+                        attachGlobalErrorHandlers();
 
-                async function loadGpuStatus() {
-                        const el = document.getElementById('gpuStatus');
-                        try {
-                                const resp = await fetch('/gpu-info', { cache: 'no-store' });
-                                const data = await resp.json();
-                                if (data.cuda_available) {
-                                        el.textContent = 'ONLINE (' + (data.devices || []).join(', ') + ')';
-                                        el.classList.add('ok');
-                                } else {
-                                        el.textContent = 'OFFLINE';
+                        const TOKEN_KEY = 'nc_token';
+
+                        function authToken() {
+                                return localStorage.getItem(TOKEN_KEY);
+                        }
+
+                        (function patchFetch() {
+                                const originalFetch = window.fetch.bind(window);
+                                window.fetch = (input, init = {}) => {
+                                        const token = authToken();
+                                        const headers = new Headers(init.headers || {});
+                                        if (token && !headers.has('Authorization')) {
+                                                headers.set('Authorization', 'Bearer ' + token);
+                                        }
+                                        headers.set('X-Requested-With', headers.get('X-Requested-With') || 'fetch');
+                                        const finalInit = Object.assign({}, init, { headers });
+                                        if (!finalInit.credentials) {
+                                                finalInit.credentials = 'include';
+                                        }
+                                        return originalFetch(input, finalInit);
+                                };
+                        })();
+
+                        async function loadGpuStatus() {
+                                const el = document.getElementById('gpuStatus');
+                                if (!el) { return; }
+                                try {
+                                        const resp = await fetch('/gpu-info', { cache: 'no-store' });
+                                        const data = await resp.json();
+                                        if (data.cuda_available) {
+                                                el.textContent = 'ONLINE (' + (data.devices || []).join(', ') + ')';
+                                                el.classList.add('ok');
+                                        } else {
+                                                el.textContent = 'OFFLINE';
+                                                el.classList.add('warn');
+                                        }
+                                } catch (err) {
+                                        el.textContent = 'Unknown';
                                         el.classList.add('warn');
                                 }
-                        } catch (err) {
-                                el.textContent = 'Unknown';
-                                el.classList.add('warn');
                         }
-                }
 
-                async function loadPreflight() {
-                        const elRun = document.getElementById('runStatus');
-                        const elVersion = document.getElementById('versionStatus');
-                        const summary = document.getElementById('preflightSummary');
-                        try {
-                                const resp = await fetch('/preflight', { cache: 'no-store' });
-                                const data = await resp.json();
-                                elVersion.textContent = data.version || '—';
-                                elRun.textContent = data.last_training_run || 'No runs yet';
-                                summary.textContent = data.summary || 'Preflight diagnostics completed.';
-                        } catch (err) {
-                                elRun.textContent = 'Unavailable';
-                                elVersion.textContent = 'Unknown';
-                                summary.textContent = 'Unable to load preflight diagnostics.';
-                        }
-                }
-
-                (function initNgrokCopy() {
-                        const btn = document.getElementById('copyNgrok');
-                        if (!btn) return;
-                        btn.addEventListener('click', async () => {
-                                const url = window.location.origin;
+                        async function loadPreflight() {
+                                const elRun = document.getElementById('runStatus');
+                                const elVersion = document.getElementById('versionStatus');
+                                const summary = document.getElementById('preflightSummary');
+                                if (!elRun || !elVersion || !summary) { return; }
                                 try {
-                                        await navigator.clipboard.writeText(url);
-                                        btn.textContent = 'Copied ' + url;
-                                } catch (_) {
-                                        btn.textContent = url;
+                                        const resp = await fetch('/preflight', { cache: 'no-store' });
+                                        const data = await resp.json();
+                                        elVersion.textContent = data.version || '—';
+                                        elRun.textContent = data.last_training_run || 'No runs yet';
+                                        summary.textContent = data.summary || 'Preflight diagnostics completed.';
+                                } catch (err) {
+                                        elRun.textContent = 'Unavailable';
+                                        elVersion.textContent = 'Unknown';
+                                        summary.textContent = 'Unable to load preflight diagnostics.';
                                 }
-                        });
-                })();
+                        }
 
-                loadGpuStatus();
-                loadPreflight();
+                        (function initNgrokCopy() {
+                                const btn = document.getElementById('copyNgrok');
+                                if (!btn) { return; }
+                                btn.addEventListener('click', async () => {
+                                        const url = window.location.origin;
+                                        try {
+                                                await navigator.clipboard.writeText(url);
+                                                btn.textContent = 'Copied ' + url;
+                                        } catch (_) {
+                                                btn.textContent = url;
+                                        }
+                                });
+                        })();
+
+                        loadGpuStatus();
+                        loadPreflight();
+                });
         </script>
 </body>
 </html>

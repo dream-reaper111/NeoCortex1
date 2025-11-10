@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Neo Cortex – End User Console</title>
-    <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
+    <link rel="stylesheet" href="{{ request.url_for('static', path='/enduserapp/style.css') }}" />
   </head>
   <body>
     {% include "partials/nav.html" %}
@@ -355,6 +355,6 @@
       <small>&copy; <span id="year"></span> Neo Cortex. Built for the Alpaca webhook integration.</small>
     </footer>
 
-    <script src="{{ request.url_for('public', path='enduserapp/app.js') }}" type="module"></script>
+    <script src="{{ request.url_for('static', path='/enduserapp/app.js') }}" type="module"></script>
   </body>
 </html>

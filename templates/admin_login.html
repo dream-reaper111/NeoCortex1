@@ -4,8 +4,8 @@
         <meta charset="utf-8" />
         <title>Neo Cortex AI – Admin Sign In</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='assets/neocortex-theme.css') }}" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
+        <link rel="stylesheet" href="{{ request.url_for('static', path='/assets/neocortex-theme.css') }}" />
+        <link rel="stylesheet" href="{{ request.url_for('static', path='/enduserapp/style.css') }}" />
         <style>
                 .admin-screen {
                         width: min(460px, 100%);
@@ -44,7 +44,7 @@
                                 <h1>Admin Portal</h1>
                                 <p class="admin-subtitle nc-text-muted">Sign in to manage Neo Cortex AI configuration and monitor activity.</p>
                         </header>
-                        <form id="loginForm" class="nc-stack">
+                        <form id="loginForm" class="nc-stack" method="post" action="/admin/login">
                                 <div>
                                         <label for="username">Username</label>
                                         <input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required />
@@ -68,149 +68,186 @@
         </main>
 
         <script>
-                const TOKEN_KEY = 'nc_token';
-                const USERNAME_KEY = 'nc_user';
-                const COOKIE_NAME_KEY = 'nc_cookie';
-                const REFRESH_KEY = 'nc_refresh';
-                const params = new URLSearchParams(window.location.search);
+                function attachGlobalErrorHandlers() {
+                        if (window.__ncErrorHandlerAttached) {
+                                return;
+                        }
+                        window.__ncErrorHandlerAttached = true;
+                        window.addEventListener('error', (event) => {
+                                if (!event) { return; }
+                                console.error('[NeoCortex UI]', event.message, event.error);
+                        });
+                        window.addEventListener('unhandledrejection', (event) => {
+                                if (!event) { return; }
+                                console.error('[NeoCortex UI]', event.reason);
+                        });
+                }
 
-                function resolveNext(candidate) {
-                        if (!candidate) { return '/dashboard'; }
-                        try {
-                                const parsed = new URL(candidate, window.location.origin);
-                                if (parsed.origin !== window.location.origin) {
+                document.addEventListener('DOMContentLoaded', () => {
+                        attachGlobalErrorHandlers();
+
+                        const TOKEN_KEY = 'nc_token';
+                        const USERNAME_KEY = 'nc_user';
+                        const COOKIE_NAME_KEY = 'nc_cookie';
+                        const REFRESH_KEY = 'nc_refresh';
+                        const params = new URLSearchParams(window.location.search);
+
+                        function resolveNext(candidate) {
+                                if (!candidate) { return '/dashboard'; }
+                                try {
+                                        const parsed = new URL(candidate, window.location.origin);
+                                        if (parsed.origin !== window.location.origin) {
+                                                return '/dashboard';
+                                        }
+                                        return parsed.pathname + parsed.search + parsed.hash;
+                                } catch (_) {
                                         return '/dashboard';
                                 }
-                                return parsed.pathname + parsed.search + parsed.hash;
-                        } catch (_) {
-                                return '/dashboard';
                         }
-                }
 
-                const rawNext = params.get('next');
-                const nextUrl = resolveNext(rawNext);
+                        const rawNext = params.get('next');
+                        const nextUrl = resolveNext(rawNext);
 
-                const sanitizedParams = new URLSearchParams();
-                if (rawNext) {
-                        sanitizedParams.set('next', rawNext);
-                }
-                const sensitiveKeys = ['username', 'password', 'adminkey', 'adminKey'];
-                let scrubbed = false;
-                for (const key of sensitiveKeys) {
-                        if (params.has(key)) {
-                                scrubbed = true;
-                                break;
+                        const sanitizedParams = new URLSearchParams();
+                        if (rawNext) {
+                                sanitizedParams.set('next', rawNext);
                         }
-                }
-                const sanitizedQuery = sanitizedParams.toString();
-                const desiredSearch = sanitizedQuery ? `?${sanitizedQuery}` : '';
-                if (scrubbed || window.location.search !== desiredSearch) {
-                        const newUrl = desiredSearch ? `${window.location.pathname}${desiredSearch}` : window.location.pathname;
-                        window.history.replaceState(null, document.title, newUrl);
-                }
-
-                if (localStorage.getItem(TOKEN_KEY)) {
-                        window.location.replace(nextUrl);
-                }
-
-                if (!localStorage.getItem(COOKIE_NAME_KEY)) {
-                        localStorage.setItem(COOKIE_NAME_KEY, 'session_token');
-                }
-
-                const messageEl = document.getElementById('message');
-                const usernameEl = document.getElementById('username');
-                const passwordEl = document.getElementById('password');
-                const loginBtn = document.getElementById('loginBtn');
-                const registerBtn = document.getElementById('registerBtn');
-                const adminKeyEl = document.getElementById('adminKey');
-
-                function setMessage(text, type) {
-                        messageEl.textContent = text || '';
-                        messageEl.className = 'nc-message' + (type ? ' ' + type : '');
-                }
-
-                async function sendAuth(path, body) {
-                        const resp = await fetch(path, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                credentials: 'include',
-                                body: JSON.stringify(body)
-                        });
-                        const text = await resp.text();
-                        let data;
-                        try { data = JSON.parse(text); }
-                        catch (_) { throw new Error(`HTTP ${resp.status} ${resp.statusText}`); }
-                        if (!resp.ok || !data.ok) {
-                                throw new Error(data.detail || data.reason || 'Request failed');
-                        }
-                        return data;
-                }
-
-                document.getElementById('loginForm').addEventListener('submit', async (event) => {
-                        event.preventDefault();
-                        const username = usernameEl.value.trim().toLowerCase();
-                        const password = passwordEl.value;
-                        if (!username || !password) {
-                                setMessage('Enter a username and password to continue.', 'error');
-                                return;
-                        }
-                        loginBtn.disabled = true;
-                        registerBtn.disabled = true;
-                        setMessage('Signing you in…');
-                        try {
-                                const data = await sendAuth('/admin/login', { username, password, require_admin: true });
-                                const token = data.access_token || data.token;
-                                if (!token) {
-                                        throw new Error('Login response missing access token');
+                        const sensitiveKeys = new Set(['username', 'password', 'adminkey', 'admin_key']);
+                        let scrubbed = false;
+                        for (const key of params.keys()) {
+                                if (sensitiveKeys.has(key.toLowerCase())) {
+                                        scrubbed = true;
+                                        break;
                                 }
-                                localStorage.setItem(TOKEN_KEY, token);
-                                localStorage.setItem(USERNAME_KEY, data.username || username);
-                                if (data.refresh_token) {
-                                        localStorage.setItem(REFRESH_KEY, data.refresh_token);
-                                } else {
-                                        localStorage.removeItem(REFRESH_KEY);
-                                }
-                                const cookieName = data.session_cookie || localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
-                                localStorage.setItem(COOKIE_NAME_KEY, cookieName);
-                                setMessage('Success! Redirecting…', 'success');
+                        }
+                        const sanitizedQuery = sanitizedParams.toString();
+                        const desiredSearch = sanitizedQuery ? `?${sanitizedQuery}` : '';
+                        if (scrubbed || window.location.search !== desiredSearch) {
+                                const newUrl = desiredSearch ? `${window.location.pathname}${desiredSearch}` : window.location.pathname;
+                                window.history.replaceState(null, document.title, newUrl);
+                        }
+
+                        if (localStorage.getItem(TOKEN_KEY)) {
                                 window.location.replace(nextUrl);
-                        } catch (err) {
-                                setMessage(err.message || 'Login failed', 'error');
-                        } finally {
-                                loginBtn.disabled = false;
-                                registerBtn.disabled = false;
-                        }
-                });
-
-                registerBtn.addEventListener('click', async () => {
-                        const username = usernameEl.value.trim().toLowerCase();
-                        const password = passwordEl.value;
-                        const adminKey = adminKeyEl.value.trim();
-                        if (!username || !password) {
-                                setMessage('Choose a username and password before creating an account.', 'error');
                                 return;
                         }
-                        if (!adminKey) {
-                                setMessage('Enter the admin private key to create an account.', 'error');
+
+                        if (!localStorage.getItem(COOKIE_NAME_KEY)) {
+                                localStorage.setItem(COOKIE_NAME_KEY, 'session_token');
+                        }
+
+                        const messageEl = document.getElementById('message');
+                        const usernameEl = document.getElementById('username');
+                        const passwordEl = document.getElementById('password');
+                        const loginBtn = document.getElementById('loginBtn');
+                        const registerBtn = document.getElementById('registerBtn');
+                        const adminKeyEl = document.getElementById('adminKey');
+                        const loginForm = document.getElementById('loginForm');
+
+                        if (!messageEl || !usernameEl || !passwordEl || !loginBtn || !registerBtn || !adminKeyEl || !loginForm) {
+                                console.error('[NeoCortex UI] Admin login elements missing');
                                 return;
                         }
-                        registerBtn.disabled = true;
-                        loginBtn.disabled = true;
-                        setMessage('Creating admin account…');
-                        try {
-                                await sendAuth('/register', { username, password, admin_key: adminKey });
-                                setMessage('Account created! You can sign in now.', 'success');
-                                passwordEl.focus();
-                                adminKeyEl.value = '';
-                        } catch (err) {
-                                setMessage(err.message || 'Registration failed', 'error');
-                        } finally {
-                                registerBtn.disabled = false;
-                                loginBtn.disabled = false;
-                        }
-                });
 
-                usernameEl.focus();
+                        function setMessage(text, type) {
+                                messageEl.textContent = text || '';
+                                messageEl.className = 'nc-message' + (type ? ' ' + type : '');
+                        }
+
+                        async function sendAuth(path, formData) {
+                                const resp = await fetch(path, {
+                                        method: 'POST',
+                                        credentials: 'include',
+                                        headers: { 'X-Requested-With': 'fetch' },
+                                        body: formData
+                                });
+                                const text = await resp.text();
+                                let data;
+                                try {
+                                        data = JSON.parse(text);
+                                } catch (_) {
+                                        throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+                                }
+                                if (!resp.ok || !data.ok) {
+                                        throw new Error(data.detail || data.reason || 'Request failed');
+                                }
+                                return data;
+                        }
+
+                        loginForm.addEventListener('submit', async (event) => {
+                                event.preventDefault();
+                                const username = usernameEl.value.trim().toLowerCase();
+                                const password = passwordEl.value;
+                                if (!username || !password) {
+                                        setMessage('Enter a username and password to continue.', 'error');
+                                        return;
+                                }
+                                loginBtn.disabled = true;
+                                registerBtn.disabled = true;
+                                setMessage('Signing you in…');
+                                const formData = new FormData(loginForm);
+                                formData.set('username', username);
+                                formData.set('password', password);
+                                formData.set('require_admin', 'true');
+                                try {
+                                        const data = await sendAuth('/admin/login', formData);
+                                        const token = data.access_token || data.token;
+                                        if (!token) {
+                                                throw new Error('Login response missing access token');
+                                        }
+                                        localStorage.setItem(TOKEN_KEY, token);
+                                        localStorage.setItem(USERNAME_KEY, data.username || username);
+                                        if (data.refresh_token) {
+                                                localStorage.setItem(REFRESH_KEY, data.refresh_token);
+                                        } else {
+                                                localStorage.removeItem(REFRESH_KEY);
+                                        }
+                                        const cookieName = data.session_cookie || localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
+                                        localStorage.setItem(COOKIE_NAME_KEY, cookieName);
+                                        setMessage('Success! Redirecting…', 'success');
+                                        window.location.replace(nextUrl);
+                                } catch (err) {
+                                        setMessage((err && err.message) || 'Login failed', 'error');
+                                } finally {
+                                        loginBtn.disabled = false;
+                                        registerBtn.disabled = false;
+                                }
+                        });
+
+                        registerBtn.addEventListener('click', async () => {
+                                const username = usernameEl.value.trim().toLowerCase();
+                                const password = passwordEl.value;
+                                const adminKey = adminKeyEl.value.trim();
+                                if (!username || !password) {
+                                        setMessage('Choose a username and password before creating an account.', 'error');
+                                        return;
+                                }
+                                if (!adminKey) {
+                                        setMessage('Enter the admin private key to create an account.', 'error');
+                                        return;
+                                }
+                                registerBtn.disabled = true;
+                                loginBtn.disabled = true;
+                                setMessage('Creating admin account…');
+                                const formData = new FormData();
+                                formData.set('username', username);
+                                formData.set('password', password);
+                                formData.set('admin_key', adminKey);
+                                try {
+                                        await sendAuth('/register', formData);
+                                        setMessage('Account created! You can sign in now.', 'success');
+                                        passwordEl.focus();
+                                        adminKeyEl.value = '';
+                                } catch (err) {
+                                        setMessage((err && err.message) || 'Registration failed', 'error');
+                                } finally {
+                                        registerBtn.disabled = false;
+                                        loginBtn.disabled = false;
+                                }
+                        });
+
+                        usernameEl.focus();
+                });
         </script>
 </body>
 </html>

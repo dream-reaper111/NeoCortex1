@@ -1,28 +1,48 @@
-const form = document.getElementById('queryForm');
-const statusEl = document.getElementById('status');
-const submitBtn = document.getElementById('submitBtn');
-const sweepList = document.getElementById('sweepList');
-const clusterList = document.getElementById('clusterList');
-const heatmapContainer = document.getElementById('heatmapContainer');
-const summary = {
-  date: document.getElementById('summaryDate'),
-  bars: document.getElementById('summaryBars'),
-  volume: document.getElementById('summaryVolume'),
-  range: document.getElementById('summaryRange'),
-  bull: document.getElementById('summaryBull'),
-  bear: document.getElementById('summaryBear'),
-  net: document.getElementById('summaryNet')
-};
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof attachGlobalErrorHandlers === 'function') {
+    attachGlobalErrorHandlers();
+  } else if (!window.__ncErrorHandlerAttached) {
+    window.__ncErrorHandlerAttached = true;
+    window.addEventListener('error', (event) => {
+      if (!event) { return; }
+      console.error('[NeoCortex UI]', event.message, event.error);
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      if (!event) { return; }
+      console.error('[NeoCortex UI]', event.reason);
+    });
+  }
 
-const dateInput = document.getElementById('date');
-if (dateInput) {
-  const today = new Date();
-  const iso = today.toISOString().slice(0, 10);
-  dateInput.value = iso;
-  dateInput.max = iso;
-}
+  const form = document.getElementById('queryForm');
+  const statusEl = document.getElementById('status');
+  const submitBtn = document.getElementById('submitBtn');
+  const sweepList = document.getElementById('sweepList');
+  const clusterList = document.getElementById('clusterList');
+  const heatmapContainer = document.getElementById('heatmapContainer');
+  const summary = {
+    date: document.getElementById('summaryDate'),
+    bars: document.getElementById('summaryBars'),
+    volume: document.getElementById('summaryVolume'),
+    range: document.getElementById('summaryRange'),
+    bull: document.getElementById('summaryBull'),
+    bear: document.getElementById('summaryBear'),
+    net: document.getElementById('summaryNet')
+  };
 
-function fmtNumber(value, { digits = 2, compact = false, sign = false } = {}) {
+  if (!form || !statusEl || !submitBtn || !sweepList || !clusterList || !heatmapContainer) {
+    console.error('[NeoCortex UI] Liquidity radar elements missing');
+    return;
+  }
+
+  const dateInput = document.getElementById('date');
+  if (dateInput) {
+    const today = new Date();
+    const iso = today.toISOString().slice(0, 10);
+    dateInput.value = iso;
+    dateInput.max = iso;
+  }
+
+  function fmtNumber(value, { digits = 2, compact = false, sign = false } = {}) {
   if (value === undefined || value === null || Number.isNaN(value)) {
     return '—';
   }
@@ -100,7 +120,7 @@ function renderSummary(analysis) {
   summary.net.textContent = fmtNumber(footprint.delta, { compact: true, digits: 2, sign: true });
 }
 
-function renderHeatmap(info) {
+  function renderHeatmap(info) {
   if (!info || !info.public_url) {
     heatmapContainer.className = 'empty';
     heatmapContainer.textContent = 'No heatmap generated for this session.';
@@ -114,7 +134,7 @@ function renderHeatmap(info) {
   heatmapContainer.appendChild(img);
 }
 
-async function runQuery(event) {
+  async function runQuery(event) {
   event.preventDefault();
   const formData = new FormData(form);
   const ticker = formData.get('ticker');
@@ -131,7 +151,9 @@ async function runQuery(event) {
   if (date) params.set('session_date', date);
 
   try {
-    const resp = await fetch(`/strategy/liquidity-sweeps?${params.toString()}`);
+    const resp = await fetch(`/strategy/liquidity-sweeps?${params.toString()}`, {
+      headers: { 'X-Requested-With': 'fetch' }
+    });
     const data = await resp.json();
     if (!resp.ok || !data.ok) {
       throw new Error(data.detail || 'Scan failed');
@@ -153,6 +175,7 @@ async function runQuery(event) {
   } finally {
     submitBtn.disabled = false;
   }
-}
+  }
 
-form.addEventListener('submit', runQuery);
+  form.addEventListener('submit', runQuery);
+});

@@ -7,7 +7,7 @@
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
+        <link rel="stylesheet" href="{{ request.url_for('static', path='/enduserapp/style.css') }}" />
         <style>
                 :root {
                         color-scheme: dark;
@@ -349,6 +349,6 @@
                 Powered by Neo Cortex strategy engine. Use paper trading keys when experimenting.
         </footer>
 
-        <script src="./app.js" type="module"></script>
+        <script src="{{ request.url_for('static', path='/liquidity/app.js') }}" type="module"></script>
 </body>
 </html>

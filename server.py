@@ -94,7 +94,9 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when optional depende
 
         async def __call__(self, scope, receive, send):  # pragma: no cover - pass-through behaviour
             await self.app(scope, receive, send)
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse, PlainTextResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 try:
     from fastapi.templating import Jinja2Templates
@@ -2770,6 +2772,45 @@ def _json(obj: Any, code: int = 200) -> JSONResponse:
     return JSONResponse(obj, status_code=code, headers=_nocache())
 
 
+def _wants_json_response(request: Request) -> bool:
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept:
+        return True
+    requested_with = (request.headers.get("x-requested-with") or "").lower()
+    if requested_with in {"fetch", "xmlhttprequest"}:
+        return True
+    if not accept or accept == "*/*":
+        return True
+    sec_mode = (request.headers.get("sec-fetch-mode") or "").lower()
+    return sec_mode in {"cors", "same-origin"}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+    detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    if _wants_json_response(request):
+        return JSONResponse({"ok": False, "detail": detail}, status_code=exc.status_code, headers=_nocache())
+    return PlainTextResponse(detail, status_code=exc.status_code, headers=_nocache())
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+    message = "; ".join(
+        f"{'.'.join(str(part) for part in error.get('loc', []))}: {error.get('msg')}" for error in exc.errors()
+    ) or "Invalid request"
+    if _wants_json_response(request):
+        return JSONResponse({"ok": False, "detail": message}, status_code=422, headers=_nocache())
+    return PlainTextResponse(message, status_code=422, headers=_nocache())
+
+
+@app.exception_handler(Exception)
+async def _unexpected_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error while processing %s %s", request.method, request.url.path, exc_info=exc)
+    if _wants_json_response(request):
+        return JSONResponse({"ok": False, "detail": "internal server error"}, status_code=500, headers=_nocache())
+    return PlainTextResponse("Internal server error", status_code=500, headers=_nocache())
+
+
 def _render_template(
     name: str,
     request: Request,
@@ -2934,14 +2975,13 @@ if FORCE_HTTPS_REDIRECT:
     app.add_middleware(HTTPSRedirectMiddleware)
 
 
-if ALLOWED_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=ALLOWED_ORIGINS,
-        allow_credentials=True,
-        allow_methods=sorted(ALLOWED_HTTP_METHODS),
-        allow_headers=["Authorization", "Content-Type", CSRF_HEADER_NAME, "X-Requested-With"],
-    )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS or ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.middleware("http")
@@ -3050,6 +3090,7 @@ async def _auth_failure_observer(request: Request, call_next):
     return response
 
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
+app.mount("/static", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="static")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
 
@@ -3329,8 +3370,8 @@ def _get_exog(sym: str, idx: pd.DatetimeIndex, include_fa: bool) -> pd.DataFrame
     return ex.fillna(0.0)
 
 # ---------- routes ----------
-@app.get("/")
-def root():
+@app.get("/api/health")
+def api_health():
     return {"ok": True, "msg": "Neo Cortex AI API ready"}
 
 
@@ -5078,7 +5119,7 @@ def idle_status():
     return _json({"ok": True, "running": {k: (not v.done()) for k,v in IdleTasks.items()}})
 
 # ---------- metrics/artifacts ----------
-@app.post("/metrics/latest")
+@app.api_route("/metrics/latest", methods=["GET", "POST"])
 def metrics_latest():
     d = _latest_run_dir()
     if not d: return _json({"ok": False, "reason":"no runs yet"})
