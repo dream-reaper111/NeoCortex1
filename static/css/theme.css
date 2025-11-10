@@ -1,0 +1,98 @@
+:root {
+  color-scheme: dark;
+  --nc-gradient: linear-gradient(135deg, #2b0049 0%, #6e1b8f 100%);
+  --nc-panel-sheen: rgba(255, 255, 255, 0.04);
+  --nc-text-primary: #ffffff;
+  --nc-text-muted: rgba(255, 255, 255, 0.72);
+  --nc-border-glow: rgba(174, 96, 255, 0.35);
+  --nc-panel-backdrop: rgba(23, 5, 38, 0.65);
+  --nc-panel-highlight: rgba(153, 69, 255, 0.15);
+  --nc-shadow-xl: 0 30px 80px rgba(10, 0, 25, 0.65);
+  --nc-radius-lg: 28px;
+  --nc-blur: 28px;
+  --nc-transition: 160ms ease;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-image: var(--nc-gradient);
+  background-attachment: fixed;
+  background-size: cover;
+  background-repeat: no-repeat;
+  color: var(--nc-text-primary);
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.14), transparent 60%),
+    radial-gradient(circle at 80% 0%, rgba(212, 117, 255, 0.2), transparent 55%),
+    radial-gradient(circle at 10% 90%, rgba(100, 54, 181, 0.35), transparent 65%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.nc-body,
+main,
+section,
+header,
+footer {
+  color: inherit;
+}
+
+.glass-panel,
+.nc-app-shell,
+.auth-card,
+.card,
+.shell,
+.nc-panel,
+.nc-surface {
+  background: linear-gradient(145deg, var(--nc-panel-backdrop), transparent 65%)
+      var(--nc-panel-sheen);
+  background-blend-mode: lighten;
+  backdrop-filter: blur(var(--nc-blur));
+  border: 1px solid var(--nc-border-glow);
+  border-radius: var(--nc-radius-lg);
+  box-shadow: var(--nc-shadow-xl);
+  color: inherit;
+}
+
+a,
+button {
+  transition: transform var(--nc-transition), box-shadow var(--nc-transition), filter var(--nc-transition);
+}
+
+a:hover,
+a:focus,
+button:hover,
+button:focus {
+  filter: brightness(1.08);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
+}

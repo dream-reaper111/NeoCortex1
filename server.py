@@ -106,6 +106,11 @@ from fastapi.responses import (
     Response,
 )
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from starlette.status import (
+    HTTP_401_UNAUTHORIZED,
+    HTTP_403_FORBIDDEN,
+    HTTP_502_BAD_GATEWAY,
+)
 try:
     from fastapi.templating import Jinja2Templates
 except ModuleNotFoundError:  # pragma: no cover - fallback when optional extras missing
@@ -678,6 +683,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
 
 # added imports for Alpaca integration
 import requests
+import httpx
 
 with suppress(ModuleNotFoundError):
     from cryptography.fernet import Fernet, InvalidToken  # type: ignore
@@ -2696,6 +2702,39 @@ def _verify_whop_license(license_key: str) -> Dict[str, Any]:
     return {"license_key": license_key, "email": email, "raw": data}
 
 
+class WhopTokenRequest(BaseModel):
+    token: str
+
+
+async def _fetch_whop_user(token: str) -> Dict[str, Any]:
+    token = (token or "").strip()
+    if not token:
+        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="whop_token_required")
+
+    url = f"{WHOP_API_BASE}/api/v2/me"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        logger.error("Whop token verification failed: %s", exc)
+        raise HTTPException(status_code=HTTP_502_BAD_GATEWAY, detail="whop_service_unavailable") from exc
+
+    if response.status_code != 200:
+        logger.warning("Whop token rejected with status %s", response.status_code)
+        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="invalid_whop_token")
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        logger.error("Invalid JSON from Whop API: %s", exc)
+        raise HTTPException(status_code=HTTP_502_BAD_GATEWAY, detail="invalid_whop_response") from exc
+
+
 def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
     '''Derive a 2048-bit PBKDF2-SHA512 digest and return (hash_hex, salt_hex).'''
     if salt is None:
@@ -3055,6 +3094,8 @@ async def log_requests(request: Request, call_next):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     if isinstance(exc, HTTPException):
+        if exc.status_code == HTTP_403_FORBIDDEN and str(exc.detail) == "not_admin":
+            return RedirectResponse(url="/login?error=not_admin", status_code=302)
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
     print("[NeoCortex Error]", traceback.format_exc())
     # Honour FastAPI-style ``HTTPException`` responses so that callers receive
@@ -3186,6 +3227,7 @@ async def _auth_failure_observer(request: Request, call_next):
         _register_auth_failure(None, ip)
     return response
 
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
@@ -4123,9 +4165,13 @@ def _require_user(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str,
     return user
 
 
-def _require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+def require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     if ROLE_ADMIN not in set(user.get("roles", [])):
-        raise HTTPException(status_code=403, detail="admin access required")
+        raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="not_admin")
+    return user
+
+
+def _require_admin(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
     return user
 
 
@@ -4172,6 +4218,14 @@ async def admin_login(request: Request):
         prefer_redirect=prefer_redirect,
         next_hint=next_hint,
     )
+
+
+@app.post("/whop/login")
+async def whop_login(payload: WhopTokenRequest) -> JSONResponse:
+    """Authenticate an end-user session using a Whop access token."""
+
+    whop_user = await _fetch_whop_user(payload.token)
+    return JSONResponse({"ok": True, "user": whop_user})
 
 
 @app.post("/logout")
@@ -5504,12 +5558,12 @@ def admin_login_page(request: Request):
 
 
 @app.get("/admin", response_class=HTMLResponse)
-def admin_portal(request: Request, user: Dict[str, Any] = Depends(_require_admin)):
+def admin_portal(request: Request, user: Dict[str, Any] = Depends(require_admin)):
     return _render_template("admin.html", request, {"user": user})
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, user: Dict[str, Any] = Depends(_require_admin)):
+def dashboard(request: Request, user: Dict[str, Any] = Depends(require_admin)):
     return _render_template("dashboard.html", request, {"user": user})
 
 

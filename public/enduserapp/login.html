@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Neo Cortex – WHOP Login</title>
+    <link rel="stylesheet" href="/static/css/theme.css" />
+    <link rel="stylesheet" href="./style.css" />
+    <style>
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(2rem, 4vw, 4rem);
+      }
+      .whop-login {
+        width: min(420px, 100%);
+        padding: clamp(1.75rem, 3vw, 2.5rem);
+        display: flex;
+        flex-direction: column;
+        gap: 1.2rem;
+      }
+      .nc-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.25rem 0.85rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        background: rgba(255, 255, 255, 0.12);
+        color: inherit;
+        width: fit-content;
+      }
+      .whop-login h1 {
+        margin: 0;
+        font-size: clamp(1.6rem, 4vw, 2.4rem);
+        letter-spacing: -0.015em;
+      }
+      .whop-login p {
+        margin: 0;
+        color: var(--nc-text-muted);
+        line-height: 1.5;
+      }
+      .whop-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .whop-field label {
+        font-weight: 600;
+      }
+      .whop-field input {
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(15, 4, 26, 0.65);
+        color: inherit;
+        padding: 0.85rem 1.05rem;
+        font-size: 1rem;
+      }
+      .whop-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      .whop-actions button {
+        border: none;
+        border-radius: 999px;
+        padding: 0.9rem 1.6rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        background: rgba(255, 255, 255, 0.12);
+        color: inherit;
+        cursor: pointer;
+      }
+      .whop-actions button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .whop-notice {
+        font-size: 0.95rem;
+        padding: 0.75rem 1rem;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(15, 4, 26, 0.5);
+      }
+      .whop-notice[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <article class="whop-login glass-panel">
+      <div>
+        <span class="nc-pill">End User Console</span>
+        <h1>Sign in with Whop</h1>
+        <p>
+          Paste your Whop access token to unlock the Neo Cortex end user dashboard and sync your membership details.
+        </p>
+      </div>
+      <form id="whopLoginForm" class="whop-form" autocomplete="off">
+        <div class="whop-field">
+          <label for="whopToken">Whop Access Token</label>
+          <input id="whopToken" name="token" type="password" placeholder="whop_xxxxx" required />
+        </div>
+        <div class="whop-actions">
+          <button type="submit" id="whopSubmit">Authenticate with Whop</button>
+          <div id="whopNotice" class="whop-notice" hidden></div>
+        </div>
+      </form>
+    </article>
+    <script>
+      const form = document.getElementById('whopLoginForm');
+      const tokenInput = document.getElementById('whopToken');
+      const submitBtn = document.getElementById('whopSubmit');
+      const notice = document.getElementById('whopNotice');
+
+      function showNotice(text, type = '') {
+        if (!notice) return;
+        if (!text) {
+          notice.hidden = true;
+          notice.textContent = '';
+          notice.className = 'whop-notice';
+          return;
+        }
+        notice.hidden = false;
+        notice.textContent = text;
+        notice.className = 'whop-notice' + (type ? ' ' + type : '');
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const token = tokenInput.value.trim();
+        if (!token) {
+          showNotice('Enter a Whop access token to continue.', 'error');
+          return;
+        }
+        submitBtn.disabled = true;
+        showNotice('Validating token…');
+        try {
+          const resp = await fetch('/whop/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token })
+          });
+          if (!resp.ok) {
+            throw new Error('invalid');
+          }
+          const data = await resp.json();
+          if (!data || !data.ok || !data.user) {
+            throw new Error('invalid');
+          }
+          localStorage.setItem('nc_whop_user', JSON.stringify(data.user));
+          showNotice('Success! Redirecting…', 'success');
+          window.location.href = '/enduserapp/dashboard';
+        } catch (error) {
+          console.error('Whop login failed', error);
+          showNotice('Invalid token. Please try again.', 'error');
+          alert('Invalid token');
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

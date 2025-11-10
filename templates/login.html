@@ -77,12 +77,19 @@
     }
 
     const params = new URLSearchParams(window.location.search);
+    const errorParam = params.get('error');
+    if (errorParam === 'not_admin') {
+        showNotice('Admin access required. Sign in with an administrator account.', 'error');
+    }
     const rawNext = params.get('next');
     const nextUrl = resolveNext(rawNext);
 
     const sanitizedParams = new URLSearchParams();
     if (rawNext) {
         sanitizedParams.set('next', rawNext);
+    }
+    if (errorParam) {
+        sanitizedParams.set('error', errorParam);
     }
     const sensitiveKeys = ['username', 'password'];
     let scrubbed = false;
