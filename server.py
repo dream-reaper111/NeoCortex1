@@ -2735,10 +2735,14 @@ async def login(request: Request):
             "ok": True,
             "access_token": tokens["access_token"],
             "refresh_token": tokens["refresh_token"],
+            "token": tokens["access_token"],
             "username": uname,
             "roles": user["roles"],
             "scopes": sorted(user["scopes"]),
             "mfa_required": require_mfa,
+            "session_cookie": SESSION_COOKIE_NAME,
+            "refresh_cookie": REFRESH_COOKIE_NAME,
+            "refresh_expires_at": tokens.get("refresh_expires_at"),
         }
     )
     _set_auth_cookies(resp, tokens)
