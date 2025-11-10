@@ -73,8 +73,12 @@ from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Depends
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import FastAPI, HTTPException, Request, Header, Cookie
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+
+
 class _FallbackHTTPSRedirectMiddleware:
-    '''Minimal HTTPS redirect middleware compatible with FastAPI's interface.'''
+    """Minimal HTTPS redirect middleware compatible with FastAPI's interface."""
 
     def __init__(self, app):
         self.app = app
@@ -112,71 +116,20 @@ class _FallbackHTTPSRedirectMiddleware:
         target_url = f"https://{host}{path}" if host else "https://" + path.lstrip("/")
         response = RedirectResponse(url=target_url, status_code=307)
         await response(scope, receive, send)
-try:  # pragma: no cover - import is environment-dependent
-    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware as _FastAPIHTTPSRedirectMiddleware
-except Exception:  # ModuleNotFoundError or trimmed export
-    _FastAPIHTTPSRedirectMiddleware = None
 
 
-if _FastAPIHTTPSRedirectMiddleware is not None:
-    HTTPSRedirectMiddleware = _FastAPIHTTPSRedirectMiddleware
-else:
-    HTTPSRedirectMiddleware = _FallbackHTTPSRedirectMiddleware
-
-
-def _load_https_redirect_middleware():
-    with suppress(Exception):
+def _resolve_https_redirect_middleware():
+    try:  # pragma: no cover - import is environment-dependent
         module = importlib.import_module("fastapi.middleware.httpsredirect")
         middleware = getattr(module, "HTTPSRedirectMiddleware", None)
         if middleware is not None:
             return middleware
+    except Exception:  # pragma: no cover - fallback for trimmed/partial installs
+        return _FallbackHTTPSRedirectMiddleware
     return _FallbackHTTPSRedirectMiddleware
 
 
-HTTPSRedirectMiddleware = _load_https_redirect_middleware()
-try:
-
-    _https_redirect_mod = importlib.import_module("fastapi.middleware.httpsredirect")
-    HTTPSRedirectMiddleware = getattr(_https_redirect_mod, "HTTPSRedirectMiddleware")
-except Exception:  # pragma: no cover - fallback for trimmed fastapi distro or runtime import errors
-    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
-except ModuleNotFoundError:  # pragma: no cover - fallback for trimmed fastapi distro
-    class HTTPSRedirectMiddleware:
-        '''Minimal HTTPS redirect middleware compatible with FastAPI's interface.'''
-
-        def __init__(self, app):
-            self.app = app
-
-        async def __call__(self, scope, receive, send):
-            if scope.get("type") != "http":
-                await self.app(scope, receive, send)
-                return
-
-            scheme = scope.get("scheme", "http")
-            if scheme == "https":
-                await self.app(scope, receive, send)
-                return
-
-            headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
-            host = headers.get("host")
-            if not host:
-                server = scope.get("server")
-                if server:
-                    host = f"{server[0]}:{server[1]}" if server[1] else server[0]
-                else:
-                    host = ""
-
-            path = scope.get("raw_path") or scope.get("path", "")
-            if isinstance(path, bytes):
-                path = path.decode("latin-1")
-
-            query = scope.get("query_string", b"")
-            if query:
-                path = f"{path}?{query.decode('latin-1')}"
-
-            target_url = f"https://{host}{path}" if host else "https://" + path.lstrip("/")
-            response = RedirectResponse(url=target_url, status_code=307)
-            await response(scope, receive, send)
+HTTPSRedirectMiddleware = _resolve_https_redirect_middleware()
 
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -875,7 +828,6 @@ PINNED_CERT_HASH_ALGO = (os.getenv("PINNED_CERT_HASH_ALGO") or "sha256").strip()
 ENABLE_CERT_PINNING = bool(PINNED_CERT_FINGERPRINT)
 
 SECURE_HEADERS_TEMPLATE: Dict[str, str] = {
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
@@ -885,14 +837,25 @@ SECURE_HEADERS_TEMPLATE: Dict[str, str] = {
     "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; object-src 'none'",
 }
 CUSTOM_SECURE_HEADERS = os.getenv("SECURE_HEADERS_EXTRA", "")
+_STRICT_TRANSPORT_TEMPLATE: Optional[str] = None
 if CUSTOM_SECURE_HEADERS:
+    updated_headers = dict(SECURE_HEADERS_TEMPLATE)
     for header_pair in CUSTOM_SECURE_HEADERS.split(";;"):
         if not header_pair.strip():
             continue
         if "=" not in header_pair:
             continue
         name, value = header_pair.split("=", 1)
-        SECURE_HEADERS_TEMPLATE[name.strip()] = value.strip()
+        header_name = name.strip()
+        header_value = value.strip()
+        if header_name.lower() == "strict-transport-security":
+            _STRICT_TRANSPORT_TEMPLATE = header_value
+            continue
+        updated_headers[header_name] = header_value
+    SECURE_HEADERS_TEMPLATE = updated_headers
+else:
+    _STRICT_TRANSPORT_TEMPLATE = None
+
 DEFAULT_SECURITY_HEADERS.update(SECURE_HEADERS_TEMPLATE)
 
 WHOP_API_KEY = (os.getenv("WHOP_API_KEY") or "").strip() or None
@@ -2036,8 +1999,12 @@ if ENABLE_SECURITY_HEADERS or ENABLE_HSTS or DISABLE_SERVER_HEADER:
             for header_name, header_value in DEFAULT_SECURITY_HEADERS.items():
                 response.headers.setdefault(header_name, header_value)
 
-        if ENABLE_HSTS and HSTS_HEADER_VALUE and request.url.scheme == "https":
-            response.headers.setdefault("Strict-Transport-Security", HSTS_HEADER_VALUE)
+        if ENABLE_HSTS and request.url.scheme == "https":
+            sts_value = _STRICT_TRANSPORT_TEMPLATE or HSTS_HEADER_VALUE
+            if sts_value:
+                response.headers["Strict-Transport-Security"] = sts_value
+        else:
+            response.headers.pop("Strict-Transport-Security", None)
 
         if DISABLE_SERVER_HEADER and "server" in response.headers:
             del response.headers["server"]
