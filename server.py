@@ -73,6 +73,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 else:  # pragma: no cover - exercised when pandas is installed
     _PANDAS_AVAILABLE = True
 
+from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Depends
 try:  # pragma: no cover - optional dependency
     from openai import OpenAI, OpenAIError
 except ModuleNotFoundError:  # pragma: no cover - fallback when OpenAI SDK missing
@@ -251,6 +252,7 @@ from fastapi.templating import Jinja2Templates
 from auth import create_access_token, get_current_user
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Form
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 
 class _FallbackHTTPSRedirectMiddleware:
@@ -1427,6 +1429,7 @@ WHOP_API_KEY = (os.getenv("WHOP_API_KEY") or "").strip() or None
 WHOP_API_BASE = (os.getenv("WHOP_API_BASE") or "https://api.whop.com").rstrip("/")
 WHOP_PORTAL_URL = (os.getenv("WHOP_PORTAL_URL") or "").strip() or None
 WHOP_SESSION_TTL = int(os.getenv("WHOP_SESSION_TTL", "900"))
+ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "the3istheD3T").strip()
 ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "").strip()
 ADMIN_PORTAL_BASIC_USER = (os.getenv("ADMIN_PORTAL_BASIC_USER") or "").strip()
 ADMIN_PORTAL_BASIC_PASS = (os.getenv("ADMIN_PORTAL_BASIC_PASS") or "").strip()
@@ -5288,6 +5291,14 @@ def dashboard(request: Request, user: Dict[str, Any] = Depends(_require_admin)):
     return _render_template("dashboard.html", request, {"user": user})
 
 
+@app.get("/admin/login")
+def admin_login_page(
+    request: Request, credentials: HTTPBasicCredentials = Depends(ADMIN_PORTAL_HTTP_BASIC)
+):
+    _enforce_admin_portal_gate(request, credentials)
+    if not ADMIN_LOGIN_PAGE.exists():
+        return HTMLResponse("<h1>public/admin-login.html missing</h1>", status_code=404, headers=_nocache())
+    return FileResponse(ADMIN_LOGIN_PAGE, media_type="text/html", headers=_nocache())
 @app.get("/enduserapp", response_class=HTMLResponse)
 def enduserapp(request: Request, user: Dict[str, Any] = Depends(_require_user)):
     return _render_template("enduserapp.html", request, {"user": user})
