@@ -59,4 +59,24 @@ class HTTPBasic:
         return HTTPBasicCredentials(username=username, password=password)
 
 
-__all__ = ["HTTPBasic", "HTTPBasicCredentials"]
+class OAuth2PasswordBearer:
+    """Minimal token extractor used for bearer authentication in tests."""
+
+    def __init__(self, tokenUrl: str, *, auto_error: bool = True) -> None:
+        self.tokenUrl = tokenUrl
+        self.auto_error = auto_error
+
+    async def __call__(self, request: Request) -> Optional[str]:
+        header = request.headers.get("authorization")
+        if header and header.lower().startswith("bearer "):
+            return header.split(" ", 1)[1]
+        if self.auto_error:
+            raise HTTPException(
+                401,
+                "Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return None
+
+
+__all__ = ["HTTPBasic", "HTTPBasicCredentials", "OAuth2PasswordBearer"]

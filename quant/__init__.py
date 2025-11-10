@@ -1,3 +1,6 @@
+"""High-level quant terminal feature suite."""
+
+from .strategy import (
 """High-level quant and automation features for NeoCortex."""
 
 from .strategy_intelligence import (
@@ -6,6 +9,12 @@ from .strategy_intelligence import (
     RegimeDetector,
     MonteCarloStressTester,
 )
+from .portfolio import (
+    MultiBrokerSynchronizer,
+    DynamicAllocator,
+    EquityCurveTarget,
+)
+from .execution import (
 from .portfolio_management import (
     BrokerAccount,
     MultiBrokerSync,
@@ -17,6 +26,15 @@ from .execution_engine import (
     OrderBookHeatmap,
     LatencyTracker,
 )
+from .security import (
+    APIKeyVault,
+    AccessControlList,
+    AuditLog,
+    SystemHealthMonitor,
+)
+from .analytics import (
+    TradeReplayer,
+    ProfitLossHeatmap,
 from .system_security import (
     APIKeyVault,
     AccessControl,
@@ -31,6 +49,53 @@ from .analytics import (
     EquityWaterfall,
     AIExplanationLayer,
 )
+from .research import (
+    ModelTrainer,
+    FeatureLab,
+    ModelRegistry,
+    ReinforcementLearner,
+    ExplainableAI,
+)
+from .community import (
+    SignalBroadcaster,
+    MultiUserDashboard,
+    Leaderboard,
+    ChatAndAlerts,
+    JournalAutomation,
+)
+from .data_integration import DataIntegrationLayer
+
+__all__ = [
+    "AutoEnsembleEngine",
+    "AdaptiveRiskModule",
+    "RegimeDetector",
+    "MonteCarloStressTester",
+    "MultiBrokerSynchronizer",
+    "DynamicAllocator",
+    "EquityCurveTarget",
+    "SmartOrderRouter",
+    "OrderBookHeatmap",
+    "LatencyTracker",
+    "APIKeyVault",
+    "AccessControlList",
+    "AuditLog",
+    "SystemHealthMonitor",
+    "TradeReplayer",
+    "ProfitLossHeatmap",
+    "RiskCorrelationMatrix",
+    "EquityWaterfall",
+    "AIExplanationLayer",
+    "ModelTrainer",
+    "FeatureLab",
+    "ModelRegistry",
+    "ReinforcementLearner",
+    "ExplainableAI",
+    "SignalBroadcaster",
+    "MultiUserDashboard",
+    "Leaderboard",
+    "ChatAndAlerts",
+    "JournalAutomation",
+    "DataIntegrationLayer",
 from .ai_research import (
     TrainingEndpoint,
     FeatureLab,
