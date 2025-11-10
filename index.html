@@ -21,15 +21,18 @@ if not index_path.exists():
         <style>
                 :root {
                         color-scheme: dark light;
-                        --bg-gradient: radial-gradient(circle at top, rgba(63,94,251,0.22), rgba(252,70,107,0.12)), linear-gradient(135deg, #0f172a, #111827 60%, #020617);
-                        --panel-bg: rgba(15, 23, 42, 0.84);
-                        --panel-border: rgba(148, 163, 184, 0.12);
-                        --text-primary: #f8fafc;
-                        --text-secondary: rgba(226, 232, 240, 0.78);
-                        --accent: #6366f1;
-                        --accent-strong: #8b5cf6;
+                        --bg-gradient: radial-gradient(circle at -8% -20%, rgba(217,70,239,0.28), transparent 58%),
+                                        radial-gradient(circle at 88% 2%, rgba(99,102,241,0.24), transparent 52%),
+                                        radial-gradient(circle at 18% 88%, rgba(236,72,153,0.16), transparent 58%),
+                                        linear-gradient(135deg, #060014, #0b0320 48%, #05000f);
+                        --panel-bg: rgba(34, 12, 58, 0.9);
+                        --panel-border: rgba(192, 132, 252, 0.28);
+                        --text-primary: #f5e9ff;
+                        --text-secondary: rgba(224, 196, 255, 0.78);
+                        --accent: #d8b4fe;
+                        --accent-strong: #a855f7;
                         --success: #34d399;
-                        --warn: #facc15;
+                        --warn: #fbbf24;
                         --error: #fb7185;
                         font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
                 }
@@ -53,11 +56,11 @@ if not index_path.exists():
                         width: min(1100px, 100%);
                         margin: 0 auto;
                         backdrop-filter: blur(18px);
-                        background: linear-gradient(135deg, rgba(15,23,42,0.92), rgba(30,41,59,0.88));
-                        border: 1px solid rgba(99,102,241,0.25);
+                        background: linear-gradient(140deg, rgba(36,12,66,0.95), rgba(16,4,33,0.9));
+                        border: 1px solid rgba(192,132,252,0.32);
                         border-radius: 28px;
                         padding: clamp(1.75rem, 3vw, 2.75rem);
-                        box-shadow: 0 24px 60px rgba(15,23,42,0.45);
+                        box-shadow: 0 28px 72px rgba(10,2,24,0.5);
                         position: relative;
                         overflow: hidden;
                 }
@@ -66,8 +69,8 @@ if not index_path.exists():
                         content: '';
                         position: absolute;
                         inset: -120px;
-                        background: radial-gradient(circle at 20% 20%, rgba(99,102,241,0.18), transparent 55%),
-                                    radial-gradient(circle at 80% 0%, rgba(236,72,153,0.12), transparent 45%);
+                        background: radial-gradient(circle at 20% 20%, rgba(168,85,247,0.28), transparent 60%),
+                                    radial-gradient(circle at 82% 5%, rgba(236,72,153,0.16), transparent 50%);
                         filter: blur(40px);
                         z-index: 0;
                 }
@@ -115,8 +118,8 @@ if not index_path.exists():
                         font-weight: 600;
                         letter-spacing: 0.01em;
                         text-transform: uppercase;
-                        border: 1px solid rgba(148, 163, 184, 0.28);
-                        background: rgba(15, 23, 42, 0.72);
+                        border: 1px solid rgba(192, 132, 252, 0.28);
+                        background: rgba(18, 5, 34, 0.66);
                         color: var(--text-secondary);
                         transition: background 0.25s ease, color 0.25s ease, border 0.25s ease;
                 }
@@ -126,8 +129,8 @@ if not index_path.exists():
                         width: 10px;
                         height: 10px;
                         border-radius: 50%;
-                        background: rgba(148, 163, 184, 0.6);
-                        box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.15);
+                        background: rgba(192, 132, 252, 0.8);
+                        box-shadow: 0 0 0 4px rgba(192, 132, 252, 0.18);
                         transition: background 0.25s ease, box-shadow 0.25s ease;
                 }
 
@@ -217,15 +220,15 @@ if not index_path.exists():
                         font-size: 0.8rem;
                         letter-spacing: 0.08em;
                         text-transform: uppercase;
-                        color: rgba(148, 163, 184, 0.78);
+                        color: rgba(224, 196, 255, 0.78);
                 }
 
                 input,
                 select {
                         width: 100%;
                         border-radius: 14px;
-                        border: 1px solid rgba(148, 163, 184, 0.2);
-                        background: rgba(15, 23, 42, 0.75);
+                        border: 1px solid rgba(192, 132, 252, 0.28);
+                        background: rgba(14, 4, 30, 0.78);
                         color: var(--text-primary);
                         padding: 0.75rem 0.85rem;
                         font-size: 1rem;
@@ -236,8 +239,8 @@ if not index_path.exists():
                 input:focus,
                 select:focus {
                         outline: none;
-                        border-color: rgba(99, 102, 241, 0.65);
-                        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12);
+                        border-color: rgba(168, 85, 247, 0.85);
+                        box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.16);
                 }
 
                 button {
@@ -255,20 +258,20 @@ if not index_path.exists():
                 }
 
                 .btn-primary {
-                        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-                        color: #f8fafc;
-                        box-shadow: 0 16px 30px rgba(99, 102, 241, 0.28);
+                        background: linear-gradient(135deg, rgba(236,72,153,0.95), rgba(168,85,247,0.95) 60%, rgba(129,140,248,0.92));
+                        color: #fff7ff;
+                        box-shadow: 0 20px 38px rgba(168, 85, 247, 0.35);
                 }
 
                 .btn-secondary {
-                        background: rgba(15, 23, 42, 0.82);
+                        background: rgba(18, 5, 34, 0.78);
                         color: var(--text-secondary);
-                        border: 1px solid rgba(148, 163, 184, 0.25);
+                        border: 1px solid rgba(192, 132, 252, 0.28);
                 }
 
                 button:hover:not(:disabled) {
                         transform: translateY(-1px);
-                        box-shadow: 0 18px 40px rgba(99, 102, 241, 0.36);
+                        box-shadow: 0 22px 44px rgba(168, 85, 247, 0.4);
                 }
 
                 button:active:not(:disabled) {
@@ -293,14 +296,14 @@ if not index_path.exists():
 
                 pre {
                         margin-top: 1.5rem;
-                        background: rgba(2, 6, 23, 0.84);
+                        background: rgba(14, 4, 30, 0.78);
                         border-radius: 18px;
                         padding: 1.25rem 1.4rem;
                         font-size: 0.92rem;
                         line-height: 1.55;
-                        color: rgba(203, 213, 225, 0.92);
-                        border: 1px solid rgba(71, 85, 105, 0.35);
-                        box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.12);
+                        color: rgba(224, 196, 255, 0.85);
+                        border: 1px solid rgba(192, 132, 252, 0.24);
+                        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
                         overflow-x: auto;
                         min-height: 110px;
                         white-space: pre-wrap;
@@ -308,7 +311,7 @@ if not index_path.exists():
                 }
 
                 code.emptystate {
-                        color: rgba(148, 163, 184, 0.75);
+                        color: rgba(224, 196, 255, 0.7);
                         font-style: italic;
                 }
 
