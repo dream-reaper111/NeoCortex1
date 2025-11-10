@@ -1329,8 +1329,52 @@ if _AUTH_DB_ENV:
 else:
     resolved_auth_db = (_PROJECT_ROOT / "auth.db").resolve()
 
-AUTH_DB_PATH = resolved_auth_db
-AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+def _resolve_auth_db_path(candidate: Path) -> Path:
+    """Return a writable location for the authentication database."""
+
+    runtime_logger = logging.getLogger("neocortex.runtime")
+    fallback = (
+        Path(tempfile.gettempdir()).resolve() / "neocortex" / "auth" / candidate.name
+    )
+
+    for path in (candidate, fallback):
+        directory = path.parent
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            runtime_logger.warning(
+                "permission denied preparing auth database directory %s (%s)",
+                directory,
+                exc,
+            )
+            continue
+        except OSError as exc:
+            runtime_logger.warning(
+                "unable to prepare auth database directory %s (%s)", directory, exc
+            )
+            if path == fallback:
+                raise
+            continue
+
+        if os.access(directory, os.W_OK | os.X_OK):
+            if path == fallback and path != candidate:
+                runtime_logger.warning(
+                    "using fallback auth database path: %s", path
+                )
+            return path
+
+        runtime_logger.warning(
+            "auth database directory %s is not writable; trying fallback", directory
+        )
+
+    raise RuntimeError(
+        "No writable location available for the auth database. "
+        "Set AUTH_DB_PATH to a writable path."
+    )
+
+
+AUTH_DB_PATH = _resolve_auth_db_path(resolved_auth_db)
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "access_token")
 SESSION_COOKIE_SECURE = _env_flag("AUTH_COOKIE_SECURE", default=SSL_ENABLED)
 SESSION_COOKIE_MAX_AGE = int(os.getenv("SESSION_COOKIE_MAX_AGE", str(15 * 60)))
