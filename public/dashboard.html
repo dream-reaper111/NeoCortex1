@@ -392,12 +392,13 @@
                         </article>
                 </section>
         </main>
-<script
+        <script>
                 const $ = (id) => document.getElementById(id);
                 const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
                 const TOKEN_KEY = 'nc_token';
                 const USERNAME_KEY = 'nc_user';
                 const COOKIE_NAME_KEY = 'nc_cookie';
+                const REFRESH_KEY = 'nc_refresh';
 
                 function authToken() {
                         return localStorage.getItem(TOKEN_KEY);
@@ -447,6 +448,7 @@
                         } catch (_) { }
                         localStorage.removeItem(TOKEN_KEY);
                         localStorage.removeItem(USERNAME_KEY);
+                        localStorage.removeItem(REFRESH_KEY);
                         const cookieName = sessionCookieName();
                         document.cookie = cookieName + '=; Max-Age=0; path=/';
                         window.location.replace('/admin/login');
