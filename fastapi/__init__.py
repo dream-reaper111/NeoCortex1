@@ -17,6 +17,7 @@ __all__ = [
     "Request",
     "Header",
     "Cookie",
+    "Depends",
 ]
 
 __version__ = "0.1.0-stub"
@@ -52,6 +53,18 @@ def Header(default: Any = None, *, alias: Optional[str] = None) -> HeaderInfo:
 
 def Cookie(default: Any = None, *, alias: Optional[str] = None) -> CookieInfo:
     return CookieInfo(default=default, alias=alias)
+
+
+class DependencyInfo:
+    __slots__ = ("dependency", "use_cache")
+
+    def __init__(self, dependency: Optional[Callable[..., Any]], *, use_cache: bool = True) -> None:
+        self.dependency = dependency
+        self.use_cache = use_cache
+
+
+def Depends(dependency: Optional[Callable[..., Any]] = None, *, use_cache: bool = True) -> DependencyInfo:
+    return DependencyInfo(dependency, use_cache=use_cache)
 
 
 class Headers:
@@ -311,6 +324,16 @@ class FastAPI:
                 cookie_name = default.alias or name
                 value = request.cookies.get(cookie_name, default.default)
                 kwargs[name] = value
+                continue
+            if isinstance(default, DependencyInfo):
+                dependency = default.dependency
+                if dependency is None:
+                    kwargs[name] = None
+                else:
+                    value = dependency(request)
+                    if inspect.isawaitable(value):
+                        value = await value
+                    kwargs[name] = value
                 continue
             if annotation is not inspect._empty:
                 base_model = _lookup_basemodel(annotation)
