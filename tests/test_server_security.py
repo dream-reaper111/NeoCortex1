@@ -71,6 +71,34 @@ class ServerSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Admin Sign In", response.body)
 
+    def test_security_headers_without_hsts(self) -> None:
+        server = self.reload_server(
+            {
+                "ENABLE_SECURITY_HEADERS": "1",
+                "ENABLE_HSTS": "0",
+            }
+        )
+        request = self.make_request("GET", "https://example.com/admin/login", scheme="https")
+        response = self.loop.run_until_complete(server.app._handle(request))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
+        self.assertNotIn("Strict-Transport-Security", response.headers)
+
+    def test_hsts_header_applied_over_https(self) -> None:
+        server = self.reload_server(
+            {
+                "ENABLE_SECURITY_HEADERS": "1",
+                "ENABLE_HSTS": "1",
+            }
+        )
+        request = self.make_request("GET", "https://example.com/admin/login", scheme="https")
+        response = self.loop.run_until_complete(server.app._handle(request))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("Strict-Transport-Security"),
+            "max-age=31536000; includeSubDomains",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
