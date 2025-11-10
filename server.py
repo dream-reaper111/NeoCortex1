@@ -841,7 +841,10 @@ def _reload_credential_keys() -> None:
 def _credentials_cipher(version: Optional[str] = None) -> Tuple[str, Fernet]:
     if not _CREDENTIAL_KEYSET_CACHE:
         _reload_credential_keys()
-    assert _CREDENTIAL_KEYSET_CACHE
+    if not _CREDENTIAL_KEYSET_CACHE:
+        raise CredentialEncryptionError(
+            "No credential encryption keys are configured and an ephemeral key could not be generated."
+        )
     key_version = version or _ACTIVE_CREDENTIAL_KEY_VERSION
     if key_version not in _CREDENTIAL_KEYSET_CACHE:
         raise CredentialEncryptionError(f"Unknown credential key version '{key_version}'")

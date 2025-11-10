@@ -66,7 +66,11 @@ def build_features(
     exog: pd.DataFrame | None = None
 ) -> pd.DataFrame:
     df = ohlcv.copy().sort_index()
-    assert {"Open","High","Low","Close","Volume"}.issubset(df.columns), "OHLCV required"
+    required_columns = {"Open", "High", "Low", "Close", "Volume"}
+    missing_columns = required_columns.difference(df.columns)
+    if missing_columns:
+        missing_list = ", ".join(sorted(missing_columns))
+        raise ValueError(f"OHLCV required; missing columns: {missing_list}")
 
     fast = df["Close"].pct_change().fillna(0.0)
     slow = df["Close"].rolling(10).mean().pct_change().fillna(0.0)
