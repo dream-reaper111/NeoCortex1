@@ -82,12 +82,25 @@
     <main>
       <section id="papertrade" class="card">
         <header class="card__header">
-          <h2>Paper Trading Console</h2>
-          <p class="card__subtitle">Route simulated options and futures orders through the Neo Cortex AI trainer.</p>
+          <h2>AI Trading Console</h2>
+          <p class="card__subtitle">
+            Use the Neo Cortex AI trainer to simulate orders or forward approved trades to your Alpaca accounts.
+          </p>
         </header>
         <div class="card__body papertrade-body">
           <div class="papertrade-grid">
-            <form id="paperForm" class="form-grid" data-account="paper">
+            <form id="paperForm" class="form-grid" data-account="paper" data-mode="sim">
+              <div class="full-width">
+                <span class="label">Execution Mode</span>
+                <select id="executionMode" name="executionMode">
+                  <option value="sim" selected>Simulated AI (no broker execution)</option>
+                  <option value="paper">Alpaca Paper (auto trader)</option>
+                  <option value="funded">Alpaca Live (auto trader)</option>
+                </select>
+                <p id="executionHelp" class="form-note">
+                  Orders are simulated locally. The AI trainer will score each trade without contacting Alpaca.
+                </p>
+              </div>
               <label>
                 <span>Instrument Type</span>
                 <select id="paperInstrument" name="instrument">

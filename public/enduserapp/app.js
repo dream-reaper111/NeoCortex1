@@ -205,6 +205,8 @@ const artifactList = document.getElementById('artifactList');
 const yearEl = document.getElementById('year');
 
 const paperForm = document.getElementById('paperForm');
+const executionModeSelect = document.getElementById('executionMode');
+const executionHelp = document.getElementById('executionHelp');
 const paperStatus = document.getElementById('paperStatus');
 const aiStatusEl = document.getElementById('aiStatus');
 const pnlTotalEl = document.getElementById('pnlTotal');
@@ -481,16 +483,65 @@ if (authToken()) {
   showOverlay();
 }
 
+function getExecutionMode() {
+  if (!paperForm) return 'sim';
+  const value = (paperForm.dataset.mode || 'sim').trim().toLowerCase();
+  if (value === 'paper' || value === 'funded') {
+    return value;
+  }
+  return 'sim';
+}
+
 function getAccountType() {
   if (!paperForm) return 'paper';
-  const value = (paperForm.dataset.account || 'paper').trim().toLowerCase();
-  return value || 'paper';
+  const mode = getExecutionMode();
+  if (mode === 'funded') {
+    return 'funded';
+  }
+  return 'paper';
 }
 
 function formatAccountLabel(accountType) {
-  const value = (accountType || 'paper').toString();
+  const value = (accountType || 'paper').toString().trim().toLowerCase();
   if (!value) return 'Paper';
+  if (value === 'funded') {
+    return 'Funded (live)';
+  }
+  if (value === 'paper') {
+    return 'Paper';
+  }
+  if (value === 'sim') {
+    return 'Simulated';
+  }
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function updateExecutionHelp(mode) {
+  if (!executionHelp) return;
+  if (mode === 'funded') {
+    executionHelp.textContent =
+      'Approved orders are routed to your Alpaca live account using the stored API credentials.';
+  } else if (mode === 'paper') {
+    executionHelp.textContent =
+      'Approved orders are sent to your Alpaca paper account so you can rehearse live execution.';
+  } else {
+    executionHelp.textContent =
+      'Orders are simulated locally. The AI trainer will score each trade without contacting Alpaca.';
+  }
+}
+
+function applyExecutionMode(mode, { refresh = true } = {}) {
+  if (!paperForm) return;
+  const normalized = mode === 'funded' ? 'funded' : mode === 'paper' ? 'paper' : 'sim';
+  paperForm.dataset.mode = normalized;
+  paperForm.dataset.account = normalized === 'funded' ? 'funded' : 'paper';
+  if (executionModeSelect && executionModeSelect.value !== normalized) {
+    executionModeSelect.value = normalized;
+  }
+  updateExecutionHelp(normalized);
+  if (refresh) {
+    loadPaperDashboard();
+  }
 }
 
 function describeAssetClass(assetClass) {
@@ -1011,7 +1062,7 @@ async function loadMockDashboard(message, statusClass) {
       renderPositions(shortTable, dashboard.orders.short || []);
     }
     if (typeof message === 'undefined') {
-      updatePositionsStatus('Showing simulated paper trading positions.', 'success');
+      updatePositionsStatus('Showing simulated AI trading positions.', 'success');
     } else if (message !== null) {
       updatePositionsStatus(message, statusClass || 'success');
     }
@@ -1031,13 +1082,18 @@ async function loadMockDashboard(message, statusClass) {
 
 async function loadPaperDashboard() {
   if (!paperForm) return null;
+  const mode = getExecutionMode();
+  if (mode === 'sim') {
+    return loadMockDashboard();
+  }
   const accountType = getAccountType();
   const live = await loadLiveDashboard(accountType);
   if (live) {
     return live;
   }
+  const accountLabel = formatAccountLabel(accountType);
   return loadMockDashboard(
-    'Live Alpaca positions unavailable. Showing simulated paper trading positions.',
+    `Simulated AI positions are shown while the ${accountLabel} account is unreachable.`,
     'error',
   );
 }
@@ -1061,8 +1117,15 @@ async function submitPaperOrder(event) {
     paperRefreshTimer = null;
   }
 
+  const mode = getExecutionMode();
+  const accountType = getAccountType();
+  const executionLabel = formatAccountLabel(mode === 'sim' ? 'sim' : accountType);
+
   if (paperStatus) {
-    paperStatus.textContent = 'Submitting…';
+    paperStatus.textContent =
+      mode === 'sim'
+        ? 'Submitting simulated order…'
+        : `Submitting to the ${executionLabel} account…`;
     paperStatus.classList.remove('error');
   }
 
@@ -1093,28 +1156,64 @@ async function submitPaperOrder(event) {
     }
 
     const bodyPayload = sanitizeOrderPayload(payload);
-    const res = await fetch('/papertrade/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bodyPayload),
-    });
-    const body = await res.json();
-    if (!res.ok || !body.ok) {
-      throw new Error(body.detail || res.statusText || 'Order rejected');
-    }
+    if (mode === 'sim') {
+      const res = await fetch('/papertrade/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyPayload),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) {
+        throw new Error(body.detail || res.statusText || 'Order rejected');
+      }
 
-    if (paperStatus) {
-      paperStatus.textContent = 'Order sent to Neo Cortex AI.';
-    }
-    if (aiStatusEl && body.order && body.order.ai) {
-      const ai = body.order.ai;
-      aiStatusEl.textContent = `${ai.message} (confidence ${Number(ai.confidence).toFixed(2)})`;
-    }
-    const dashboard = body.dashboard || {};
-    updatePnlWidget(dashboard.pnl || {}, dashboard.generated_at);
-    if (dashboard.orders) {
-      renderPositions(longTable, dashboard.orders.long || []);
-      renderPositions(shortTable, dashboard.orders.short || []);
+      if (paperStatus) {
+        paperStatus.textContent = 'Order sent to Neo Cortex AI.';
+      }
+      if (aiStatusEl && body.order && body.order.ai) {
+        const ai = body.order.ai;
+        aiStatusEl.textContent = `${ai.message} (confidence ${Number(ai.confidence).toFixed(2)})`;
+      }
+      const dashboard = body.dashboard || {};
+      updatePnlWidget(dashboard.pnl || {}, dashboard.generated_at);
+      if (dashboard.orders) {
+        renderPositions(longTable, dashboard.orders.long || []);
+        renderPositions(shortTable, dashboard.orders.short || []);
+      }
+    } else {
+      const autoPayload = { ...bodyPayload, account: accountType };
+      const res = await fetch('/trade/auto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autoPayload),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) {
+        throw new Error(body.detail || res.statusText || 'Order rejected');
+      }
+
+      const ai = body.ai || {};
+      if (paperStatus) {
+        if (body.executed === true) {
+          paperStatus.textContent = `AI executed the order on the ${executionLabel} account.`;
+        } else if (body.detail) {
+          paperStatus.textContent = body.detail;
+        } else {
+          paperStatus.textContent = `AI parked the order for the ${executionLabel} account.`;
+        }
+      }
+      if (aiStatusEl) {
+        if (typeof ai.confidence !== 'undefined') {
+          aiStatusEl.textContent = `${ai.message || 'AI decision recorded.'} (confidence ${Number(ai.confidence).toFixed(2)})`;
+        } else if (body.detail) {
+          aiStatusEl.textContent = body.detail;
+        } else {
+          aiStatusEl.textContent = 'Neo Cortex AI processed the order.';
+        }
+      }
+      if (body.executed === true) {
+        await loadPaperDashboard();
+      }
     }
   } catch (err) {
     if (paperStatus) {
@@ -1125,7 +1224,7 @@ async function submitPaperOrder(event) {
       aiStatusEl.textContent = 'Neo Cortex AI could not process the order.';
     }
   } finally {
-    paperRefreshTimer = setInterval(loadPaperDashboard, LIVE_PNL_REFRESH_MS);
+    paperRefreshTimer = setInterval(() => loadPaperDashboard(), LIVE_PNL_REFRESH_MS);
   }
 }
 
@@ -1137,11 +1236,12 @@ function boot() {
   loadArtifacts();
   if (paperForm) {
     syncInstrumentFields();
+    applyExecutionMode(getExecutionMode(), { refresh: false });
     loadPaperDashboard();
     if (paperRefreshTimer) {
       clearInterval(paperRefreshTimer);
     }
-    paperRefreshTimer = setInterval(loadPaperDashboard, LIVE_PNL_REFRESH_MS);
+    paperRefreshTimer = setInterval(() => loadPaperDashboard(), LIVE_PNL_REFRESH_MS);
   }
 }
 
@@ -1153,6 +1253,11 @@ if (form) {
 }
 if (refreshBtn) {
   refreshBtn.addEventListener('click', loadArtifacts);
+}
+if (executionModeSelect) {
+  executionModeSelect.addEventListener('change', () => {
+    applyExecutionMode(executionModeSelect.value);
+  });
 }
 if (paperForm) {
   paperForm.addEventListener('submit', submitPaperOrder);
