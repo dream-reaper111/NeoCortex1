@@ -140,7 +140,27 @@
                 }
 
                 const params = new URLSearchParams(window.location.search);
-                const nextUrl = resolveNext(params.get('next'));
+                const rawNext = params.get('next');
+                const nextUrl = resolveNext(rawNext);
+
+                const sanitizedParams = new URLSearchParams();
+                if (rawNext) {
+                        sanitizedParams.set('next', rawNext);
+                }
+                const sensitiveKeys = ['username', 'password'];
+                let scrubbed = false;
+                for (const key of sensitiveKeys) {
+                        if (params.has(key)) {
+                                scrubbed = true;
+                                break;
+                        }
+                }
+                const sanitizedQuery = sanitizedParams.toString();
+                const desiredSearch = sanitizedQuery ? `?${sanitizedQuery}` : '';
+                if (scrubbed || window.location.search !== desiredSearch) {
+                        const newUrl = desiredSearch ? `${window.location.pathname}${desiredSearch}` : window.location.pathname;
+                        window.history.replaceState(null, document.title, newUrl);
+                }
 
                 if (localStorage.getItem(TOKEN_KEY)) {
                         window.location.replace(nextUrl);
@@ -155,16 +175,6 @@
                 const passwordEl = document.getElementById('password');
                 const loginBtn = document.getElementById('loginBtn');
                 const resetBtn = document.getElementById('resetBtn');
-
-                const presetUsername = params.get('username');
-                if (presetUsername) {
-                        usernameEl.value = presetUsername;
-                }
-
-                const presetPassword = params.get('password');
-                if (presetPassword) {
-                        passwordEl.value = presetPassword;
-                }
 
                 async function sendAuth(path, body) {
                         const resp = await fetch(path, {
@@ -219,16 +229,11 @@
                         }
                 });
 
+                usernameEl.focus();
+
                 resetBtn.addEventListener('click', () => {
                         showNotice('Password resets are handled by your administrator. Please reach out to your support channel.', 'error');
                 });
-
-                const shouldAutoSubmit = !!(presetUsername && presetPassword);
-                if (shouldAutoSubmit) {
-                        setTimeout(() => loginForm.requestSubmit(), 0);
-                } else {
-                        usernameEl.focus();
-                }
         </script>
 </body>
 </html>
