@@ -45,7 +45,7 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, ipaddress
+import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, tempfile, stat, ipaddress
 from urllib.parse import parse_qs, quote, urlencode
 import importlib.util
 from pathlib import Path
@@ -901,10 +901,119 @@ def _sanitize_filename_component(value: str) -> str:
     cleaned = SAFE_FILENAME_COMPONENT.sub("_", value.upper())
     return cleaned or "UNKNOWN"
 
+
+_PROJECT_ROOT = Path(__file__).resolve().parent
+
+_RUNTIME_DIRECTORY_ENV_KEYS: Dict[str, Tuple[str, ...]] = {
+    "artifacts": ("ARTIFACTS_DIR", "RUNS_ROOT"),
+    "logs": ("LOGS_DIR", "LOG_DIR"),
+    "tmp": ("TMP_DIR", "TMP_ROOT", "TEMP_DIR"),
+}
+
+_RUNTIME_DIRECTORIES_CACHE: Optional[Dict[str, Path]] = None
+
+
+def _resolve_runtime_directory(name: str, env_keys: Tuple[str, ...]) -> Path:
+    raw_path = ""
+    for key in env_keys:
+        candidate = os.getenv(key)
+        if candidate:
+            raw_path = candidate
+            break
+    if raw_path:
+        resolved = Path(raw_path).expanduser()
+        if not resolved.is_absolute():
+            resolved = (_PROJECT_ROOT / resolved).resolve()
+    else:
+        resolved = (_PROJECT_ROOT / name).resolve()
+    return resolved
+
+
+def _apply_directory_permissions(path: Path) -> None:
+    runtime_logger = logging.getLogger("neocortex.runtime")
+    try:
+        current_mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError as exc:  # pragma: no cover - platform specific
+        runtime_logger.debug("unable to stat runtime directory %s: %s", path, exc)
+        return
+
+    desired_mode = 0o755
+    if current_mode == desired_mode:
+        return
+    try:
+        path.chmod(desired_mode)
+    except PermissionError:  # pragma: no cover - depends on filesystem
+        runtime_logger.debug("insufficient permissions to chmod %s", path)
+    except OSError as exc:  # pragma: no cover - platform specific
+        runtime_logger.debug("unable to adjust permissions for %s: %s", path, exc)
+
+
+def _prepare_runtime_directory(name: str, env_keys: Tuple[str, ...]) -> Path:
+    runtime_logger = logging.getLogger("neocortex.runtime")
+    candidate = _resolve_runtime_directory(name, env_keys)
+    fallback_base = Path(tempfile.gettempdir()).resolve()
+    fallback = (fallback_base / "neocortex" / name).resolve()
+
+    for path in (candidate, fallback):
+        resolved = path.resolve()
+        if resolved.exists() and not resolved.is_dir():
+            runtime_logger.warning(
+                "runtime path %s exists but is not a directory; skipping", resolved
+            )
+            continue
+        try:
+            resolved.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            runtime_logger.warning(
+                "permission denied creating runtime directory %s (%s)", resolved, exc
+            )
+            continue
+        except OSError as exc:
+            runtime_logger.warning(
+                "unable to create runtime directory %s (%s)", resolved, exc
+            )
+            if resolved == fallback:
+                raise
+            continue
+
+        _apply_directory_permissions(resolved)
+        if os.access(resolved, os.W_OK | os.X_OK):
+            if resolved != candidate and resolved == fallback:
+                runtime_logger.warning(
+                    "using fallback runtime directory for %s: %s", name, resolved
+                )
+            for key in env_keys:
+                os.environ[key] = str(resolved)
+            return resolved
+
+        runtime_logger.warning(
+            "runtime directory %s is not writable; trying fallback", resolved
+        )
+
+    raise RuntimeError(
+        f"No writable directory available for '{name}'. "
+        f"Set one of {', '.join(env_keys)} to a writable path."
+    )
+
+
+def ensure_runtime_directories() -> Dict[str, Path]:
+    global _RUNTIME_DIRECTORIES_CACHE
+    if _RUNTIME_DIRECTORIES_CACHE is not None:
+        return dict(_RUNTIME_DIRECTORIES_CACHE)
+
+    directories: Dict[str, Path] = {}
+    for name, env_keys in _RUNTIME_DIRECTORY_ENV_KEYS.items():
+        directories[name] = _prepare_runtime_directory(name, env_keys)
+
+    _RUNTIME_DIRECTORIES_CACHE = directories
+    return dict(_RUNTIME_DIRECTORIES_CACHE)
+
 API_HOST   = os.getenv("API_HOST","0.0.0.0")
 API_PORT   = int(os.getenv("API_PORT","8000"))
-RUNS_ROOT  = Path(os.getenv("RUNS_ROOT","artifacts")).resolve()
-RUNS_ROOT.mkdir(parents=True, exist_ok=True)
+RUNTIME_DIRECTORIES = ensure_runtime_directories()
+RUNS_ROOT = RUNTIME_DIRECTORIES["artifacts"]
+LOGS_ROOT = RUNTIME_DIRECTORIES["logs"]
+TMP_ROOT = RUNTIME_DIRECTORIES["tmp"]
 STATIC_DIR = Path(os.getenv("STATIC_DIR","static")).resolve(); STATIC_DIR.mkdir(parents=True, exist_ok=True)
 PUBLIC_DIR = Path(os.getenv("PUBLIC_DIR","public")).resolve(); PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
 TEMPLATES_DIR = Path(os.getenv("TEMPLATES_DIR", "templates")).resolve(); TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
