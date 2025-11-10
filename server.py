@@ -2359,8 +2359,18 @@ class AuthReq(BaseModel):
     otp_code: Optional[str] = None
 
 
+_SENSITIVE_QUERY_KEYS: Set[str] = {
+    "username",
+    "password",
+    "admin_key",
+    "adminkey",
+    "otp_code",
+    "require_admin",
+}
+
+
 async def _auth_req_from_request(request: Request) -> AuthReq:
-    '''Parse an AuthReq from JSON, form-encoded, or query parameters.'''
+    '''Parse an AuthReq from JSON or form-encoded payloads.'''
 
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     data: Dict[str, Any] = {}
@@ -2390,7 +2400,20 @@ async def _auth_req_from_request(request: Request) -> AuthReq:
             data = parsed
 
     if not data and request.query_params:
-        data = dict(request.query_params)
+        provided = {
+            key.lower()
+            for key in request.query_params.keys()
+            if key and key.lower() in _SENSITIVE_QUERY_KEYS
+        }
+        if provided:
+            logger.warning(
+                "rejected authentication attempt with credentials in query string (%s)",
+                ", ".join(sorted(provided)),
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Credentials must be sent in the request body, not the URL query string.",
+            )
 
     if not data:
         raise HTTPException(status_code=400, detail="username and password required")

@@ -99,6 +99,17 @@ class ServerSecurityTests(unittest.TestCase):
             "max-age=31536000; includeSubDomains",
         )
 
+    def test_login_rejects_credentials_in_query_params(self) -> None:
+        server = self.reload_server({"FORCE_HTTPS_REDIRECT": "0"})
+        request = self.make_request(
+            "POST",
+            "https://example.com/login?username=alice&password=secret",
+            scheme="https",
+        )
+        response = self.loop.run_until_complete(server.app._handle(request))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"request body", response.body)
+
 
 if __name__ == "__main__":
     unittest.main()
