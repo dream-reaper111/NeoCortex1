@@ -1,26 +1,4 @@
-:root {
-  color-scheme: light dark;
-  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-  line-height: 1.6;
-  --bg: #0f172a;
-  --bg-card: rgba(15, 23, 42, 0.75);
-  --border: rgba(148, 163, 184, 0.2);
-  --text-primary: #e2e8f0;
-  --text-muted: #94a3b8;
-  --accent: #38bdf8;
-  --accent-strong: #0ea5e9;
-  --warning: #f97316;
-  --shadow: 0 20px 45px rgba(15, 23, 42, 0.45);
-}
-
-body {
-  margin: 0;
-  background: radial-gradient(circle at top, rgba(30, 64, 175, 0.25), transparent 55%),
-    radial-gradient(circle at bottom, rgba(14, 116, 144, 0.25), transparent 55%),
-    var(--bg);
-  color: var(--text-primary);
-  min-height: 100vh;
-}
+@import url("../assets/neocortex-theme.css");
 
 body.auth-locked main,
 body.auth-locked .page-header,
