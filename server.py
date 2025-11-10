@@ -721,7 +721,10 @@ def _init_auth_db() -> None:
         if "is_admin" not in column_names:
             conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
         if "role" not in column_names:
-            conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT ?", (DEFAULT_ROLE,))
+            default_role_literal = DEFAULT_ROLE.replace("'", "''")
+            conn.execute(
+                f"ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT '{default_role_literal}'"
+            )
         if "totp_secret" not in column_names:
             conn.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT")
         if "mfa_enabled" not in column_names:
