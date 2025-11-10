@@ -51,6 +51,11 @@ import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secre
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 import importlib.util
 from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent
+STATIC_DIR = Path(os.getenv("STATIC_DIR", str(ROOT_DIR / "static"))).resolve()
+PUBLIC_DIR = Path(os.getenv("PUBLIC_DIR", str(ROOT_DIR / "public"))).resolve()
+TEMPLATES_DIR = Path(os.getenv("TEMPLATES_DIR", str(ROOT_DIR / "templates"))).resolve()
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager, suppress
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Literal, Set
@@ -1041,9 +1046,9 @@ RUNTIME_DIRECTORIES = ensure_runtime_directories()
 RUNS_ROOT = RUNTIME_DIRECTORIES["artifacts"]
 LOGS_ROOT = RUNTIME_DIRECTORIES["logs"]
 TMP_ROOT = RUNTIME_DIRECTORIES["tmp"]
-STATIC_DIR = Path(os.getenv("STATIC_DIR","static")).resolve(); STATIC_DIR.mkdir(parents=True, exist_ok=True)
-PUBLIC_DIR = Path(os.getenv("PUBLIC_DIR","public")).resolve(); PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
-TEMPLATES_DIR = Path(os.getenv("TEMPLATES_DIR", "templates")).resolve(); TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
+PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 LIQUIDITY_DIR = PUBLIC_DIR / "liquidity"
@@ -1444,13 +1449,12 @@ SECURE_HEADERS_TEMPLATE: Dict[str, str] = {
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Embedder-Policy": "require-corp",
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "img-src 'self' data: blob:; "
-        "font-src 'self' data:; "
+        "font-src 'self' data: https://fonts.gstatic.com; "
         "connect-src 'self' https: http: ws: wss:; "
         "frame-ancestors 'none'; "
         "object-src 'none';"
@@ -3255,7 +3259,7 @@ async def csp_middleware(request: Request, call_next):
     return response
 
 
-app.mount("/static", StaticFiles(directory=str(PUBLIC_DIR)), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
