@@ -145,11 +145,10 @@ hashed with a salted 2048-bit PBKDF2-SHA512 digest before being persisted.
 #### Admin private key configuration
 
 Admin registration is gated by a shared secret so only trusted operators can
-create privileged accounts. The backend reads this secret from the
-`ADMIN_PRIVATE_KEY` environment variable during startup and falls back to the
-default value `the3istheD3T` when the variable is unset. Update the value to a
-unique string before deploying by exporting it in your shell (PowerShell
-example shown below) or placing it in a `.env` file that `server.py` will load
+create privileged accounts. The backend requires this secret at startup via the
+`ADMIN_PRIVATE_KEY` environment variable—requests to `POST /register` are
+rejected until the variable is set. Export the value in your shell (PowerShell
+example shown below) or place it in a `.env` file that `server.py` will load
 automatically if [`python-dotenv`](https://pypi.org/project/python-dotenv/)
 is installed.
 
@@ -163,9 +162,7 @@ in their payload. The key is not required for end-user logins or Whop-based
 member onboarding.
 
 1. Register an admin user with `POST /register` and a JSON body like
-   `{ "username": "alice", "password": "<strong-password>", "admin_key": "the3istheD3T" }`.
-   The private key can be overridden via the `ADMIN_PRIVATE_KEY` environment
-   variable.
+   `{ "username": "alice", "password": "<strong-password>", "admin_key": "<your-admin-key>" }`.
 2. Log in with `POST /login` using the same payload to receive a bearer
    token. Supply this token to other endpoints via
    `Authorization: Bearer <token>`.
@@ -272,14 +269,23 @@ use the hosted console simultaneously.
 ### Webhook Verification
 
 If you supply `ALPACA_WEBHOOK_SECRET`, incoming webhook requests must include
-a matching `X-Webhook-Signature` header. A mismatch yields a 400 error.
+both `X-Webhook-Signature` and `X-Webhook-Timestamp` headers. The signature is
+calculated as `base64(hmac_sha256(secret, f"{timestamp}.{body}"))`. Payloads
+missing either header, whose signatures fail comparison, or whose timestamps
+fall outside `ALPACA_WEBHOOK_TOLERANCE_SECONDS` (default 300 seconds) are
+rejected. Replay attempts reuse the same signature and will be blocked with a
+409 response. Set `ALPACA_ALLOW_UNAUTHENTICATED_WEBHOOKS=1` only for local
+testing if you need to bypass signature enforcement.
 
 ### Webhook test helper
 
 Use `POST /alpaca/webhook/test` to generate a signed sample payload. The
 endpoint writes the payload to `public/alpaca_webhook_tests/` and, when a
 secret is configured, returns a base64-encoded signature that mirrors what
-Alpaca would send.
+Alpaca would send. Configure either `ADMIN_PORTAL_GATE_TOKEN` or
+`ADMIN_PORTAL_BASIC_USER`/`ADMIN_PORTAL_BASIC_PASS` and leave
+`ALPACA_WEBHOOK_TEST_REQUIRE_AUTH` at its default `true` value to restrict this
+helper to trusted operators.
 
 ## Liquidity Sweep Radar (mobile + desktop)
 
