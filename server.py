@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
+
 try:  # pragma: no cover - optional dependency
     import aikido_zen  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
@@ -19,6 +21,21 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
     _ZEN_LIBRARY_AVAILABLE = False
 else:  # pragma: no cover - passthrough when dependency is present
     _ZEN_LIBRARY_AVAILABLE = True
+
+    # Bridge legacy environment variables that the upstream library expects so
+    # that projects configured with ``ZEN_ACCESS_TOKEN`` still start the
+    # firewall/background services when ``aikido_zen.protect`` is invoked at
+    # import time.  The Zen CLI/tooling historically looked for
+    # ``AIKIDO_TOKEN`` only, so we copy whichever value the user supplied to the
+    # canonical name before ``protect`` runs.
+    if not os.environ.get("AIKIDO_TOKEN"):
+        _fallback_token = (
+            os.environ.get("ZEN_ACCESS_TOKEN")
+            or os.environ.get("ZEN_TOKEN")
+            or os.environ.get("ZEN_API_TOKEN")
+        )
+        if _fallback_token:
+            os.environ["AIKIDO_TOKEN"] = _fallback_token
 
 aikido_zen.protect()
 
@@ -343,7 +360,12 @@ ZEN_FIREWALL_ENABLED = _env_flag("ZEN_FIREWALL_ENABLED", default=True)
 ZEN_FIREWALL_PROFILE = os.getenv("ZEN_FIREWALL_PROFILE", "balanced")
 ZEN_FIREWALL_RULES = os.getenv("ZEN_FIREWALL_RULES")
 ZEN_FIREWALL_DEFAULT_POLICY = os.getenv("ZEN_FIREWALL_DEFAULT_POLICY", "allow")
-ZEN_ACCESS_TOKEN = os.getenv("ZEN_ACCESS_TOKEN")
+ZEN_ACCESS_TOKEN = (
+    os.getenv("ZEN_ACCESS_TOKEN")
+    or os.getenv("ZEN_TOKEN")
+    or os.getenv("ZEN_API_TOKEN")
+    or os.getenv("AIKIDO_TOKEN")
+)
 ZEN_TOR_ENABLED = _env_flag("ZEN_TOR_ENABLED", default=False)
 ZEN_TOR_EXIT_NODES = os.getenv("ZEN_TOR_EXIT_NODES")
 ZEN_TOR_STRICT_NODES = _env_flag("ZEN_TOR_STRICT_NODES", default=False)
