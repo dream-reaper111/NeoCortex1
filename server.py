@@ -159,8 +159,20 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for trimmed fastapi d
 
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
-import jwt
-from jwt import InvalidTokenError, ExpiredSignatureError
+
+try:
+    import jwt
+except ModuleNotFoundError as exc:  # pragma: no cover - dependency should be installed
+    raise ModuleNotFoundError(
+        "PyJWT is required to run the server. Install it with 'pip install PyJWT'."
+    ) from exc
+
+try:
+    from jwt import InvalidTokenError, ExpiredSignatureError
+except (ImportError, AttributeError) as exc:  # pragma: no cover - guard against wrong package
+    raise ImportError(
+        "The imported 'jwt' package is not PyJWT. Please install PyJWT and remove conflicting 'jwt' packages."
+    ) from exc
 try:
     import pyotp
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
