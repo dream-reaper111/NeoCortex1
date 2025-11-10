@@ -4,10 +4,8 @@
         <meta charset="utf-8" />
         <title>Neo Cortex AI Dashboard</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="stylesheet" href="/public/assets/neocortex-theme.css" />
+        <link rel="stylesheet" href="/assets/neocortex-theme.css" />
         <link rel="stylesheet" href="/public/enduserapp/style.css" />
-        <link rel="stylesheet" href="assets/neocortex-theme.css" />
-        <link rel="stylesheet" href="enduserapp/style.css" />
         <style>
                 body {
                         margin: 0;
@@ -393,6 +391,20 @@
                 </section>
         </main>
         <script>
+                function getCookie(name) {
+                        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+                        return match ? match[2] : null;
+                }
+
+                async function csrfFetch(url, options = {}) {
+                        const token = getCookie('csrftoken');
+                        options.headers = Object.assign({}, options.headers, {
+                                'X-CSRF-Token': token || '',
+                        });
+                        options.credentials = 'include';
+                        return fetch(url, options);
+                }
+
                 const $ = (id) => document.getElementById(id);
                 const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
                 const TOKEN_KEY = 'nc_token';
@@ -444,7 +456,7 @@
                 $('logoutBtn').addEventListener('click', async (event) => {
                         event.preventDefault();
                         try {
-                                await fetch('/logout', { method: 'POST' });
+                                await csrfFetch('/logout', { method: 'POST' });
                         } catch (_) { }
                         localStorage.removeItem(TOKEN_KEY);
                         localStorage.removeItem(USERNAME_KEY);
@@ -467,7 +479,7 @@
 		// ---- GPU Pill ----
 		async function loadGPU() {
 			try {
-				const r = await fetch('/gpu-info', { cache: 'no-store' });
+                                const r = await csrfFetch('/gpu-info', { cache: 'no-store' });
 				const j = await r.json();
 				const pill = $('gpu-pill');
 				if (j.cuda_available) {
@@ -496,7 +508,7 @@
 
 		async function fetchMetrics() {
 			try {
-				const r = await fetch('/metrics/latest', { cache: 'no-store' });
+                                const r = await csrfFetch('/metrics/latest', { cache: 'no-store' });
 				const t = await r.text();
 				let m; try { m = JSON.parse(t); } catch (_) { throw new Error('metrics parse failed: ' + t.slice(0, 200)); }
 				if (!m.ok) throw new Error(m.reason || m.detail || 'no metrics');
@@ -600,7 +612,7 @@
 					if ((row.type === 'trade_open' || row.type === 'trade_close') && matchesChosen) {
 						addTradeRow(row);
 					}
-					if (row.phase === 'backtest:done') { fetchMetrics(); }
+                                        if (row.phase === 'backtest:done') { fetchMetrics(); }
 				} catch {
 					// non-JSON line
 					logEl.textContent += e.data + '\n';
@@ -674,8 +686,8 @@
 		}
 
 		async function loadNNGraph() {
-			try {
-				const r = await fetch('/nn/graph', { cache: 'no-store' });
+                        try {
+                                const r = await csrfFetch('/nn/graph', { cache: 'no-store' });
 				const j = await r.json();
 				if (j.ok) {
 					nnGraph = j.graph;
@@ -730,7 +742,7 @@
 			else { payload.start = $('start').value || null; payload.end = $('end').value || null; }
 
 			try {
-				const r = await fetch('/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                const r = await csrfFetch('/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 				const txt = await r.text(); let j;
 				try { j = JSON.parse(txt); } catch (_) { throw new Error(`HTTP ${r.status} ${r.statusText} - ${txt.slice(0, 200)}`); }
 				if (!r.ok || !j.ok) throw new Error(j.detail || j.reason || 'Train failed');
@@ -758,16 +770,16 @@
 				merge_sources: $('idle_merge').checked,
 				use_fundamentals: $('idle_fa').checked
 			};
-			const r = await fetch('/idle/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                        const r = await csrfFetch('/idle/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 			$('idleStatus').textContent = await r.text();
 		});
 		$('idleStopBtn').addEventListener('click', async () => {
 			const name = $('idle_name').value.trim() || 'idle';
-			const r = await fetch('/idle/stop?name=' + encodeURIComponent(name), { method: 'POST' });
+                        const r = await csrfFetch('/idle/stop?name=' + encodeURIComponent(name), { method: 'POST' });
 			$('idleStatus').textContent = await r.text();
 		});
 		$('idleStatusBtn').addEventListener('click', async () => {
-			const r = await fetch('/idle/status', { cache: 'no-store' }); $('idleStatus').textContent = await r.text();
+                        const r = await csrfFetch('/idle/status', { cache: 'no-store' }); $('idleStatus').textContent = await r.text();
 		});
 
 		// ---- Multi train ----
@@ -783,7 +795,7 @@
 				merge_sources: $('multi_merge').checked,
 				use_fundamentals: $('multi_fa').checked
 			};
-			const r = await fetch('/train/multi', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                        const r = await csrfFetch('/train/multi', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 			$('multiOut').textContent = await r.text();
 		});
 

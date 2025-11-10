@@ -1439,7 +1439,16 @@ SECURE_HEADERS_TEMPLATE: Dict[str, str] = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Embedder-Policy": "require-corp",
-    "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; object-src 'none'",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self' data:; "
+        "connect-src 'self' https: http: ws: wss:; "
+        "frame-ancestors 'none'; "
+        "object-src 'none';"
+    ),
 }
 
 ENDUSER_CHAT_ENABLED = _env_flag("ENDUSER_CHAT_ENABLED", default=True)
