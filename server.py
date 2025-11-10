@@ -3236,6 +3236,20 @@ class PaperTradeOrderRequest(BaseModel):
     future_year: Optional[int] = Field(default=None, ge=2000, le=2100)
 
 
+class AutoTradeOrderRequest(BaseModel):
+    symbol: str
+    side: Literal["long", "short"] = "long"
+    quantity: float = Field(default=1.0, gt=0)
+    price: Optional[float] = Field(default=None, ge=0)
+    account: Literal["paper", "funded"] = "paper"
+    instrument: Literal["equity", "option", "future"] = "equity"
+    option_type: Optional[Literal["call", "put"]] = None
+    expiry: Optional[str] = None
+    strike: Optional[float] = Field(default=None, ge=0)
+    future_month: Optional[str] = None
+    future_year: Optional[int] = Field(default=None, ge=2000, le=2100)
+
+
 class TokenRefreshRequest(BaseModel):
     refresh_token: Optional[str] = None
 
@@ -4372,6 +4386,168 @@ async def papertrade_orders(req: PaperTradeOrderRequest):
     response_order.pop("noise_seed", None)
 
     return _json({"ok": True, "order": response_order, "dashboard": dashboard})
+
+
+@app.post("/trade/auto")
+async def trade_auto(
+    req: AutoTradeOrderRequest,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    """Execute an order through Alpaca when approved by the AI trainer."""
+
+    user = _require_user(authorization, session_token, required_scopes={"trade"})
+
+    symbol = (req.symbol or "").strip().upper()
+    if not symbol:
+        return _json({"ok": False, "detail": "symbol is required"}, 400)
+
+    account_type = "funded" if req.account == "funded" else "paper"
+    quantity = float(req.quantity)
+    price = float(req.price) if req.price is not None else None
+    if price is not None and price <= 0:
+        price = None
+
+    order_summary = {
+        "symbol": symbol,
+        "quantity": round(quantity, 6),
+        "side": req.side,
+        "price": round(price, 4) if price is not None else None,
+        "instrument": req.instrument,
+    }
+
+    ai_payload = {
+        "instrument": req.instrument,
+        "symbol": symbol,
+        "side": req.side,
+        "quantity": quantity,
+        "price": price or 0.0,
+        "option_type": req.option_type,
+        "expiry": req.expiry,
+        "strike": req.strike,
+        "future_month": req.future_month,
+        "future_year": req.future_year,
+    }
+    ai_decision = _run_ai_trainer(ai_payload)
+    if ai_decision.get("action") != "execute":
+        detail = ai_decision.get("message") or "Neo Cortex AI parked the order for review."
+        return _json(
+            {
+                "ok": True,
+                "executed": False,
+                "ai": ai_decision,
+                "detail": detail,
+                "account": account_type,
+                "order": order_summary,
+            }
+        )
+
+    creds = _resolve_alpaca_credentials(account_type, user["id"])
+    key = creds.get("key")
+    secret = creds.get("secret")
+    base_url = creds.get("base_url")
+    if not key or not secret or not base_url:
+        return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
+
+    def _format_qty(value: float) -> str:
+        if not math.isfinite(value) or value <= 0:
+            return "1"
+        if abs(value - round(value)) < 1e-6:
+            return str(int(round(value)))
+        return f"{value:.6f}".rstrip("0").rstrip(".")
+
+    qty_str = _format_qty(quantity)
+    order_payload: Dict[str, Any] = {
+        "symbol": symbol,
+        "qty": qty_str,
+        "side": "buy" if req.side == "long" else "sell",
+        "type": "market",
+        "time_in_force": "day",
+        "client_order_id": f"nc-{secrets.token_hex(10)}",
+    }
+    if price is not None:
+        order_payload["type"] = "limit"
+        order_payload["limit_price"] = round(price, 4)
+
+    headers = {
+        "APCA-API-KEY-ID": key,
+        "APCA-API-SECRET-KEY": secret,
+        "Content-Type": "application/json",
+    }
+
+    session = _http_session()
+    try:
+        resp = session.post(
+            f"{base_url}/v2/orders",
+            headers=headers,
+            json=order_payload,
+            timeout=20,
+        )
+    except Exception as exc:
+        return _json(
+            {
+                "ok": False,
+                "executed": False,
+                "ai": ai_decision,
+                "detail": f"Failed to submit order: {exc}",
+                "account": account_type,
+                "order": order_summary,
+                "alpaca_order": order_payload,
+            },
+            502,
+        )
+
+    alpaca_payload: Optional[Any]
+    try:
+        alpaca_payload = resp.json() if resp.content else None
+    except ValueError:
+        alpaca_payload = resp.text.strip() or None
+
+    if 200 <= resp.status_code < 300:
+        detail: Optional[str] = None
+        if isinstance(alpaca_payload, dict):
+            detail = (
+                alpaca_payload.get("status_message")
+                or alpaca_payload.get("message")
+                or alpaca_payload.get("status")
+            )
+        if not detail:
+            detail = "Alpaca accepted the order."
+        body: Dict[str, Any] = {
+            "ok": True,
+            "executed": True,
+            "ai": ai_decision,
+            "detail": detail,
+            "account": account_type,
+            "order": order_summary,
+            "alpaca": alpaca_payload,
+            "alpaca_order": order_payload,
+        }
+        return _json(body, resp.status_code or 200)
+
+    error_detail: Optional[str] = None
+    if isinstance(alpaca_payload, dict):
+        error_detail = (
+            alpaca_payload.get("message")
+            or alpaca_payload.get("error")
+            or alpaca_payload.get("detail")
+        )
+    if not error_detail:
+        error_detail = resp.text.strip() or f"Alpaca order rejected with HTTP {resp.status_code}"
+
+    error_body: Dict[str, Any] = {
+        "ok": False,
+        "executed": False,
+        "ai": ai_decision,
+        "detail": error_detail,
+        "account": account_type,
+        "order": order_summary,
+        "alpaca_order": order_payload,
+    }
+    if alpaca_payload is not None:
+        error_body["alpaca"] = alpaca_payload
+
+    return _json(error_body, resp.status_code or 502)
 
 # --- ingestion: TradingView (signals + bars optional) ---
 @app.post("/webhook/tradingview")

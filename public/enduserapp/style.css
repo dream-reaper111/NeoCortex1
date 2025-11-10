@@ -448,6 +448,12 @@ textarea:focus {
   grid-column: 1 / -1;
 }
 
+.form-note {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
 .form-actions {
   display: flex;
   align-items: center;
