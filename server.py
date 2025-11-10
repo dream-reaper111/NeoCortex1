@@ -159,8 +159,20 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for trimmed fastapi d
 
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
-import jwt
-from jwt import InvalidTokenError, ExpiredSignatureError
+
+try:
+    import jwt
+except ModuleNotFoundError as exc:  # pragma: no cover - dependency should be installed
+    raise ModuleNotFoundError(
+        "PyJWT is required to run the server. Install it with 'pip install PyJWT'."
+    ) from exc
+
+try:
+    from jwt import InvalidTokenError, ExpiredSignatureError
+except (ImportError, AttributeError) as exc:  # pragma: no cover - guard against wrong package
+    raise ImportError(
+        "The imported 'jwt' package is not PyJWT. Please install PyJWT and remove conflicting 'jwt' packages."
+    ) from exc
 try:
     import pyotp
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
@@ -331,11 +343,7 @@ ZEN_FIREWALL_ENABLED = _env_flag("ZEN_FIREWALL_ENABLED", default=True)
 ZEN_FIREWALL_PROFILE = os.getenv("ZEN_FIREWALL_PROFILE", "balanced")
 ZEN_FIREWALL_RULES = os.getenv("ZEN_FIREWALL_RULES")
 ZEN_FIREWALL_DEFAULT_POLICY = os.getenv("ZEN_FIREWALL_DEFAULT_POLICY", "allow")
-_AIKIDO_TOKEN = os.getenv("AIKIDO_TOKEN")
-ZEN_ACCESS_TOKEN = _AIKIDO_TOKEN or os.getenv("ZEN_ACCESS_TOKEN")
-ZEN_ACCESS_TOKEN_SOURCE = (
-    "AIKIDO_TOKEN" if _AIKIDO_TOKEN else ("ZEN_ACCESS_TOKEN" if ZEN_ACCESS_TOKEN else None)
-)
+ZEN_ACCESS_TOKEN = os.getenv("ZEN_ACCESS_TOKEN")
 ZEN_TOR_ENABLED = _env_flag("ZEN_TOR_ENABLED", default=False)
 ZEN_TOR_EXIT_NODES = os.getenv("ZEN_TOR_EXIT_NODES")
 ZEN_TOR_STRICT_NODES = _env_flag("ZEN_TOR_STRICT_NODES", default=False)
@@ -355,7 +363,6 @@ def _configure_aikido_services() -> Dict[str, Any]:
         },
         "token": {
             "provided": bool(ZEN_ACCESS_TOKEN),
-            "source": ZEN_ACCESS_TOKEN_SOURCE,
             "applied": False,
         },
         "tor": {
@@ -422,8 +429,6 @@ def _configure_aikido_services() -> Dict[str, Any]:
                 status["token"]["error"] = str(exc)
         else:
             status["token"]["error"] = "token registration unavailable"
-    else:
-        status["token"]["detail"] = "Set AIKIDO_TOKEN environment variable to register a token."
 
     # Enable Tor services with performance-focused defaults if requested.
     if ZEN_TOR_ENABLED:

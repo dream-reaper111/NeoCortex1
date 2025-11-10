@@ -198,6 +198,13 @@ class FastAPI:
 
         return decorator
 
+    def delete(self, path: str, *, response_class: Optional[type] = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            self.add_api_route(path, func, ("DELETE",), response_class=response_class)
+            return func
+
+        return decorator
+
     def add_middleware(self, middleware_cls: Type[Any], **options: Any) -> None:
         instance = middleware_cls(self, **options)
         dispatch = getattr(instance, "dispatch", None)
