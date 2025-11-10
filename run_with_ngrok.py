@@ -25,7 +25,10 @@ under the "Webhook URL" field in your Alpaca paper trading settings.
 Note: This script blocks until the server shuts down. To stop, press Ctrl+C.
 """
 
+import inspect
+import logging
 import os
+from typing import Any
 from urllib.parse import urlparse
 
 try:
@@ -81,6 +84,29 @@ def _normalize_domain(raw: str | None) -> str:
     return host.strip().strip("/")
 
 
+def _uvicorn_run(app: Any, *, host: str, port: int, log_level: str) -> None:
+    """Proxy ``uvicorn.run`` while gracefully handling legacy signatures."""
+
+    run_kwargs: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "log_level": log_level,
+    }
+
+    try:
+        signature = inspect.signature(uvicorn.run)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        signature = None
+
+    if signature and "access_log" in signature.parameters:
+        run_kwargs["access_log"] = not DISABLE_ACCESS_LOGS
+    elif DISABLE_ACCESS_LOGS:
+        # Fall back to disabling the logger directly when the parameter is unsupported.
+        logging.getLogger("uvicorn.access").disabled = True
+
+    uvicorn.run(app, **run_kwargs)
+
+
 def main() -> None:
     load_dotenv(override=False)
     port = int(os.getenv("API_PORT", "8000"))
@@ -96,13 +122,7 @@ def main() -> None:
             flush=True,
         )
         print("  Install pyngrok to enable tunnelling: pip install pyngrok", flush=True)
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
-            port=port,
-            log_level="info",
-            access_log=not DISABLE_ACCESS_LOGS,
-        )
+        _uvicorn_run(app, host="0.0.0.0", port=port, log_level="info")
         return
 
     auth_token = os.getenv("NGROK_AUTH_TOKEN")
@@ -173,13 +193,7 @@ def main() -> None:
     print(f"  {public_url}/alpaca/webhook", flush=True)
 
     try:
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
-            port=port,
-            log_level="info",
-            access_log=not DISABLE_ACCESS_LOGS,
-        )
+        _uvicorn_run(app, host="0.0.0.0", port=port, log_level="info")
     finally:
         try:
             ngrok.disconnect(tunnel.public_url)
