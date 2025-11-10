@@ -71,6 +71,16 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 else:  # pragma: no cover - exercised when pandas is installed
     _PANDAS_AVAILABLE = True
 
+try:  # pragma: no cover - optional dependency
+    from openai import OpenAI, OpenAIError
+except ModuleNotFoundError:  # pragma: no cover - fallback when OpenAI SDK missing
+    OpenAI = None  # type: ignore[assignment]
+
+    class OpenAIError(Exception):
+        """Fallback error type used when the OpenAI SDK is not installed."""
+
+        pass
+
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Depends, Form
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 try:
@@ -1335,10 +1345,10 @@ ROLE_READ_ONLY = "read-only"
 ROLE_LICENSE = "license_user"
 DEFAULT_ROLE = os.getenv("DEFAULT_USER_ROLE", ROLE_READ_ONLY)
 ROLE_SCOPES: Dict[str, Set[str]] = {
-    ROLE_ADMIN: {"admin", "trade", "read", "positions", "credentials", "api-keys"},
-    ROLE_TRADER: {"trade", "read", "positions"},
-    ROLE_LICENSE: {"license", "read"},
-    ROLE_READ_ONLY: {"read"},
+    ROLE_ADMIN: {"admin", "trade", "read", "positions", "credentials", "api-keys", "ml-chat"},
+    ROLE_TRADER: {"trade", "read", "positions", "ml-chat"},
+    ROLE_LICENSE: {"license", "read", "ml-chat"},
+    ROLE_READ_ONLY: {"read", "ml-chat"},
 }
 MFA_REQUIRED_ROLES: Set[str] = {role.strip() for role in os.getenv("MFA_REQUIRED_ROLES", f"{ROLE_ADMIN},{ROLE_TRADER}").split(",") if role.strip()}
 API_TOKEN_PREFIX = os.getenv("API_TOKEN_PREFIX", "ApiKey")
@@ -1368,6 +1378,20 @@ SECURE_HEADERS_TEMPLATE: Dict[str, str] = {
     "Cross-Origin-Embedder-Policy": "require-corp",
     "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; object-src 'none'",
 }
+
+ENDUSER_CHAT_ENABLED = _env_flag("ENDUSER_CHAT_ENABLED", default=True)
+ENDUSER_CHAT_MODEL = (os.getenv("ENDUSER_CHAT_MODEL") or "gpt-3.5-turbo").strip() or "gpt-3.5-turbo"
+ENDUSER_CHAT_SYSTEM_PROMPT = (
+    os.getenv("ENDUSER_CHAT_SYSTEM_PROMPT")
+    or "You are the Neo Cortex trading assistant. Provide concise, helpful answers about the platform."
+).strip()
+ENDUSER_CHAT_MAX_HISTORY = int(os.getenv("ENDUSER_CHAT_MAX_HISTORY", "8"))
+ENDUSER_CHAT_MAX_OUTPUT_TOKENS = int(os.getenv("ENDUSER_CHAT_MAX_OUTPUT_TOKENS", "512"))
+ENDUSER_CHAT_TEMPERATURE = float(os.getenv("ENDUSER_CHAT_TEMPERATURE", "0.2"))
+OPENAI_BASE_URL = (os.getenv("OPENAI_BASE_URL") or os.getenv("CHATGPT_BASE_URL") or "").strip()
+
+_openai_client_lock = threading.Lock()
+_openai_client: Optional[OpenAI] = None
 CUSTOM_SECURE_HEADERS = os.getenv("SECURE_HEADERS_EXTRA", "")
 _STRICT_TRANSPORT_TEMPLATE: Optional[str] = None
 if CUSTOM_SECURE_HEADERS:
@@ -2216,6 +2240,131 @@ def _http_session() -> requests.Session:
         session.mount("https://", _PinnedHTTPSAdapter())
     _HTTP_SESSION = session
     return session
+
+
+def _get_openai_client() -> OpenAI:
+    if OpenAI is None:  # pragma: no cover - optional dependency guard
+        raise RuntimeError("OpenAI SDK is not installed")
+    global _openai_client
+    with _openai_client_lock:
+        if _openai_client is not None:
+            return _openai_client
+        api_key = (os.getenv("OPENAI_API_KEY") or os.getenv("CHATGPT_API_KEY") or "").strip()
+        if not api_key:
+            raise RuntimeError("OpenAI API key is not configured")
+        client_kwargs: Dict[str, Any] = {"api_key": api_key}
+        if OPENAI_BASE_URL:
+            client_kwargs["base_url"] = OPENAI_BASE_URL
+        _openai_client = OpenAI(**client_kwargs)
+        return _openai_client
+
+
+def _prepare_chat_messages(req: ChatCompletionRequest) -> List[Dict[str, str]]:
+    prompt = req.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    history: List[Dict[str, str]] = []
+    if req.history:
+        # Preserve the most recent history to avoid unbounded prompts.
+        for item in req.history[-max(1, ENDUSER_CHAT_MAX_HISTORY):]:
+            role = item.role
+            if role not in {"user", "assistant"}:
+                continue
+            content = item.content.strip()
+            if not content:
+                continue
+            history.append({"role": role, "content": content})
+    messages: List[Dict[str, str]] = []
+    system_prompt = (req.system_prompt or ENDUSER_CHAT_SYSTEM_PROMPT).strip()
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.extend(history)
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def _chat_usage_to_dict(usage: Any) -> Dict[str, int]:
+    if not usage:
+        return {}
+    if hasattr(usage, "to_dict"):
+        usage = usage.to_dict()
+    result: Dict[str, int] = {}
+    if isinstance(usage, dict):
+        items = usage.items()
+    else:
+        items = ((name, getattr(usage, name, None)) for name in (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "input_tokens",
+            "output_tokens",
+        ))
+    for key, value in items:
+        if not isinstance(value, (int, float)):
+            continue
+        result[key] = int(value)
+    return result
+
+
+async def _run_chat_completion(req: ChatCompletionRequest, user: Dict[str, Any]) -> Dict[str, Any]:
+    if OpenAI is None:
+        raise HTTPException(status_code=503, detail="chat assistant is not installed")
+    try:
+        client = _get_openai_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    messages = _prepare_chat_messages(req)
+    model = (req.model or ENDUSER_CHAT_MODEL).strip()
+    if not model:
+        raise HTTPException(status_code=503, detail="no chat model configured")
+
+    temperature = (
+        ENDUSER_CHAT_TEMPERATURE
+        if req.temperature is None
+        else max(0.0, min(2.0, float(req.temperature)))
+    )
+    max_tokens = ENDUSER_CHAT_MAX_OUTPUT_TOKENS
+    if req.max_output_tokens is not None:
+        max_tokens = max(1, min(int(req.max_output_tokens), ENDUSER_CHAT_MAX_OUTPUT_TOKENS))
+    else:
+        max_tokens = max(1, max_tokens)
+
+    loop = asyncio.get_running_loop()
+
+    def _request_completion():
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            user=str(user.get("id") or user.get("username") or "enduser"),
+        )
+
+    try:
+        completion = await loop.run_in_executor(None, _request_completion)
+    except OpenAIError as exc:
+        logger.warning("OpenAI chat completion failed for user %s: %s", user.get("id"), exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - unexpected SDK error
+        logger.exception("Unexpected error during OpenAI chat completion")
+        raise HTTPException(status_code=502, detail="chat service unavailable") from exc
+
+    choices = getattr(completion, "choices", None) or []
+    response_text = ""
+    for choice in choices:
+        message = getattr(choice, "message", None)
+        content = getattr(message, "content", None) if message else None
+        if content:
+            response_text = str(content).strip()
+            if response_text:
+                break
+    if not response_text:
+        raise HTTPException(status_code=502, detail="assistant returned an empty response")
+
+    usage = _chat_usage_to_dict(getattr(completion, "usage", None))
+    model_name = getattr(completion, "model", None) or model
+    return {"message": response_text, "model": model_name, "usage": usage}
 
 
 def _generate_recovery_codes(count: int = MFA_RECOVERY_CODE_COUNT) -> List[str]:
@@ -3319,6 +3468,20 @@ class WhopLoginReq(BaseModel):
 
 class WhopSessionRequest(BaseModel):
     token: str
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
+class ChatCompletionRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    history: List[ChatMessage] = Field(default_factory=list)
+    model: Optional[str] = Field(default=None, max_length=128)
+    system_prompt: Optional[str] = Field(default=None, max_length=4000)
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_output_tokens: Optional[int] = Field(default=None, ge=1, le=4096)
 
 
 class AlpacaWebhookTest(BaseModel):
@@ -4657,6 +4820,28 @@ async def trade_auto(
         error_body["alpaca"] = alpaca_payload
 
     return _json(error_body, resp.status_code or 502)
+
+
+@app.post("/chat/completions")
+async def chat_completions(
+    req: ChatCompletionRequest,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    """Proxy chat completion requests to the configured language model."""
+
+    if not ENDUSER_CHAT_ENABLED:
+        raise HTTPException(status_code=404, detail="assistant is not enabled")
+
+    user = _require_user(authorization, session_token, required_scopes={"ml-chat"})
+    result = await _run_chat_completion(req, user)
+    body = {
+        "ok": True,
+        "reply": result["message"],
+        "model": result["model"],
+        "usage": result.get("usage", {}),
+    }
+    return _json(body)
 
 # --- ingestion: TradingView (signals + bars optional) ---
 @app.post("/webhook/tradingview")
