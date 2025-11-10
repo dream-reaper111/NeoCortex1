@@ -7,20 +7,22 @@
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet" />
+        <link rel="stylesheet" href="/public/enduserapp/style.css" />
         <style>
                 :root {
                         color-scheme: dark;
-                        --bg: #05070f;
-                        --surface: #101728;
-                        --surface-alt: #0c1320;
-                        --accent: #3b82f6;
-                        --accent-soft: rgba(59,130,246,.15);
-                        --border: rgba(148,163,184,.22);
-                        --text: #f8fafc;
-                        --muted: #94a3b8;
+                        --bg: #060014;
+                        --surface: rgba(32, 10, 52, 0.92);
+                        --surface-alt: rgba(18, 6, 36, 0.9);
+                        --accent: #d8b4fe;
+                        --accent-strong: #a855f7;
+                        --accent-soft: rgba(168, 85, 247, .24);
+                        --border: rgba(192, 132, 252, .32);
+                        --text: #f5e9ff;
+                        --muted: rgba(224, 196, 255, .75);
                         --good: #34d399;
-                        --warn: #fbbf24;
-                        --bad: #f87171;
+                        --warn: #facc15;
+                        --bad: #fb7185;
                         font-family: 'Manrope', system-ui, sans-serif;
                 }
 
@@ -33,9 +35,10 @@
                         min-height: 100vh;
                         display: flex;
                         flex-direction: column;
-                        background: radial-gradient(circle at top left, rgba(59,130,246,.08), transparent 45%),
-                                    radial-gradient(circle at 20% 80%, rgba(96,165,250,.08), transparent 40%),
-                                    var(--bg);
+                        background: radial-gradient(circle at -10% -20%, rgba(217, 70, 239, .28), transparent 55%),
+                                    radial-gradient(circle at 85% 0%, rgba(129, 140, 248, .22), transparent 50%),
+                                    radial-gradient(circle at 20% 85%, rgba(236, 72, 153, .16), transparent 60%),
+                                    linear-gradient(135deg, #060014, #0b0320 48%, #05000f);
                         color: var(--text);
                         padding: 16px;
                         gap: 16px;
@@ -74,12 +77,12 @@
                 }
 
                 .card {
-                        background: linear-gradient(135deg, rgba(15,23,42,.88), rgba(15,23,42,.72));
+                        background: linear-gradient(140deg, rgba(36,12,66,.94), rgba(16,4,33,.9));
                         border: 1px solid var(--border);
-                        border-radius: 16px;
-                        padding: 20px;
-                        box-shadow: 0 20px 60px rgba(15,23,42,.45);
-                        backdrop-filter: blur(12px);
+                        border-radius: 20px;
+                        padding: 22px;
+                        box-shadow: 0 28px 72px rgba(10,2,24,.55);
+                        backdrop-filter: blur(18px);
                         position: relative;
                         overflow: hidden;
                 }
@@ -88,7 +91,7 @@
                         content: '';
                         position: absolute;
                         inset: 0;
-                        background: radial-gradient(circle at top right, rgba(59,130,246,.12), transparent 55%);
+                        background: radial-gradient(circle at 85% 15%, rgba(168,85,247,.22), transparent 60%);
                         pointer-events: none;
                 }
 
@@ -105,25 +108,25 @@
                 input, select, button {
                         font: inherit;
                         padding: 10px 12px;
-                        border-radius: 12px;
-                        border: 1px solid rgba(148,163,184,.24);
-                        background: var(--surface-alt);
+                        border-radius: 14px;
+                        border: 1px solid var(--border);
+                        background: rgba(14, 4, 30, 0.88);
                         color: var(--text);
                         transition: border-color .2s ease, box-shadow .2s ease;
                 }
 
                 input:focus, select:focus {
                         outline: none;
-                        border-color: var(--accent);
+                        border-color: var(--accent-strong);
                         box-shadow: 0 0 0 3px var(--accent-soft);
                 }
 
                 button {
-                        background: linear-gradient(120deg, var(--accent), #60a5fa);
+                        background: linear-gradient(125deg, var(--accent), var(--accent-strong));
                         border: none;
                         font-weight: 600;
                         cursor: pointer;
-                        color: #0f172a;
+                        color: #fff7ff;
                         text-transform: uppercase;
                         letter-spacing: .08em;
                         padding-block: 12px;
@@ -140,8 +143,9 @@
                         gap: 8px;
                         padding: 6px 12px;
                         border-radius: 999px;
-                        background: rgba(148,163,184,.16);
-                        color: var(--muted);
+                        background: rgba(168,85,247,.18);
+                        border: 1px solid var(--border);
+                        color: var(--accent);
                         font-size: .8rem;
                         text-transform: uppercase;
                         letter-spacing: .1em;
@@ -161,10 +165,10 @@
                 }
 
                 .metric {
-                        background: rgba(15,23,42,.65);
-                        border-radius: 12px;
+                        background: rgba(18,5,34,.68);
+                        border-radius: 14px;
                         padding: 14px;
-                        border: 1px solid rgba(148,163,184,.18);
+                        border: 1px solid rgba(192,132,252,.28);
                         display: flex;
                         flex-direction: column;
                         gap: 4px;
@@ -193,10 +197,10 @@
                 }
 
                 .list li {
-                        border: 1px solid rgba(148,163,184,.14);
-                        border-radius: 12px;
+                        border: 1px solid rgba(192,132,252,.24);
+                        border-radius: 14px;
                         padding: 12px;
-                        background: rgba(15,23,42,.6);
+                        background: rgba(18,5,34,.6);
                         display: grid;
                         gap: 6px;
                 }
@@ -224,7 +228,7 @@
                 #heatmap img {
                         width: 100%;
                         border-radius: 12px;
-                        border: 1px solid rgba(148,163,184,.18);
+                        border: 1px solid rgba(192,132,252,.22);
                         display: block;
                 }
 
@@ -238,7 +242,7 @@
                 footer {
                         margin-top: auto;
                         text-align: center;
-                        color: rgba(148,163,184,.6);
+                        color: rgba(224,196,255,.65);
                         font-size: .8rem;
                 }
 

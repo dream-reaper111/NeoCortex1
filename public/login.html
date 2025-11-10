@@ -4,419 +4,204 @@
         <meta charset="utf-8" />
         <title>Neo Cortex AI – Member Sign In</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="stylesheet" href="/public/assets/neocortex-theme.css" />
+        <link rel="stylesheet" href="/public/enduserapp/style.css" />
         <style>
-                :root {
-                        --bg: #06090f;
-                        --panel: rgba(16, 23, 38, 0.92);
-                        --border: rgba(59, 130, 246, 0.35);
-                        --accent: #3b82f6;
-                        --accent-strong: rgba(129, 140, 248, 0.95);
-                        --text: #e6edf6;
-                        --muted: #93a7c3;
-                        --danger: #ff4d4f;
-                        --success: #2ecc71;
+                .login-screen {
+                        width: min(460px, 100%);
                 }
 
-                * { box-sizing: border-box; }
-
-                body {
-                        margin: 0;
-                        min-height: 100vh;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        padding: 20px;
-                        background: radial-gradient(circle at top, rgba(59,130,246,0.25), transparent 55%),
-                                radial-gradient(circle at bottom, rgba(16, 185, 129, 0.15), transparent 55%),
-                                var(--bg);
-                        color: var(--text);
-                        font: 14px/1.5 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
-                }
-
-                .card {
-                        width: min(440px, 100%);
-                        padding: 28px 26px;
-                        border-radius: 18px;
-                        background: var(--panel);
-                        border: 1px solid var(--border);
-                        box-shadow: 0 24px 64px rgba(5, 12, 25, 0.45);
-                        backdrop-filter: blur(12px);
-                }
-
-                h1 {
-                        margin: 0 0 8px;
-                        font-size: 26px;
-                        letter-spacing: 0.4px;
-                }
-
-                p.subtitle {
-                        margin: 0 0 20px;
-                        color: var(--muted);
-                        font-size: 13px;
-                }
-
-                .notice {
+                .login-subtitle {
                         margin: 0 0 18px;
-                        padding: 12px 14px;
-                        border-radius: 12px;
-                        border: 1px solid rgba(59, 130, 246, 0.4);
-                        background: rgba(12, 20, 33, 0.75);
-                        color: var(--text);
-                        font-size: 13px;
+                        color: var(--text-muted);
+                        font-size: 0.95rem;
+                }
+
+                .login-notice {
+                        margin: 0 0 16px;
+                        padding: 14px 16px;
+                        border-radius: 16px;
+                        border: 1px solid var(--border-strong);
+                        background: var(--surface-muted);
+                        font-size: 0.95rem;
                         line-height: 1.45;
                 }
 
-                .notice[hidden] { display: none; }
+                .login-notice[hidden] { display: none; }
 
-                .notice.error {
-                        border-color: rgba(255, 77, 79, 0.55);
-                        background: rgba(130, 30, 40, 0.35);
+                .login-notice.error {
+                        border-color: rgba(251, 113, 133, 0.55);
+                        background: rgba(86, 18, 33, 0.45);
                 }
 
-                .notice.success {
-                        border-color: rgba(46, 204, 113, 0.55);
-                        background: rgba(23, 88, 52, 0.4);
-                }
-
-                button {
-                        width: 100%;
-                        padding: 12px 14px;
-                        border: none;
-                        border-radius: 12px;
-                        background: linear-gradient(135deg, rgba(59,130,246,0.95), var(--accent-strong));
-                        color: #f8fbff;
-                        font-weight: 600;
-                        letter-spacing: 0.4px;
-                        cursor: pointer;
-                        transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.2s ease;
-                        margin-bottom: 16px;
-                }
-
-                button:disabled {
-                        cursor: wait;
-                        opacity: 0.65;
-                        box-shadow: none;
-                }
-
-                button:not(:disabled):hover {
-                        transform: translateY(-1px);
-                        box-shadow: 0 12px 28px rgba(59, 130, 246, 0.35);
-                }
-
-                .secondary {
-                        background: rgba(16, 23, 38, 0.85);
-                        border: 1px solid rgba(59, 130, 246, 0.35);
-                        color: var(--text);
-                        margin-top: 12px;
+                .login-notice.success {
+                        border-color: rgba(34, 211, 153, 0.6);
+                        background: rgba(16, 61, 48, 0.45);
                 }
 
                 form {
                         margin-top: 12px;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 14px;
                 }
 
                 form[hidden] { display: none; }
 
-                label {
-                        display: block;
-                        font-size: 12px;
-                        letter-spacing: 0.35px;
+                .login-actions {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 12px;
+                        margin-top: 10px;
+                }
+
+                .login-help {
+                        margin-top: 22px;
+                        font-size: 0.75rem;
+                        letter-spacing: 0.1em;
                         text-transform: uppercase;
-                        color: var(--muted);
-                        margin-bottom: 6px;
-                }
-
-                input, select {
-                        width: 100%;
-                        padding: 10px 12px;
-                        border-radius: 10px;
-                        border: 1px solid rgba(59, 130, 246, 0.25);
-                        background: rgba(7, 11, 19, 0.85);
-                        color: var(--text);
-                        outline: none;
-                        transition: border-color 0.2s ease, box-shadow 0.2s ease;
-                        margin-bottom: 16px;
-                }
-
-                input:focus, select:focus {
-                        border-color: rgba(59, 130, 246, 0.85);
-                        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
-                }
-
-                .message {
-                        min-height: 20px;
-                        font-size: 13px;
-                        color: var(--muted);
-                        margin-top: 8px;
-                }
-
-                .message.error { color: var(--danger); }
-                .message.success { color: var(--success); }
-
-                .fine-print {
-                        margin-top: 20px;
-                        font-size: 11px;
-                        color: rgba(147, 167, 195, 0.75);
+                        color: var(--text-muted);
                         text-align: center;
                 }
 
-                .fine-print a { color: var(--accent); }
+                .fine-print {
+                        margin-top: 18px;
+                        font-size: 0.75rem;
+                        text-align: center;
+                        color: rgba(224, 196, 255, 0.65);
+                }
         </style>
 </head>
-<body>
-        <div class="card">
-                <h1>Neo Cortex Console</h1>
-                <p class="subtitle">Members must sign in with a Whop membership. Admins can manage the platform from the dashboard login.</p>
-                <div id="whopNotice" class="notice" hidden></div>
-                <button type="button" id="whopBtn">Sign in with Whop</button>
-                <form id="registerForm" autocomplete="off" hidden>
-                        <h2 style="margin: 0 0 12px; font-size: 16px; letter-spacing: 0.3px;">Complete Membership Setup</h2>
-                        <label for="username">Console Username</label>
-                        <input id="username" name="username" type="text" autocomplete="username" placeholder="yourname" required />
-                        <label for="password">Console Password</label>
-                        <input id="password" name="password" type="password" autocomplete="new-password" placeholder="••••••••" required />
-                        <label for="accountType">Account Type</label>
-                        <select id="accountType" name="accountType">
-                                <option value="funded">Funded (live)</option>
-                                <option value="paper">Paper</option>
-                        </select>
-                        <label for="apiKey">Alpaca API Key</label>
-                        <input id="apiKey" name="apiKey" type="text" autocomplete="off" placeholder="PK..." required />
-                        <label for="apiSecret">Alpaca API Secret</label>
-                        <input id="apiSecret" name="apiSecret" type="password" autocomplete="off" placeholder="SK..." required />
-                        <label for="baseUrl">API Base URL (optional)</label>
-                        <input id="baseUrl" name="baseUrl" type="url" placeholder="https://api.alpaca.markets" />
-                        <button type="submit" id="registerBtn">Link Membership</button>
-                </form>
-                <div id="message" class="message"></div>
-                <div class="fine-print">Need admin access? <a href="/admin/login">Create or sign in to an admin account</a>.</div>
-        </div>
+<body class="nc-centered">
+        <main class="nc-card login-screen">
+                <div class="nc-stack">
+                        <header>
+                                <h1>Member Portal</h1>
+                                <p class="login-subtitle">Sign in to the Neo Cortex AI console to manage webhook credentials and monitor trading agents.</p>
+                        </header>
+                        <div id="notice" class="login-notice" hidden></div>
+                        <form id="loginForm">
+                                <div>
+                                        <label for="username">Username</label>
+                                        <input id="username" name="username" type="text" autocomplete="username" placeholder="yourname" required />
+                                </div>
+                                <div>
+                                        <label for="password">Password</label>
+                                        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+                                </div>
+                                <button type="submit" id="loginBtn" class="nc-btn nc-btn-block">Sign In</button>
+                        </form>
+                        <div class="login-actions">
+                                <button type="button" class="nc-btn nc-btn-secondary nc-btn-block" id="resetBtn">Reset Password</button>
+                                <div id="message" class="nc-message"></div>
+                        </div>
+                        <p class="login-help">Need access? Contact your administrator.</p>
+                        <p class="fine-print">Credentials are secured with PBKDF2-SHA512 and never stored in clear text.</p>
+                </div>
+        </main>
 
         <script>
                 const TOKEN_KEY = 'nc_token';
                 const USERNAME_KEY = 'nc_user';
                 const COOKIE_NAME_KEY = 'nc_cookie';
+                const noticeEl = document.getElementById('notice');
 
-                const params = new URLSearchParams(window.location.search);
+                function showNotice(text, type) {
+                        if (!text) {
+                                noticeEl.hidden = true;
+                                noticeEl.textContent = '';
+                                noticeEl.className = 'login-notice';
+                                return;
+                        }
+                        noticeEl.hidden = false;
+                        noticeEl.textContent = text;
+                        noticeEl.className = 'login-notice' + (type ? ' ' + type : '');
+                }
+
+                function setMessage(text, type) {
+                        const el = document.getElementById('message');
+                        el.textContent = text || '';
+                        el.className = 'nc-message' + (type ? ' ' + type : '');
+                }
 
                 function resolveNext(candidate) {
                         if (!candidate) { return '/dashboard'; }
                         try {
                                 const parsed = new URL(candidate, window.location.origin);
-                                if (parsed.origin !== window.location.origin) { return '/dashboard'; }
+                                if (parsed.origin !== window.location.origin) {
+                                        return '/dashboard';
+                                }
                                 return parsed.pathname + parsed.search + parsed.hash;
                         } catch (_) {
                                 return '/dashboard';
                         }
                 }
 
+                const params = new URLSearchParams(window.location.search);
                 const nextUrl = resolveNext(params.get('next'));
-                const whopToken = (params.get('whop_token') || '').trim();
-
-                if (!localStorage.getItem(COOKIE_NAME_KEY)) {
-                        localStorage.setItem(COOKIE_NAME_KEY, 'session_token');
-                }
 
                 if (localStorage.getItem(TOKEN_KEY)) {
                         window.location.replace(nextUrl);
                 }
 
-                const whopBtn = document.getElementById('whopBtn');
-                const registerForm = document.getElementById('registerForm');
-                const registerBtn = document.getElementById('registerBtn');
+                if (!localStorage.getItem(COOKIE_NAME_KEY)) {
+                        localStorage.setItem(COOKIE_NAME_KEY, 'session_token');
+                }
+
+                const loginForm = document.getElementById('loginForm');
                 const usernameEl = document.getElementById('username');
                 const passwordEl = document.getElementById('password');
-                const accountTypeEl = document.getElementById('accountType');
-                const apiKeyEl = document.getElementById('apiKey');
-                const apiSecretEl = document.getElementById('apiSecret');
-                const baseUrlEl = document.getElementById('baseUrl');
-                const noticeEl = document.getElementById('whopNotice');
-                const messageEl = document.getElementById('message');
-
-                function setNotice(text, type) {
-                        if (!noticeEl) return;
-                        if (!text) {
-                                noticeEl.textContent = '';
-                                noticeEl.className = 'notice';
-                                noticeEl.hidden = true;
-                                return;
-                        }
-                        noticeEl.textContent = text;
-                        noticeEl.className = 'notice' + (type ? ' ' + type : '');
-                        noticeEl.hidden = false;
-                }
-
-                function setMessage(text, type) {
-                        if (!messageEl) return;
-                        messageEl.textContent = text || '';
-                        messageEl.className = 'message' + (type ? ' ' + type : '');
-                }
+                const loginBtn = document.getElementById('loginBtn');
+                const resetBtn = document.getElementById('resetBtn');
 
                 async function sendAuth(path, body) {
                         const resp = await fetch(path, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 credentials: 'include',
-                                body: JSON.stringify(body),
+                                body: JSON.stringify(body)
                         });
                         const text = await resp.text();
                         let data;
                         try { data = JSON.parse(text); }
                         catch (_) { throw new Error(`HTTP ${resp.status} ${resp.statusText}`); }
-                        if (!resp.ok || data.ok === false) {
+                        if (!resp.ok || !data.ok) {
                                 throw new Error(data.detail || data.reason || 'Request failed');
                         }
                         return data;
                 }
 
-                function completeAuthentication(data, fallbackUsername) {
-                        const username = data.username || fallbackUsername || 'member';
-                        localStorage.setItem(TOKEN_KEY, data.token);
-                        localStorage.setItem(USERNAME_KEY, username);
-                        localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
-                        setMessage('Success! Redirecting…', 'success');
-                        window.location.replace(nextUrl);
-                }
-
-                function hideRegistrationForm() {
-                        if (registerForm) {
-                                registerForm.hidden = true;
-                        }
-                        if (registerBtn) {
-                                registerBtn.disabled = true;
-                        }
-                }
-
-                hideRegistrationForm();
-
-                if (whopBtn) {
-                        whopBtn.addEventListener('click', () => {
-                                const dest = '/auth/whop/start?next=' + encodeURIComponent(nextUrl);
-                                window.location.href = dest;
-                        });
-                }
-
-                async function handleExistingMembership(username, emailHint) {
-                        setNotice(username ? `Welcome back, ${username}! Signing you in…` : 'Membership verified! Signing you in…', 'success');
-                        setMessage('Signing you in…');
-                        try {
-                                const data = await sendAuth('/auth/whop/login', { token: whopToken });
-                                setMessage('Welcome back! Loading your dashboard…', 'success');
-                                completeAuthentication(data, username || (emailHint ? emailHint.split('@')[0] : 'member'));
-                        } catch (err) {
-                                console.error(err);
-                                setNotice('Unable to sign you in automatically. Please restart from Whop.', 'error');
-                                setMessage(err.message || 'Whop sign-in failed', 'error');
-                        }
-                }
-
-                async function verifyWhopSession() {
-                        if (!whopToken) {
-                                setMessage('Sign in with your Whop membership to continue.');
+                loginForm.addEventListener('submit', async (event) => {
+                        event.preventDefault();
+                        const username = usernameEl.value.trim().toLowerCase();
+                        const password = passwordEl.value;
+                        if (!username || !password) {
+                                setMessage('Enter a username and password to continue.', 'error');
                                 return;
                         }
-                        setNotice('Verifying your Whop membership…');
-                        hideRegistrationForm();
+                        loginBtn.disabled = true;
+                        resetBtn.disabled = true;
+                        setMessage('Authenticating…');
                         try {
-                                const resp = await fetch('/auth/whop/session?token=' + encodeURIComponent(whopToken), {
-                                        credentials: 'include',
-                                });
-                                let data = null;
-                                try { data = await resp.json(); }
-                                catch (_) { data = null; }
-                                if (!resp.ok || !data || data.ok === false) {
-                                        const detail = (data && (data.detail || data.reason)) || 'Unable to verify your Whop membership. Please restart from Whop.';
-                                        setNotice(detail, 'error');
-                                        setMessage(detail, 'error');
-                                        return;
-                                }
-                                const email = data.email || '';
-                                const username = data.username || '';
-                                if (data.registered) {
-                                        await handleExistingMembership(username, email);
-                                        return;
-                                }
-                                if (registerForm) {
-                                        registerForm.hidden = false;
-                                }
-                                if (registerBtn) {
-                                        registerBtn.disabled = false;
-                                }
-                                if (email && usernameEl && !usernameEl.value) {
-                                        usernameEl.value = email.split('@')[0];
-                                }
-                                setNotice((email ? `Welcome, ${email}!` : 'Whop membership verified!') + ' Complete your console setup below.', 'success');
-                                setMessage('Choose console credentials and link your Alpaca keys to finish.');
-                                usernameEl.focus();
+                                const data = await sendAuth('/login', { username, password });
+                                localStorage.setItem(TOKEN_KEY, data.token);
+                                localStorage.setItem(USERNAME_KEY, data.username || username);
+                                localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
+                                setMessage('Success! Redirecting…', 'success');
+                                window.location.replace(nextUrl);
                         } catch (err) {
-                                console.error(err);
-                                setNotice('Unable to verify your Whop membership. Please restart from Whop.', 'error');
-                                setMessage('Unable to verify your Whop membership. Please restart from Whop.', 'error');
+                                setMessage(err.message || 'Login failed', 'error');
+                        } finally {
+                                loginBtn.disabled = false;
+                                resetBtn.disabled = false;
                         }
-                }
+                });
 
-                async function checkWhopAvailability() {
-                        if (!whopBtn || whopToken) { return; }
-                        try {
-                                const resp = await fetch('/auth/whop/start?mode=status', { credentials: 'include' });
-                                let data = null;
-                                try { data = await resp.json(); }
-                                catch (_) { data = null; }
-                                if (!resp.ok || !data || data.enabled !== true) {
-                                        whopBtn.disabled = true;
-                                        setMessage('Whop sign-in is not currently available. Contact support for assistance.', 'error');
-                                }
-                        } catch (err) {
-                                console.error(err);
-                                whopBtn.disabled = true;
-                                setMessage('Unable to reach Whop. Check your connection or try again later.', 'error');
-                        }
-                }
+                resetBtn.addEventListener('click', () => {
+                        showNotice('Password resets are handled by your administrator. Please reach out to your support channel.', 'error');
+                });
 
-                verifyWhopSession();
-                checkWhopAvailability();
-
-                if (registerForm) {
-                        registerForm.addEventListener('submit', async (event) => {
-                                event.preventDefault();
-                                if (!whopToken) { return; }
-                                const username = usernameEl.value.trim().toLowerCase();
-                                const password = passwordEl.value;
-                                const accountType = accountTypeEl.value;
-                                const apiKey = apiKeyEl.value.trim();
-                                const apiSecret = apiSecretEl.value.trim();
-                                const baseUrl = baseUrlEl.value.trim();
-                                if (!username || !password) {
-                                        setMessage('Choose a console username and password to continue.', 'error');
-                                        return;
-                                }
-                                if (!apiKey || !apiSecret) {
-                                        setMessage('Enter your Alpaca API key and secret to continue.', 'error');
-                                        return;
-                                }
-                                registerBtn.disabled = true;
-                                setMessage('Linking your membership…');
-                                try {
-                                        const payload = {
-                                                token: whopToken,
-                                                username,
-                                                password,
-                                                api_key: apiKey,
-                                                api_secret: apiSecret,
-                                                account_type: accountType.trim().toLowerCase(),
-                                        };
-                                        if (baseUrl) {
-                                                payload.base_url = baseUrl;
-                                        }
-                                        const data = await sendAuth('/register/whop', payload);
-                                        setMessage('Welcome aboard! Redirecting…', 'success');
-                                        completeAuthentication(data, username);
-                                } catch (err) {
-                                        console.error(err);
-                                        setMessage(err.message || 'Whop registration failed', 'error');
-                                        registerBtn.disabled = false;
-                                }
-                        });
-                }
+                usernameEl.focus();
         </script>
 </body>
 </html>
