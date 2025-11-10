@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+        <meta charset="utf-8" />
+        <title>Neo Cortex Admin Control Center</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="stylesheet" href="{{ request.url_for('public', path='assets/neocortex-theme.css') }}" />
+        <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
+        <style>
+                body {
+                        margin: 0;
+                        background: radial-gradient(circle at 0 0, rgba(88, 28, 135, 0.35), transparent 55%),
+                                    radial-gradient(circle at 80% -20%, rgba(59, 130, 246, 0.18), transparent 60%),
+                                    linear-gradient(180deg, #050011 0%, #0b0320 60%, #05000f 100%);
+                        min-height: 100vh;
+                        color: #f5e9ff;
+                }
+
+                .admin-shell {
+                        max-width: 1180px;
+                        margin: 0 auto;
+                        padding: clamp(24px, 5vw, 48px);
+                        display: flex;
+                        flex-direction: column;
+                        gap: clamp(24px, 4vw, 48px);
+                }
+
+                .admin-hero {
+                        display: grid;
+                        gap: 18px;
+                        background: rgba(19, 6, 36, 0.88);
+                        border-radius: 28px;
+                        padding: clamp(24px, 4vw, 42px);
+                        border: 1px solid rgba(192, 132, 252, 0.28);
+                        box-shadow: 0 24px 60px rgba(12, 4, 24, 0.45);
+                }
+
+                .admin-hero h1 {
+                        margin: 0;
+                        font-size: clamp(2rem, 4vw, 2.6rem);
+                        letter-spacing: 0.02em;
+                }
+
+                .admin-hero p {
+                        margin: 0;
+                        color: rgba(224, 196, 255, 0.8);
+                        font-size: 0.95rem;
+                        line-height: 1.6;
+                }
+
+                .admin-meta {
+                        display: flex;
+                        flex-wrap: wrap;
+                        gap: 12px;
+                        align-items: center;
+                }
+
+                .admin-grid {
+                        display: grid;
+                        gap: clamp(16px, 3vw, 24px);
+                        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                }
+
+                .admin-card {
+                        display: grid;
+                        gap: 16px;
+                        padding: 24px;
+                        border-radius: 24px;
+                        border: 1px solid rgba(192, 132, 252, 0.28);
+                        background: rgba(18, 5, 36, 0.88);
+                        box-shadow: 0 18px 40px rgba(12, 4, 24, 0.38);
+                }
+
+                .admin-card h2 {
+                        margin: 0;
+                        font-size: 1.3rem;
+                }
+
+                .admin-card p {
+                        margin: 0;
+                        color: rgba(224, 196, 255, 0.75);
+                        line-height: 1.5;
+                }
+
+                .admin-card a.nc-btn,
+                .admin-card button.nc-btn {
+                        justify-self: flex-start;
+                }
+
+                .admin-status-grid {
+                        display: grid;
+                        gap: 12px;
+                        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                }
+
+                .admin-status {
+                        padding: 18px;
+                        border-radius: 20px;
+                        border: 1px solid rgba(192, 132, 252, 0.24);
+                        background: rgba(10, 3, 24, 0.86);
+                        display: grid;
+                        gap: 8px;
+                }
+
+                .admin-status span {
+                        color: rgba(224, 196, 255, 0.65);
+                        font-size: 0.82rem;
+                        letter-spacing: 0.08em;
+                        text-transform: uppercase;
+                }
+
+                .admin-status strong {
+                        font-size: 1.1rem;
+                        color: #f3e8ff;
+                }
+
+                .admin-footer {
+                        margin-top: auto;
+                        font-size: 0.78rem;
+                        color: rgba(224, 196, 255, 0.6);
+                        text-align: center;
+                }
+
+                .nc-btn.nc-btn-ghost {
+                        background: transparent;
+                        border: 1px solid rgba(192, 132, 252, 0.4);
+                        color: rgba(224, 196, 255, 0.85);
+                }
+
+                .nc-btn.nc-btn-ghost:hover {
+                        background: rgba(147, 51, 234, 0.2);
+                }
+
+                @media (max-width: 720px) {
+                        .admin-card {
+                                padding: 20px;
+                        }
+                }
+        </style>
+</head>
+<body>
+        {% include "partials/nav.html" %}
+
+        <main class="admin-shell">
+                <header class="admin-hero">
+                        <span class="nc-pill">Control Center</span>
+                        <h1>Welcome back, {{ user.username }}.</h1>
+                        <p>
+                                Manage the Neo Cortex AI environment, monitor model health, and guide members to the
+                                right interface. Use the quick links below to jump into each experience or review live
+                                diagnostics without leaving this unified portal.
+                        </p>
+                        <div class="admin-meta">
+                                <span class="nc-pill">Role: {{ (user.roles or ['user']) | join(', ') }}</span>
+                                <span class="nc-pill">Scopes: {{ (user.scopes or []) | join(', ') }}</span>
+                        </div>
+                </header>
+
+                <section class="admin-grid">
+                        <article class="admin-card">
+                                <h2>Operations Dashboard</h2>
+                                <p>Stream metrics, training activity, and GPU health in real time. Ideal for observing
+                                deployments and inspecting synthetic training runs.</p>
+                                <a href="/dashboard" class="nc-btn">Open Dashboard</a>
+                        </article>
+                        <article class="admin-card">
+                                <h2>End User Console</h2>
+                                <p>Launch the member-facing interface for webhook configuration, paper trading, and
+                                Whop-integrated onboarding workflows.</p>
+                                <a href="/enduserapp" class="nc-btn nc-btn-secondary">Open End User App</a>
+                        </article>
+                        <article class="admin-card">
+                                <h2>Liquidity Radar</h2>
+                                <p>Review aggregated sweep activity and imbalance signals before the cash session begins.
+                                Tailored for tablet and desktop command stations.</p>
+                                <a href="/radar" class="nc-btn nc-btn-secondary">Open Liquidity Radar</a>
+                        </article>
+                        <article class="admin-card">
+                                <h2>Ngrok Tunnel</h2>
+                                <p>Expose the unified stack over a secure ngrok session. Share <code id="ngrokUrl">{{ request.url.hostname if request.url else '' }}</code>
+                                with trusted stakeholders once the tunnel is active.</p>
+                                <button type="button" class="nc-btn nc-btn-ghost" id="copyNgrok">Copy Public URL</button>
+                        </article>
+                </section>
+
+                <section class="admin-card">
+                        <h2>Platform Health</h2>
+                        <p class="nc-text-muted">Latest diagnostics pulled directly from the FastAPI backend.</p>
+                        <div class="admin-status-grid">
+                                <div class="admin-status">
+                                        <span>GPU</span>
+                                        <strong id="gpuStatus">Loading…</strong>
+                                </div>
+                                <div class="admin-status">
+                                        <span>Recent Run</span>
+                                        <strong id="runStatus">—</strong>
+                                </div>
+                                <div class="admin-status">
+                                        <span>Version</span>
+                                        <strong id="versionStatus">—</strong>
+                                </div>
+                                <div class="admin-status">
+                                        <span>Auth Session</span>
+                                        <strong id="sessionStatus">Active</strong>
+                                </div>
+                        </div>
+                        <div class="nc-text-small nc-text-muted" id="preflightSummary"></div>
+                </section>
+
+                <footer class="admin-footer">
+                        The navigation above is safe to share via your ngrok URL — all assets resolve from
+                        {{ request.url_for('public', path='') }}.
+                </footer>
+        </main>
+
+        <script>
+                const TOKEN_KEY = 'nc_token';
+
+                function authToken() {
+                        return localStorage.getItem(TOKEN_KEY);
+                }
+
+                (function patchFetch() {
+                        const originalFetch = window.fetch.bind(window);
+                        window.fetch = (input, init = {}) => {
+                                const token = authToken();
+                                const headers = new Headers(init.headers || {});
+                                if (token && !headers.has('Authorization')) {
+                                        headers.set('Authorization', 'Bearer ' + token);
+                                }
+                                const finalInit = Object.assign({}, init, { headers });
+                                if (!finalInit.credentials) {
+                                        finalInit.credentials = 'include';
+                                }
+                                return originalFetch(input, finalInit);
+                        };
+                })();
+
+                async function loadGpuStatus() {
+                        const el = document.getElementById('gpuStatus');
+                        try {
+                                const resp = await fetch('/gpu-info', { cache: 'no-store' });
+                                const data = await resp.json();
+                                if (data.cuda_available) {
+                                        el.textContent = 'ONLINE (' + (data.devices || []).join(', ') + ')';
+                                        el.classList.add('ok');
+                                } else {
+                                        el.textContent = 'OFFLINE';
+                                        el.classList.add('warn');
+                                }
+                        } catch (err) {
+                                el.textContent = 'Unknown';
+                                el.classList.add('warn');
+                        }
+                }
+
+                async function loadPreflight() {
+                        const elRun = document.getElementById('runStatus');
+                        const elVersion = document.getElementById('versionStatus');
+                        const summary = document.getElementById('preflightSummary');
+                        try {
+                                const resp = await fetch('/preflight', { cache: 'no-store' });
+                                const data = await resp.json();
+                                elVersion.textContent = data.version || '—';
+                                elRun.textContent = data.last_training_run || 'No runs yet';
+                                summary.textContent = data.summary || 'Preflight diagnostics completed.';
+                        } catch (err) {
+                                elRun.textContent = 'Unavailable';
+                                elVersion.textContent = 'Unknown';
+                                summary.textContent = 'Unable to load preflight diagnostics.';
+                        }
+                }
+
+                (function initNgrokCopy() {
+                        const btn = document.getElementById('copyNgrok');
+                        if (!btn) return;
+                        btn.addEventListener('click', async () => {
+                                const url = window.location.origin;
+                                try {
+                                        await navigator.clipboard.writeText(url);
+                                        btn.textContent = 'Copied ' + url;
+                                } catch (_) {
+                                        btn.textContent = url;
+                                }
+                        });
+                })();
+
+                loadGpuStatus();
+                loadPreflight();
+        </script>
+</body>
+</html>
