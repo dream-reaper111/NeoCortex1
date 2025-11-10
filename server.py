@@ -69,9 +69,10 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 else:  # pragma: no cover - exercised when pandas is installed
     _PANDAS_AVAILABLE = True
 
-from fastapi import FastAPI, HTTPException, Request, Header, Cookie
+from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Depends
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 class _FallbackHTTPSRedirectMiddleware:
     '''Minimal HTTPS redirect middleware compatible with FastAPI's interface.'''
 
@@ -899,6 +900,19 @@ WHOP_API_BASE = (os.getenv("WHOP_API_BASE") or "https://api.whop.com").rstrip("/
 WHOP_PORTAL_URL = (os.getenv("WHOP_PORTAL_URL") or "").strip() or None
 WHOP_SESSION_TTL = int(os.getenv("WHOP_SESSION_TTL", "900"))
 ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "the3istheD3T").strip()
+ADMIN_PORTAL_BASIC_USER = (os.getenv("ADMIN_PORTAL_BASIC_USER") or "").strip()
+ADMIN_PORTAL_BASIC_PASS = (os.getenv("ADMIN_PORTAL_BASIC_PASS") or "").strip()
+ADMIN_PORTAL_BASIC_REALM = (
+    os.getenv("ADMIN_PORTAL_BASIC_REALM", "Neo Cortex Admin") or "Neo Cortex Admin"
+).strip()
+ADMIN_PORTAL_GATE_TOKEN = (os.getenv("ADMIN_PORTAL_GATE_TOKEN") or "").strip()
+ADMIN_PORTAL_GATE_HEADER = (os.getenv("ADMIN_PORTAL_GATE_HEADER") or "x-admin-portal-key").strip()
+if not ADMIN_PORTAL_GATE_HEADER:
+    ADMIN_PORTAL_GATE_HEADER = "x-admin-portal-key"
+DISABLE_ACCESS_LOGS = _env_flag("DISABLE_ACCESS_LOGS", default=True)
+ADMIN_PORTAL_HTTP_BASIC = HTTPBasic(auto_error=False)
+if DISABLE_ACCESS_LOGS:
+    logging.getLogger("uvicorn.access").disabled = True
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -1924,6 +1938,28 @@ def _nocache() -> Dict[str,str]:
 
 def _json(obj: Any, code: int = 200) -> JSONResponse:
     return JSONResponse(obj, status_code=code, headers=_nocache())
+
+
+def _enforce_admin_portal_gate(
+    request: Request, credentials: Optional[HTTPBasicCredentials]
+) -> None:
+    """Apply optional HTTP basic auth or header token gating for the admin portal."""
+
+    if ADMIN_PORTAL_GATE_TOKEN:
+        provided = request.headers.get(ADMIN_PORTAL_GATE_HEADER)
+        if not provided or not secrets.compare_digest(provided, ADMIN_PORTAL_GATE_TOKEN):
+            raise HTTPException(status_code=401, detail="admin portal token required")
+
+    if ADMIN_PORTAL_BASIC_USER and ADMIN_PORTAL_BASIC_PASS:
+        if not credentials or not (
+            secrets.compare_digest(credentials.username, ADMIN_PORTAL_BASIC_USER)
+            and secrets.compare_digest(credentials.password, ADMIN_PORTAL_BASIC_PASS)
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="admin portal authentication required",
+                headers={"WWW-Authenticate": f'Basic realm="{ADMIN_PORTAL_BASIC_REALM}"'},
+            )
 
 def _latest_run_dir() -> Optional[str]:
     d = latest_run_path()
@@ -3704,7 +3740,10 @@ def login_page():
 
 
 @app.get("/admin/login")
-def admin_login_page():
+def admin_login_page(
+    request: Request, credentials: HTTPBasicCredentials = Depends(ADMIN_PORTAL_HTTP_BASIC)
+):
+    _enforce_admin_portal_gate(request, credentials)
     if not ADMIN_LOGIN_PAGE.exists():
         return HTMLResponse("<h1>public/admin-login.html missing</h1>", status_code=404, headers=_nocache())
     return FileResponse(ADMIN_LOGIN_PAGE, media_type="text/html", headers=_nocache())
@@ -3730,6 +3769,8 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn_kwargs = {"host": API_HOST, "port": API_PORT, "reload": False}
+    if DISABLE_ACCESS_LOGS:
+        uvicorn_kwargs["access_log"] = False
     if SSL_ENABLED:
         uvicorn_kwargs.update(
             {
