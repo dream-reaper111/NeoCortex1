@@ -52,6 +52,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager, suppress
 from typing import Any, Dict, List, Optional, Tuple, Literal, Set, Iterable
+from types import SimpleNamespace
 from collections import defaultdict, deque
 
 try:
@@ -75,6 +76,148 @@ from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+try:
+    from fastapi.templating import Jinja2Templates
+except ModuleNotFoundError:  # pragma: no cover - fallback when optional extras missing
+    try:  # pragma: no cover - secondary fallback if FastAPI re-export unavailable
+        from starlette.templating import Jinja2Templates  # type: ignore
+    except ModuleNotFoundError:  # pragma: no cover - minimal templating shim
+        class Jinja2Templates:
+            """Lightweight template renderer used when Starlette's helper is unavailable."""
+
+            _TOKEN_RE = re.compile(r"(\{\{.*?\}\}|\{%.*?%\})", re.S)
+
+            def __init__(self, directory: str) -> None:
+                self.directory = Path(directory)
+                self._cache: Dict[str, List[Tuple[str, str]]] = {}
+
+            def _wrap(self, value: Any) -> Any:
+                if isinstance(value, dict):
+                    return SimpleNamespace(**{k: self._wrap(v) for k, v in value.items()})
+                if isinstance(value, list):
+                    return [self._wrap(v) for v in value]
+                if isinstance(value, set):
+                    return [self._wrap(v) for v in sorted(value)]
+                return value
+
+            def _prepare_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+                prepared: Dict[str, Any] = {}
+                for key, value in context.items():
+                    if key == "request":
+                        prepared[key] = value
+                    else:
+                        prepared[key] = self._wrap(value)
+                return prepared
+
+            def _load_template(self, name: str) -> str:
+                path = (self.directory / name).resolve()
+                if not str(path).startswith(str(self.directory.resolve())):
+                    raise ValueError(f"Invalid template path: {name}")
+                try:
+                    return path.read_text(encoding="utf-8")
+                except FileNotFoundError as exc:  # pragma: no cover - configuration issue
+                    raise RuntimeError(f"Template '{name}' not found") from exc
+
+            def _tokenize(self, name: str, text: str) -> List[Tuple[str, str]]:
+                cached = self._cache.get(name)
+                if cached is not None:
+                    return cached
+                tokens: List[Tuple[str, str]] = []
+                pos = 0
+                for match in self._TOKEN_RE.finditer(text):
+                    if match.start() > pos:
+                        tokens.append(("text", text[pos:match.start()]))
+                    raw = match.group(0)
+                    if raw.startswith("{{"):
+                        tokens.append(("expr", raw[2:-2].strip()))
+                    else:
+                        tokens.append(("stmt", raw[2:-2].strip()))
+                    pos = match.end()
+                if pos < len(text):
+                    tokens.append(("text", text[pos:]))
+                self._cache[name] = tokens
+                return tokens
+
+            def _eval(self, expr: str, context: Dict[str, Any]) -> Any:
+                locals_ctx = self._prepare_context(context)
+                try:
+                    return eval(expr, {"__builtins__": {}}, locals_ctx)  # noqa: S307 - controlled input
+                except Exception:
+                    return ""
+
+            def _render_tokens(
+                self,
+                tokens: List[Tuple[str, str]],
+                context: Dict[str, Any],
+                start: int = 0,
+                stop_tokens: Optional[Set[str]] = None,
+            ) -> Tuple[str, int]:
+                pieces: List[str] = []
+                idx = start
+                while idx < len(tokens):
+                    kind, value = tokens[idx]
+                    if kind == "text":
+                        pieces.append(value)
+                    elif kind == "expr":
+                        rendered = self._eval(value, context)
+                        pieces.append("" if rendered is None else str(rendered))
+                    elif kind == "stmt":
+                        stmt = value.strip()
+                        if stop_tokens and stmt in stop_tokens:
+                            return "".join(pieces), idx
+                        if stmt.startswith("include"):
+                            include_path = self._parse_include(stmt)
+                            included_html = self._render_template(include_path, context)
+                            pieces.append(included_html)
+                        elif stmt.startswith("if "):
+                            cond_expr = stmt[3:].strip()
+                            true_block, next_idx = self._render_tokens(tokens, context, idx + 1, {"else", "endif"})
+                            idx = next_idx
+                            false_block = ""
+                            if idx < len(tokens):
+                                kind2, value2 = tokens[idx]
+                                if kind2 == "stmt" and value2.strip() == "else":
+                                    false_block, next_idx = self._render_tokens(tokens, context, idx + 1, {"endif"})
+                                    idx = next_idx
+                            if idx < len(tokens):
+                                kind3, value3 = tokens[idx]
+                                if not (kind3 == "stmt" and value3.strip() == "endif"):
+                                    raise RuntimeError("Unmatched {% if %} block")
+                            if self._truthy(cond_expr, context):
+                                pieces.append(true_block)
+                            else:
+                                pieces.append(false_block)
+                        elif stmt == "else" or stmt == "endif":
+                            if stop_tokens:
+                                return "".join(pieces), idx
+                        else:
+                            # Unsupported directive is ignored for compatibility.
+                            pass
+                    idx += 1
+                return "".join(pieces), idx
+
+            def _truthy(self, expr: str, context: Dict[str, Any]) -> bool:
+                result = self._eval(expr, context)
+                return bool(result)
+
+            def _parse_include(self, stmt: str) -> str:
+                match = re.search(r"include\s+['\"]([^'\"]+)['\"]", stmt)
+                if not match:
+                    raise RuntimeError(f"Invalid include statement: {stmt}")
+                return match.group(1)
+
+            def _render_template(self, name: str, context: Dict[str, Any]) -> str:
+                source = self._load_template(name)
+                tokens = self._tokenize(name, source)
+                rendered, _ = self._render_tokens(tokens, context)
+                return rendered
+
+            def TemplateResponse(self, name: str, context: Dict[str, Any], status_code: int = 200) -> HTMLResponse:
+                if "request" not in context:
+                    raise RuntimeError("Template context must include 'request'")
+                html = self._render_template(name, context)
+                return HTMLResponse(html, status_code=status_code)
+from auth import create_access_token, get_current_user
 from fastapi.templating import Jinja2Templates
 from auth import create_access_token, get_current_user
 from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Form

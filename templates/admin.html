@@ -151,6 +151,8 @@
                                 diagnostics without leaving this unified portal.
                         </p>
                         <div class="admin-meta">
+                                <span class="nc-pill">Role: {{ ', '.join(user.roles or ['user']) }}</span>
+                                <span class="nc-pill">Scopes: {{ ', '.join(user.scopes or []) }}</span>
                                 <span class="nc-pill">Role: {{ (user.roles or ['user']) | join(', ') }}</span>
                                 <span class="nc-pill">Scopes: {{ (user.scopes or []) | join(', ') }}</span>
                         </div>
