@@ -7,6 +7,59 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <div id="authOverlay" class="auth-overlay" hidden>
+      <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <h2 id="authTitle">Whop Membership Required</h2>
+        <p class="auth-subtitle">
+          Sign in with your Whop account to access the Neo Cortex end user console. Admins can manage the platform
+          through the dashboard login.
+        </p>
+        <div id="authWhopNotice" class="auth-notice" hidden></div>
+        <div class="auth-actions">
+          <button type="button" class="btn primary auth-btn" id="authWhopBtn">Sign in with Whop</button>
+        </div>
+        <form id="authForm" class="auth-form" autocomplete="off" hidden>
+          <h3 class="auth-section-title">Create Console Credentials</h3>
+          <label for="authUsername">Console Username</label>
+          <input
+            id="authUsername"
+            name="username"
+            type="text"
+            autocomplete="username"
+            placeholder="yourname"
+            required
+          />
+          <label for="authPassword">Console Password</label>
+          <input
+            id="authPassword"
+            name="password"
+            type="password"
+            autocomplete="new-password"
+            placeholder="••••••••"
+            required
+          />
+          <div id="authWhopExtras" class="auth-whop-extras" hidden>
+            <h3>Funding Credentials</h3>
+            <label for="authAccountType">Account Type</label>
+            <select id="authAccountType" name="accountType">
+              <option value="funded">Funded (live)</option>
+              <option value="paper">Paper</option>
+            </select>
+            <label for="authApiKey">Alpaca API Key</label>
+            <input id="authApiKey" name="apiKey" type="text" autocomplete="off" placeholder="PK..." />
+            <label for="authApiSecret">Alpaca API Secret</label>
+            <input id="authApiSecret" name="apiSecret" type="password" autocomplete="off" placeholder="SK..." />
+            <label for="authBaseUrl">API Base URL (optional)</label>
+            <input id="authBaseUrl" name="baseUrl" type="url" placeholder="https://api.alpaca.markets" />
+          </div>
+        </form>
+        <button type="button" class="btn primary auth-btn" id="authRegisterBtn" hidden>
+          Complete Membership Setup
+        </button>
+        <p id="authMessage" class="auth-message"></p>
+      </div>
+    </div>
+
     <header class="page-header">
       <div class="brand">
         <h1>Neo Cortex End User Console</h1>
@@ -18,6 +71,10 @@
         <a href="#tests" class="nav-link">Test Payloads</a>
         <a href="#faq" class="nav-link">FAQ</a>
       </nav>
+      <div class="user-actions">
+        <span id="userBadge" class="user-badge">Whop sign-in required</span>
+        <button type="button" class="btn inline ghost" id="logoutBtn" hidden>Sign out</button>
+      </div>
     </header>
 
     <main>
