@@ -18,7 +18,7 @@
         <div class="auth-actions">
           <button type="button" class="btn primary auth-btn" id="authWhopBtn">Sign in with Whop</button>
         </div>
-        <form id="authForm" class="auth-form" autocomplete="off" hidden>
+        <form id="authForm" class="auth-form" autocomplete="off" hidden method="post">
           <h3 class="auth-section-title">Create Console Credentials</h3>
           <label for="authUsername">Console Username</label>
           <input
@@ -85,7 +85,7 @@
         </header>
         <div class="card__body papertrade-body">
           <div class="papertrade-grid">
-            <form id="paperForm" class="form-grid" data-account="paper">
+          <form id="paperForm" class="form-grid" data-account="paper" method="post">
               <label>
                 <span>Instrument Type</span>
                 <select id="paperInstrument" name="instrument">
@@ -242,7 +242,7 @@
           <p class="card__subtitle">Generate a mock trade update and verify the webhook is reachable.</p>
         </header>
         <div class="card__body">
-          <form id="testForm" class="form-grid">
+          <form id="testForm" class="form-grid" method="post">
             <label>
               <span>Symbol</span>
               <input id="symbol" name="symbol" value="SPY" />

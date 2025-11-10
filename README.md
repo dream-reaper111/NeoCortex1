@@ -258,7 +258,7 @@ allowing them to create local credentials and register their funding keys.
 
    - `GET /auth/whop/start` – sends the browser to Whop, filling in the
      callback URL and optional `next` destination.
-   - `GET /auth/whop/session?token=...` – validates the onboarding session and
+   - `POST /auth/whop/session` – validates the onboarding session and
      returns basic metadata (email and license).
    - `POST /register/whop` – completes registration, saving encrypted API keys
      and issuing a session cookie/bearer token.
