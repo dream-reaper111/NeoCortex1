@@ -2962,6 +2962,15 @@ async def log_requests(request: Request, call_next):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     print("[NeoCortex Error]", traceback.format_exc())
+    # Honour FastAPI-style ``HTTPException`` responses so that callers receive
+    # the exact status code and error payload that the endpoint intended to
+    # send.  The previous implementation wrapped *all* exceptions in a generic
+    # 500 response which caused security-sensitive endpoints (for example the
+    # login and Alpaca webhook test routes) to leak a 500 Internal Server Error
+    # instead of the 4xx responses asserted in the test-suite.  This broke the
+    # contract of those handlers and masked the real error semantics.
+    if isinstance(exc, HTTPException):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
     return JSONResponse({"error": str(exc)}, status_code=500)
 if FORCE_HTTPS_REDIRECT:
     app.add_middleware(HTTPSRedirectMiddleware)
