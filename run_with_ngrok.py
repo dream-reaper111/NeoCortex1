@@ -209,13 +209,6 @@ def main() -> None:
     print(f"  {public_url}/alpaca/webhook", flush=True)
 
     try:
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
-            port=port,
-            log_level="info",
-            access_log=not DISABLE_ACCESS_LOGS,
-        )
         _uvicorn_run(app, host="0.0.0.0", port=port, log_level="info")
     finally:
         try:

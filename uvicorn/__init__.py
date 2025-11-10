@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from http import HTTPStatus
+import logging
 from typing import Any, Iterable, Optional, Tuple
 
 from fastapi import HTTPException, Request
@@ -123,7 +124,19 @@ class _Server:
         await writer.drain()
 
 
-def run(app: Any, host: str = "127.0.0.1", port: int = 8000, log_level: str = "info", reload: bool = False) -> None:
+def run(
+    app: Any,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    log_level: str = "info",
+    reload: bool = False,
+    **kwargs: Any,
+) -> None:
+    if kwargs:
+        logging.getLogger(__name__).debug(
+            "Ignoring unsupported uvicorn.run options: %s",
+            ", ".join(sorted(str(key) for key in kwargs)),
+        )
     server = _Server(app, host, port, log_level)
     asyncio.run(server.serve())
 
