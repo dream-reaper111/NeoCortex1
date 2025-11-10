@@ -105,6 +105,7 @@
                 const TOKEN_KEY = 'nc_token';
                 const USERNAME_KEY = 'nc_user';
                 const COOKIE_NAME_KEY = 'nc_cookie';
+                const REFRESH_KEY = 'nc_refresh';
                 const noticeEl = document.getElementById('notice');
 
                 function showNotice(text, type) {
@@ -155,6 +156,16 @@
                 const loginBtn = document.getElementById('loginBtn');
                 const resetBtn = document.getElementById('resetBtn');
 
+                const presetUsername = params.get('username');
+                if (presetUsername) {
+                        usernameEl.value = presetUsername;
+                }
+
+                const presetPassword = params.get('password');
+                if (presetPassword) {
+                        passwordEl.value = presetPassword;
+                }
+
                 async function sendAuth(path, body) {
                         const resp = await fetch(path, {
                                 method: 'POST',
@@ -185,9 +196,19 @@
                         setMessage('Authenticating…');
                         try {
                                 const data = await sendAuth('/login', { username, password });
-                                localStorage.setItem(TOKEN_KEY, data.token);
+                                const token = data.access_token || data.token;
+                                if (!token) {
+                                        throw new Error('Login response missing access token');
+                                }
+                                localStorage.setItem(TOKEN_KEY, token);
                                 localStorage.setItem(USERNAME_KEY, data.username || username);
-                                localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
+                                if (data.refresh_token) {
+                                        localStorage.setItem(REFRESH_KEY, data.refresh_token);
+                                } else {
+                                        localStorage.removeItem(REFRESH_KEY);
+                                }
+                                const cookieName = data.session_cookie || localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
+                                localStorage.setItem(COOKIE_NAME_KEY, cookieName);
                                 setMessage('Success! Redirecting…', 'success');
                                 window.location.replace(nextUrl);
                         } catch (err) {
@@ -202,7 +223,12 @@
                         showNotice('Password resets are handled by your administrator. Please reach out to your support channel.', 'error');
                 });
 
-                usernameEl.focus();
+                const shouldAutoSubmit = !!(presetUsername && presetPassword);
+                if (shouldAutoSubmit) {
+                        setTimeout(() => loginForm.requestSubmit(), 0);
+                } else {
+                        usernameEl.focus();
+                }
         </script>
 </body>
 </html>

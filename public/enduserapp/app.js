@@ -1,6 +1,7 @@
 const TOKEN_KEY = 'nc_token';
 const USERNAME_KEY = 'nc_user';
 const COOKIE_NAME_KEY = 'nc_cookie';
+const REFRESH_KEY = 'nc_refresh';
 
 const authOverlay = document.getElementById('authOverlay');
 const authForm = document.getElementById('authForm');
@@ -61,6 +62,7 @@ function clearSession() {
   const cookieName = sessionCookieName();
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USERNAME_KEY);
+  localStorage.removeItem(REFRESH_KEY);
   if (cookieName) {
     document.cookie = `${cookieName}=; Max-Age=0; path=/`;
   }
@@ -153,9 +155,20 @@ async function sendAuth(path, body) {
 function completeAuthentication(data, fallbackUsername) {
   unauthorizedHandled = false;
   const username = data.username || fallbackUsername || 'admin';
-  localStorage.setItem(TOKEN_KEY, data.token);
+  const token = data.access_token || data.token;
+  if (token) {
+    localStorage.setItem(TOKEN_KEY, token);
+  }
   localStorage.setItem(USERNAME_KEY, username);
-  localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
+  if (data.refresh_token) {
+    localStorage.setItem(REFRESH_KEY, data.refresh_token);
+  } else {
+    localStorage.removeItem(REFRESH_KEY);
+  }
+  localStorage.setItem(
+    COOKIE_NAME_KEY,
+    data.session_cookie || localStorage.getItem(COOKIE_NAME_KEY) || 'session_token'
+  );
   updateUserBadge();
   hideOverlay();
   startApp();
