@@ -46,7 +46,8 @@
                                 <h1>Admin Portal</h1>
                                 <p class="admin-subtitle nc-text-muted">Sign in to manage Neo Cortex AI configuration and monitor activity.</p>
                         </header>
-                        <form id="loginForm" class="nc-stack" method="post">
+                        <form id="loginForm" class="nc-stack" method="post" action="/admin/login">
+                                <input type="hidden" name="next" id="nextInput" value="" />
                                 <div>
                                         <label for="username">Username</label>
                                         <input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required />
@@ -74,6 +75,7 @@
                 const USERNAME_KEY = 'nc_user';
                 const COOKIE_NAME_KEY = 'nc_cookie';
                 const REFRESH_KEY = 'nc_refresh';
+                const nextInput = document.getElementById('nextInput');
                 const params = new URLSearchParams(window.location.search);
 
                 function resolveNext(candidate) {
@@ -91,6 +93,9 @@
 
                 const rawNext = params.get('next');
                 const nextUrl = resolveNext(rawNext);
+                if (nextInput) {
+                        nextInput.value = rawNext || '';
+                }
 
                 const sanitizedParams = new URLSearchParams();
                 if (rawNext) {

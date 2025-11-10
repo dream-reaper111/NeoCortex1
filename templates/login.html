@@ -80,7 +80,8 @@
                                 <p class="login-subtitle">Sign in to the Neo Cortex AI console to manage webhook credentials and monitor trading agents.</p>
                         </header>
                         <div id="notice" class="login-notice" hidden></div>
-                        <form id="loginForm">
+                        <form id="loginForm" method="post" action="/login">
+                                <input type="hidden" name="next" id="nextInput" value="{{ request.query_params.get('next', '') }}" />
                                 <div>
                                         <label for="username">Username</label>
                                         <input id="username" name="username" type="text" autocomplete="username" placeholder="yourname" required />
@@ -106,6 +107,7 @@
                 const COOKIE_NAME_KEY = 'nc_cookie';
                 const REFRESH_KEY = 'nc_refresh';
                 const noticeEl = document.getElementById('notice');
+                const nextInput = document.getElementById('nextInput');
 
                 function showNotice(text, type) {
                         if (!text) {
@@ -141,6 +143,9 @@
                 const params = new URLSearchParams(window.location.search);
                 const rawNext = params.get('next');
                 const nextUrl = resolveNext(rawNext);
+                if (nextInput) {
+                        nextInput.value = rawNext || '';
+                }
 
                 const sanitizedParams = new URLSearchParams();
                 if (rawNext) {

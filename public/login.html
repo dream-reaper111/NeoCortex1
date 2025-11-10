@@ -107,6 +107,7 @@
                 const COOKIE_NAME_KEY = 'nc_cookie';
                 const REFRESH_KEY = 'nc_refresh';
                 const noticeEl = document.getElementById('notice');
+                const nextInput = document.getElementById('nextInput');
 
                 function showNotice(text, type) {
                         if (!text) {
@@ -142,6 +143,9 @@
                 const params = new URLSearchParams(window.location.search);
                 const rawNext = params.get('next');
                 const nextUrl = resolveNext(rawNext);
+                if (nextInput) {
+                        nextInput.value = rawNext || '';
+                }
 
                 const sanitizedParams = new URLSearchParams();
                 if (rawNext) {
