@@ -782,6 +782,17 @@ def _init_auth_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS whop_accounts (
+                license_key TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
 
 
 _init_auth_db()
@@ -998,6 +1009,25 @@ def _get_whop_session(token: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def _lookup_whop_account(license_key: str) -> Optional[Dict[str, Any]]:
+    if not license_key:
+        return None
+    with _db_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT wa.user_id, u.username
+            FROM whop_accounts wa
+            JOIN users u ON u.id = wa.user_id
+            WHERE wa.license_key = ?
+            """,
+            (license_key,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"user_id": row["user_id"], "username": row["username"]}
+
+
+def _link_whop_account(license_key: str, user_id: int) -> None:
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -1348,6 +1378,15 @@ def _create_api_token(user_id: int, scopes: Set[str], label: Optional[str] = Non
     with _db_conn() as conn:
         conn.execute(
             """
+            INSERT INTO whop_accounts (license_key, user_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(license_key) DO UPDATE SET
+                user_id = excluded.user_id,
+                updated_at = excluded.updated_at
+            """,
+            (license_key, user_id, now, now),
+        )
+
             INSERT INTO api_tokens (token_id, token_hash, user_id, scopes, label, created_at, revoked)
             VALUES (?, ?, ?, ?, ?, ?, 0)
             """,
@@ -1962,6 +2001,10 @@ class WhopRegistrationReq(BaseModel):
     base_url: Optional[str] = None
 
 
+class WhopLoginReq(BaseModel):
+    token: str
+
+
 class AlpacaWebhookTest(BaseModel):
     symbol: str = "SPY"
     quantity: float = 1.0
@@ -2017,7 +2060,9 @@ class MFADisableRequest(BaseModel):
 
 
 @app.get("/auth/whop/start")
-async def whop_start(request: Request, next: Optional[str] = None):
+async def whop_start(request: Request, next: Optional[str] = None, mode: Optional[str] = None):
+    if (mode or "").strip().lower() == "status":
+        return _json({"ok": True, "enabled": bool(WHOP_PORTAL_URL)})
     if not WHOP_PORTAL_URL:
         raise HTTPException(status_code=404, detail="Whop integration is not configured")
     callback_url = str(request.url_for("whop_callback"))
@@ -2070,14 +2115,17 @@ async def whop_session(token: str):
     session = _get_whop_session(token.strip())
     if not session:
         return _json({"ok": False, "detail": "Invalid or expired Whop session"}, 404)
-    return _json(
-        {
-            "ok": True,
-            "license_key": session["license_key"],
-            "email": session.get("email"),
-            "created_at": session["created_at"],
-        }
-    )
+    account = _lookup_whop_account(session["license_key"])
+    payload: Dict[str, Any] = {
+        "ok": True,
+        "license_key": session["license_key"],
+        "email": session.get("email"),
+        "created_at": session["created_at"],
+        "registered": account is not None,
+    }
+    if account:
+        payload["username"] = account["username"]
+    return _json(payload)
 
 
 @app.post("/register/whop")
@@ -2086,6 +2134,16 @@ async def register_whop(req: WhopRegistrationReq):
     session = _get_whop_session(token)
     if not session:
         return _json({"ok": False, "detail": "Whop session expired or invalid"}, 400)
+    license_key = session["license_key"]
+    existing = _lookup_whop_account(license_key)
+    if existing is not None:
+        return _json(
+            {
+                "ok": False,
+                "detail": "This Whop license is already linked to an account. Sign in through Whop.",
+            },
+            409,
+        )
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
@@ -2118,7 +2176,8 @@ async def register_whop(req: WhopRegistrationReq):
         return _json({"ok": False, "detail": "username already exists"}, 400)
     try:
         _save_user_credentials(user_id, acct_type, api_key, api_secret, base_url)
-    except CredentialEncryptionError as exc:
+        _link_whop_account(license_key, user_id)
+    except (CredentialEncryptionError, sqlite3.IntegrityError) as exc:
         logger.error("Failed to store credentials for new Whop user %s", user_id)
         with _db_conn() as conn:
             conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
@@ -2139,6 +2198,37 @@ async def register_whop(req: WhopRegistrationReq):
         }
     )
     _set_auth_cookies(resp, tokens)
+    return resp
+
+
+@app.post("/auth/whop/login")
+async def whop_login(req: WhopLoginReq):
+    token = (req.token or "").strip()
+    session = _get_whop_session(token)
+    if not session:
+        return _json({"ok": False, "detail": "Whop session expired or invalid"}, 400)
+    account = _lookup_whop_account(session["license_key"])
+    if not account:
+        return _json({"ok": False, "detail": "Whop membership is not linked to an account"}, 404)
+    _consume_whop_session(token)
+    session_token = _create_session_token(account["user_id"])
+    resp = _json(
+        {
+            "ok": True,
+            "token": session_token,
+            "username": account["username"],
+            "session_cookie": SESSION_COOKIE_NAME,
+        }
+    )
+    resp.set_cookie(
+        SESSION_COOKIE_NAME,
+        session_token,
+        httponly=True,
+        secure=SESSION_COOKIE_SECURE,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        samesite=SESSION_COOKIE_SAMESITE,
+        path="/",
+    )
     return resp
 
 

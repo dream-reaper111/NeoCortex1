@@ -1,3 +1,187 @@
+const TOKEN_KEY = 'nc_token';
+const USERNAME_KEY = 'nc_user';
+const COOKIE_NAME_KEY = 'nc_cookie';
+
+const authOverlay = document.getElementById('authOverlay');
+const authForm = document.getElementById('authForm');
+const authMessage = document.getElementById('authMessage');
+const authRegisterBtn = document.getElementById('authRegisterBtn');
+const authWhopBtn = document.getElementById('authWhopBtn');
+const authWhopNotice = document.getElementById('authWhopNotice');
+const authWhopExtras = document.getElementById('authWhopExtras');
+const authAccountType = document.getElementById('authAccountType');
+const authApiKey = document.getElementById('authApiKey');
+const authApiSecret = document.getElementById('authApiSecret');
+const authBaseUrl = document.getElementById('authBaseUrl');
+const authUsername = document.getElementById('authUsername');
+const authPassword = document.getElementById('authPassword');
+const userBadge = document.getElementById('userBadge');
+const logoutBtn = document.getElementById('logoutBtn');
+
+const params = new URLSearchParams(window.location.search);
+
+if (!localStorage.getItem(COOKIE_NAME_KEY)) {
+  localStorage.setItem(COOKIE_NAME_KEY, 'session_token');
+}
+
+const LIVE_PNL_REFRESH_MS = 15000;
+let paperRefreshTimer = null;
+let unauthorizedHandled = false;
+let whopMode = false;
+let whopSessionValid = false;
+
+function resolveNext(candidate) {
+  if (!candidate) {
+    return window.location.pathname + window.location.search + window.location.hash;
+  }
+  try {
+    const parsed = new URL(candidate, window.location.origin);
+    if (parsed.origin !== window.location.origin) {
+      return window.location.pathname + window.location.search + window.location.hash;
+    }
+    return parsed.pathname + parsed.search + parsed.hash;
+  } catch (_err) {
+    return window.location.pathname + window.location.search + window.location.hash;
+  }
+}
+
+const nextUrl = resolveNext(params.get('next'));
+const whopToken = (params.get('whop_token') || '').trim();
+const DEFAULT_SIGNIN_MESSAGE = 'Sign in with your Whop membership to continue.';
+
+function authToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+function sessionCookieName() {
+  return localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
+}
+
+function clearSession() {
+  const cookieName = sessionCookieName();
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USERNAME_KEY);
+  if (cookieName) {
+    document.cookie = `${cookieName}=; Max-Age=0; path=/`;
+  }
+}
+
+function setAuthMessage(text, type) {
+  if (!authMessage) return;
+  authMessage.textContent = text || '';
+  authMessage.className = 'auth-message' + (type ? ` ${type}` : '');
+}
+
+function showWhopNotice(text, type) {
+  if (!authWhopNotice) return;
+  if (!text) {
+    authWhopNotice.textContent = '';
+    authWhopNotice.className = 'auth-notice';
+    authWhopNotice.hidden = true;
+    return;
+  }
+  authWhopNotice.textContent = text;
+  authWhopNotice.className = 'auth-notice' + (type ? ` ${type}` : '');
+  authWhopNotice.hidden = false;
+}
+
+function showOverlay(message, type) {
+  if (authOverlay) {
+    authOverlay.hidden = false;
+  }
+  document.body.classList.add('auth-locked');
+  if (typeof message === 'string') {
+    setAuthMessage(message, type);
+  } else {
+    setAuthMessage(DEFAULT_SIGNIN_MESSAGE, '');
+  }
+  if (whopMode && authForm && !authForm.hidden && authUsername) {
+    authUsername.focus();
+  } else if (authWhopBtn && !authWhopBtn.hidden) {
+    authWhopBtn.focus();
+  }
+}
+
+function hideOverlay() {
+  if (authOverlay) {
+    authOverlay.hidden = true;
+  }
+  document.body.classList.remove('auth-locked');
+  setAuthMessage('', '');
+}
+
+function updateUserBadge() {
+  const username = localStorage.getItem(USERNAME_KEY) || 'member';
+  const authed = Boolean(authToken());
+  if (userBadge) {
+    userBadge.textContent = authed ? `Signed in as ${username}` : 'Whop sign-in required';
+  }
+  if (logoutBtn) {
+    logoutBtn.hidden = !authed;
+  }
+}
+
+function handleUnauthorized() {
+  if (unauthorizedHandled) return;
+  unauthorizedHandled = true;
+  clearSession();
+  updateUserBadge();
+  showOverlay('Your session has expired. Sign in again to continue.', 'error');
+  stopApp();
+}
+
+async function sendAuth(path, body) {
+  const resp = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const text = await resp.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (_err) {
+    throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+  }
+  if (!resp.ok || !data.ok) {
+    throw new Error(data.detail || data.reason || 'Request failed');
+  }
+  return data;
+}
+
+function completeAuthentication(data, fallbackUsername) {
+  unauthorizedHandled = false;
+  const username = data.username || fallbackUsername || 'admin';
+  localStorage.setItem(TOKEN_KEY, data.token);
+  localStorage.setItem(USERNAME_KEY, username);
+  localStorage.setItem(COOKIE_NAME_KEY, data.session_cookie || 'session_token');
+  updateUserBadge();
+  hideOverlay();
+  startApp();
+}
+
+(function patchFetch() {
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const token = authToken();
+    const headers = new Headers(init.headers || {});
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', 'Bearer ' + token);
+    }
+    const finalInit = Object.assign({}, init, { headers });
+    if (!finalInit.credentials) {
+      finalInit.credentials = 'include';
+    }
+    return originalFetch(input, finalInit).then((response) => {
+      if (response.status === 401) {
+        handleUnauthorized();
+      }
+      return response;
+    });
+  };
+})();
+
 const webhookUrlEl = document.getElementById('webhookUrl');
 const copyBtn = document.getElementById('copyWebhook');
 const form = document.getElementById('testForm');
@@ -20,6 +204,266 @@ const positionsStatus = document.getElementById('positionsStatus');
 const instrumentSelect = document.getElementById('paperInstrument');
 const optionFields = Array.from(document.querySelectorAll('.option-field'));
 const futureFields = Array.from(document.querySelectorAll('.future-field'));
+
+function stopApp() {
+  if (paperRefreshTimer) {
+    clearInterval(paperRefreshTimer);
+    paperRefreshTimer = null;
+  }
+}
+
+function startApp() {
+  stopApp();
+  boot();
+}
+
+if (authRegisterBtn) {
+  authRegisterBtn.hidden = true;
+  authRegisterBtn.dataset.mode = '';
+}
+
+if (authForm) {
+  authForm.hidden = true;
+}
+
+if (authWhopExtras) {
+  authWhopExtras.hidden = true;
+}
+
+if (authWhopBtn) {
+  authWhopBtn.hidden = true;
+  authWhopBtn.disabled = true;
+  authWhopBtn.dataset.bound = '';
+}
+
+showWhopNotice('', '');
+
+if (whopToken) {
+  whopMode = true;
+  if (authRegisterBtn) {
+    authRegisterBtn.hidden = true;
+    authRegisterBtn.dataset.mode = 'whop';
+    authRegisterBtn.textContent = 'Complete Membership Setup';
+    authRegisterBtn.disabled = true;
+  }
+  if (authWhopBtn) {
+    authWhopBtn.hidden = true;
+  }
+  if (authForm) {
+    authForm.hidden = true;
+  }
+  showWhopNotice('Verifying your Whop membership…');
+  (async () => {
+    try {
+      const resp = await fetch(`/auth/whop/session?token=${encodeURIComponent(whopToken)}`, {
+        credentials: 'include',
+      });
+      let data = null;
+      try {
+        data = await resp.json();
+      } catch (_err) {
+        data = null;
+      }
+      if (!resp.ok || !data || data.ok === false) {
+        whopSessionValid = false;
+        const detail =
+          (data && (data.detail || data.reason)) ||
+          'Unable to verify your Whop membership. Please restart from Whop.';
+        showWhopNotice(detail, 'error');
+        if (authRegisterBtn) {
+          authRegisterBtn.hidden = true;
+          authRegisterBtn.disabled = true;
+        }
+        if (authForm) {
+          authForm.hidden = true;
+        }
+        setAuthMessage(detail, 'error');
+        return;
+      }
+      const email = data.email || '';
+      const existingUsername = data.username || '';
+      if (data.registered) {
+        const welcome = existingUsername
+          ? `Welcome back, ${existingUsername}!`
+          : email
+          ? `Welcome back, ${email}!`
+          : 'Membership verified!';
+        showWhopNotice(`${welcome} Signing you in…`, 'success');
+        setAuthMessage('Signing you in…');
+        try {
+          const loginData = await sendAuth('/auth/whop/login', { token: whopToken });
+          setAuthMessage('Welcome back! Loading your console…', 'success');
+          completeAuthentication(loginData, existingUsername || (email ? email.split('@')[0] : 'member'));
+        } catch (err) {
+          console.error(err);
+          showWhopNotice('Unable to sign you in automatically. Please start again from Whop.', 'error');
+          setAuthMessage(err.message || 'Whop sign-in failed', 'error');
+        }
+        return;
+      }
+      if (authForm) {
+        authForm.hidden = false;
+      }
+      if (authWhopExtras) {
+        authWhopExtras.hidden = false;
+      }
+      if (authRegisterBtn) {
+        authRegisterBtn.hidden = false;
+        authRegisterBtn.disabled = false;
+      }
+      const greeting = email ? `Welcome, ${email}!` : 'Whop membership verified!';
+      showWhopNotice(`${greeting} Complete your funding credentials to finish setup.`, 'success');
+      if (email && authUsername && !authUsername.value) {
+        authUsername.value = email.split('@')[0];
+      }
+      setAuthMessage('Choose your console credentials and link your Alpaca account to continue.', '');
+      whopSessionValid = true;
+    } catch (err) {
+      console.error(err);
+      whopSessionValid = false;
+      showWhopNotice('Unable to verify your Whop membership. Please restart from Whop.', 'error');
+      if (authRegisterBtn) {
+        authRegisterBtn.hidden = true;
+        authRegisterBtn.disabled = true;
+      }
+      if (authForm) {
+        authForm.hidden = true;
+      }
+      setAuthMessage('Unable to verify your Whop membership. Please restart from Whop.', 'error');
+    }
+  })();
+} else {
+  whopMode = false;
+  whopSessionValid = false;
+  if (authForm) {
+    authForm.hidden = true;
+  }
+  if (authWhopExtras) {
+    authWhopExtras.hidden = true;
+  }
+  if (authRegisterBtn) {
+    authRegisterBtn.hidden = true;
+    authRegisterBtn.dataset.mode = '';
+    authRegisterBtn.disabled = false;
+  }
+  setAuthMessage(DEFAULT_SIGNIN_MESSAGE, '');
+}
+
+async function setupWhopButton() {
+  if (!authWhopBtn || whopMode) return;
+  try {
+    const resp = await fetch('/auth/whop/start?mode=status', { credentials: 'include' });
+    let data = null;
+    try {
+      data = await resp.json();
+    } catch (_err) {
+      data = null;
+    }
+    if (!resp.ok || !data || data.enabled !== true) {
+      authWhopBtn.hidden = true;
+      authWhopBtn.disabled = true;
+      setAuthMessage('Whop sign-in is not currently available. Contact support for assistance.', 'error');
+      return;
+    }
+  } catch (err) {
+    console.warn('Unable to determine Whop availability', err);
+    authWhopBtn.hidden = true;
+    authWhopBtn.disabled = true;
+    setAuthMessage('Unable to reach Whop. Check your connection or try again later.', 'error');
+    return;
+  }
+
+  if (!authWhopBtn.dataset.bound) {
+    authWhopBtn.addEventListener('click', () => {
+      const dest = '/auth/whop/start?next=' + encodeURIComponent(nextUrl);
+      window.location.href = dest;
+    });
+    authWhopBtn.dataset.bound = '1';
+  }
+  authWhopBtn.hidden = false;
+  authWhopBtn.disabled = false;
+}
+
+setupWhopButton();
+
+if (authForm) {
+  authForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (authRegisterBtn && !authRegisterBtn.hidden && authRegisterBtn.dataset.mode === 'whop') {
+      authRegisterBtn.click();
+    }
+  });
+}
+
+if (authRegisterBtn) {
+  authRegisterBtn.addEventListener('click', async () => {
+    if (!whopMode || authRegisterBtn.dataset.mode !== 'whop') {
+      return;
+    }
+    const username = authUsername ? authUsername.value.trim().toLowerCase() : '';
+    const password = authPassword ? authPassword.value : '';
+    if (!username || !password) {
+      setAuthMessage('Choose a username and password before completing registration.', 'error');
+      return;
+    }
+    if (!whopSessionValid) {
+      setAuthMessage('Your Whop session has expired. Start again from Whop.', 'error');
+      return;
+    }
+    const apiKey = authApiKey ? authApiKey.value.trim() : '';
+    const apiSecret = authApiSecret ? authApiSecret.value.trim() : '';
+    const baseUrl = authBaseUrl ? authBaseUrl.value.trim() : '';
+    if (!apiKey || !apiSecret) {
+      setAuthMessage('Enter your Alpaca API key and secret to continue.', 'error');
+      return;
+    }
+    authRegisterBtn.disabled = true;
+    setAuthMessage('Linking your Whop membership…');
+    try {
+      const payload = {
+        token: whopToken,
+        username,
+        password,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        account_type: (authAccountType && authAccountType.value ? authAccountType.value : 'funded').toLowerCase(),
+      };
+      if (baseUrl) {
+        payload.base_url = baseUrl;
+      }
+      const data = await sendAuth('/register/whop', payload);
+      setAuthMessage('Welcome aboard! Loading your console…', 'success');
+      completeAuthentication(data, username);
+    } catch (err) {
+      setAuthMessage(err.message || 'Whop registration failed', 'error');
+    } finally {
+      authRegisterBtn.disabled = !whopSessionValid;
+    }
+  });
+}
+
+if (logoutBtn) {
+  logoutBtn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    try {
+      await fetch('/logout', { method: 'POST' });
+    } catch (_err) {
+      // Ignore logout network errors
+    }
+    clearSession();
+    stopApp();
+    updateUserBadge();
+    showOverlay('Signed out. Sign in with Whop to continue.', '');
+  });
+}
+
+updateUserBadge();
+if (authToken()) {
+  hideOverlay();
+  startApp();
+} else {
+  showOverlay();
+}
 
 function getAccountType() {
   if (!paperForm) return 'paper';
@@ -103,9 +547,6 @@ const currencyFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
-
-const LIVE_PNL_REFRESH_MS = 15000;
-let paperRefreshTimer = null;
 
 function computeWebhookUrl() {
   if (!webhookUrlEl) return;
@@ -681,6 +1122,9 @@ function boot() {
   if (paperForm) {
     syncInstrumentFields();
     loadPaperDashboard();
+    if (paperRefreshTimer) {
+      clearInterval(paperRefreshTimer);
+    }
     paperRefreshTimer = setInterval(loadPaperDashboard, LIVE_PNL_REFRESH_MS);
   }
 }
@@ -700,5 +1144,3 @@ if (paperForm) {
 if (instrumentSelect) {
   instrumentSelect.addEventListener('change', syncInstrumentFields);
 }
-
-window.addEventListener('load', boot);

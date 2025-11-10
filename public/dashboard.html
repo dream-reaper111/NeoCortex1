@@ -459,7 +459,7 @@
                         const token = authToken();
                         if (!token) {
                                 const dest = encodeURIComponent(window.location.pathname + window.location.search);
-                                window.location.replace('/login?next=' + dest);
+                                window.location.replace('/admin/login?next=' + dest);
                         }
                 })();
 
@@ -497,7 +497,7 @@
                         localStorage.removeItem(USERNAME_KEY);
                         const cookieName = sessionCookieName();
                         document.cookie = cookieName + '=; Max-Age=0; path=/';
-                        window.location.replace('/login');
+                        window.location.replace('/admin/login');
                 });
 
                 // ---- Range mode toggle ----
