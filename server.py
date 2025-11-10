@@ -2783,12 +2783,52 @@ def _resolve_alpaca_credentials(account: str, user_id: Optional[int]) -> Dict[st
         "base_url": ALPACA_BASE_URL_PAPER,
     }
 
-def _nocache() -> Dict[str,str]:
-    return {"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0", "Pragma":"no-cache", "Expires":"0"}
+def _nocache() -> Dict[str, str]:
+    return {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
 
 def _json(obj: Any, code: int = 200) -> JSONResponse:
     return JSONResponse(obj, status_code=code, headers=_nocache())
 
+
+def _json_or_none(response: "requests.Response", *, context: str = "") -> Any:
+    """Return ``response.json()`` when valid JSON is present, otherwise ``None``."""
+
+    if not getattr(response, "content", None):
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        if context:
+            logger.warning("%s returned a non-JSON response", context)
+        else:
+            logger.warning("HTTP response returned a non-JSON payload")
+        return None
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Best-effort conversion of an arbitrary value to ``float``."""
+
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return default
+        try:
+            return float(stripped)
+        except ValueError:
+            return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 def _render_template(
     name: str,
@@ -4372,30 +4412,89 @@ async def get_positions(
 ):
     '''Fetch the current positions for the specified Alpaca account.'''
 
-    acct_type = (account or "paper").lower()
-    user = None
-    if authorization or session_token:
-        user = _require_user(authorization, session_token, required_scopes={"positions"})
-
-    creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
-    key = creds.get("key")
-    secret = creds.get("secret")
-    base_url = creds.get("base_url")
-    if not key or not secret:
-        return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
-
-    url = f"{base_url}/v2/positions"
-    headers = {
-        "APCA-API-KEY-ID": key,
-        "APCA-API-SECRET-KEY": secret,
-    }
-    session = _http_session()
     try:
-        resp = session.get(url, headers=headers, timeout=15)
-        positions = resp.json() if resp.content else []
-    except Exception as exc:
-        return _json({"ok": False, "detail": f"Failed to fetch positions: {exc}"}, 500)
-    return _json({"ok": True, "positions": positions, "account_type": acct_type})
+        acct_type = (account or "paper").lower()
+        user = None
+        if authorization or session_token:
+            user = _require_user(
+                authorization,
+                session_token,
+                required_scopes={"positions"},
+            )
+
+        creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
+        key = creds.get("key")
+        secret = creds.get("secret")
+        base_url = creds.get("base_url")
+        if not key or not secret:
+            return _json(
+                {"ok": False, "detail": "Alpaca credentials not configured"},
+                500,
+            )
+
+        url = f"{base_url}/v2/positions"
+        headers = {
+            "APCA-API-KEY-ID": key,
+            "APCA-API-SECRET-KEY": secret,
+        }
+        session = _http_session()
+        resp = await asyncio.to_thread(
+            session.get,
+            url,
+            headers=headers,
+            timeout=15,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.exception("Unexpected error retrieving positions", exc_info=exc)
+        return _json(
+            {
+                "ok": False,
+                "detail": "Unexpected error retrieving positions. Please try again.",
+            },
+            502,
+        )
+
+    payload = _json_or_none(resp, context="Alpaca /v2/positions")
+    if resp.status_code >= 400:
+        detail = "Failed to fetch positions from Alpaca"
+        if isinstance(payload, dict):
+            detail = (
+                payload.get("message")
+                or payload.get("error")
+                or payload.get("detail")
+                or detail
+            )
+        body: Dict[str, Any] = {"ok": False, "detail": detail}
+        if payload is not None:
+            body["alpaca"] = payload
+        return _json(body, resp.status_code or 502)
+
+    raw_positions: List[Mapping[str, Any]]
+    if isinstance(payload, list):
+        raw_positions = payload
+    elif isinstance(payload, dict):
+        raw_positions = list(payload.get("positions") or [])
+    else:
+        raw_positions = []
+
+    serialised: List[Dict[str, Any]] = []
+    for record in raw_positions:
+        if not isinstance(record, Mapping):
+            continue
+        serialised.append(
+            {
+                "symbol": record.get("symbol"),
+                "quantity": _safe_float(record.get("qty") or record.get("quantity")),
+                "avg_entry_price": _safe_float(record.get("avg_entry_price")),
+                "market_value": _safe_float(record.get("market_value")),
+                "cost_basis": _safe_float(record.get("cost_basis")),
+                "unrealized_pl": _safe_float(record.get("unrealized_pl")),
+            }
+        )
+
+    return _json({"ok": True, "positions": serialised, "account_type": acct_type})
 
 
 @app.post("/positions/{symbol}/close")
@@ -4471,41 +4570,86 @@ async def get_pnl(
 ):
     '''Compute unrealized P&L for the authenticated user\'s Alpaca account.'''
 
-    acct_type = (account or "paper").lower()
-    user = None
-    if authorization or session_token:
-        user = _require_user(authorization, session_token, required_scopes={"positions"})
-
-    creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
-    key = creds.get("key")
-    secret = creds.get("secret")
-    base_url = creds.get("base_url")
-    if not key or not secret:
-        return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
-
-    pos_url = f"{base_url}/v2/positions"
-    headers = {
-        "APCA-API-KEY-ID": key,
-        "APCA-API-SECRET-KEY": secret,
-    }
-    session = _http_session()
     try:
-        pos_resp = session.get(pos_url, headers=headers, timeout=15)
-        pos_list = pos_resp.json() or []
-    except Exception as exc:
-        return _json({"ok": False, "detail": f"Failed to compute P&L: {exc}"}, 500)
+        acct_type = (account or "paper").lower()
+        user = None
+        if authorization or session_token:
+            user = _require_user(
+                authorization,
+                session_token,
+                required_scopes={"positions"},
+            )
 
-    if not pos_list:
+        creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
+        key = creds.get("key")
+        secret = creds.get("secret")
+        base_url = creds.get("base_url")
+        if not key or not secret:
+            return _json(
+                {"ok": False, "detail": "Alpaca credentials not configured"},
+                500,
+            )
+
+        pos_url = f"{base_url}/v2/positions"
+        headers = {
+            "APCA-API-KEY-ID": key,
+            "APCA-API-SECRET-KEY": secret,
+        }
+        session = _http_session()
+        pos_resp = await asyncio.to_thread(
+            session.get,
+            pos_url,
+            headers=headers,
+            timeout=15,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.exception("Unexpected error computing P&L", exc_info=exc)
+        return _json(
+            {
+                "ok": False,
+                "detail": "Unexpected error computing P&L. Please try again.",
+            },
+            502,
+        )
+
+    payload = _json_or_none(pos_resp, context="Alpaca /v2/positions")
+    if pos_resp.status_code >= 400:
+        detail = "Failed to fetch positions from Alpaca"
+        if isinstance(payload, dict):
+            detail = (
+                payload.get("message")
+                or payload.get("error")
+                or payload.get("detail")
+                or detail
+            )
+        body: Dict[str, Any] = {"ok": False, "detail": detail}
+        if payload is not None:
+            body["alpaca"] = payload
+        return _json(body, pos_resp.status_code or 502)
+
+    raw_positions: List[Mapping[str, Any]]
+    if isinstance(payload, list):
+        raw_positions = payload
+    elif isinstance(payload, dict):
+        raw_positions = list(payload.get("positions") or [])
+    else:
+        raw_positions = []
+
+    if not raw_positions:
         return _json({"ok": True, "total_pnl": 0.0, "positions": []})
 
-    results = []
+    results: List[Dict[str, Any]] = []
     total_pnl = 0.0
-    for position in pos_list:
-        qty = float(position.get("qty") or position.get("quantity") or 0)
-        cost_basis = float(position.get("cost_basis") or 0)
-        market_value = float(position.get("market_value") or 0)
+    for position in raw_positions:
+        if not isinstance(position, Mapping):
+            continue
+        qty = _safe_float(position.get("qty") or position.get("quantity"))
+        cost_basis = _safe_float(position.get("cost_basis"))
+        market_value = _safe_float(position.get("market_value"))
         if position.get("unrealized_pl") is not None:
-            pnl = float(position.get("unrealized_pl"))
+            pnl = _safe_float(position.get("unrealized_pl"))
         else:
             pnl = market_value - cost_basis
         total_pnl += pnl
@@ -4513,14 +4657,20 @@ async def get_pnl(
             {
                 "symbol": position.get("symbol"),
                 "quantity": qty,
-                "avg_entry_price": float(position.get("avg_entry_price") or 0),
+                "avg_entry_price": _safe_float(position.get("avg_entry_price")),
                 "market_value": market_value,
                 "cost_basis": cost_basis,
                 "unrealized_pl": pnl,
             }
         )
 
-    return _json({"ok": True, "total_pnl": total_pnl, "positions": results})
+    return _json(
+        {
+            "ok": True,
+            "total_pnl": round(total_pnl, 2),
+            "positions": results,
+        }
+    )
 
 
 @app.post("/strategy/liquidity-sweeps")
