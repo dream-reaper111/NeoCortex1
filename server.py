@@ -1321,7 +1321,15 @@ except Exception:
     logger.warning("[papertrade] failed to load initial state", exc_info=True)
 
 # --- authentication and credential storage -------------------------------------------------------
-AUTH_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "auth.db")).resolve()
+_AUTH_DB_ENV = (os.getenv("AUTH_DB_PATH") or "").strip()
+if _AUTH_DB_ENV:
+    resolved_auth_db = Path(_AUTH_DB_ENV).expanduser()
+    if not resolved_auth_db.is_absolute():
+        resolved_auth_db = (_PROJECT_ROOT / resolved_auth_db).resolve()
+else:
+    resolved_auth_db = (_PROJECT_ROOT / "auth.db").resolve()
+
+AUTH_DB_PATH = resolved_auth_db
 AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "access_token")
 SESSION_COOKIE_SECURE = _env_flag("AUTH_COOKIE_SECURE", default=SSL_ENABLED)
