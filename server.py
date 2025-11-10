@@ -7,13 +7,13 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
-import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging
+import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac
 from urllib.parse import parse_qs, quote, urlencode
 import importlib.util
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager, suppress
-from typing import Any, Dict, List, Optional, Tuple, Literal
+from typing import Any, Dict, List, Optional, Tuple, Literal, Set, Iterable
 
 try:
     import pandas as pd
@@ -138,6 +138,9 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for trimmed fastapi d
 
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
+import jwt
+from jwt import InvalidTokenError, ExpiredSignatureError
+import pyotp
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
@@ -579,12 +582,82 @@ except Exception:
 # --- authentication and credential storage -------------------------------------------------------
 AUTH_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "auth.db")).resolve()
 AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session_token")
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "access_token")
 SESSION_COOKIE_SECURE = _env_flag("AUTH_COOKIE_SECURE", default=SSL_ENABLED)
-SESSION_COOKIE_MAX_AGE = int(os.getenv("SESSION_COOKIE_MAX_AGE", str(7 * 24 * 3600)))
+SESSION_COOKIE_MAX_AGE = int(os.getenv("SESSION_COOKIE_MAX_AGE", str(15 * 60)))
 SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax") or "lax"
+REFRESH_COOKIE_NAME = os.getenv("REFRESH_TOKEN_COOKIE_NAME", "refresh_token")
+REFRESH_COOKIE_SECURE = _env_flag("REFRESH_COOKIE_SECURE", default=SESSION_COOKIE_SECURE)
+REFRESH_COOKIE_MAX_AGE = int(os.getenv("REFRESH_COOKIE_MAX_AGE", str(30 * 24 * 3600)))
+REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "lax") or "lax"
 
-CREDENTIALS_ENCRYPTION_KEY = (os.getenv("CREDENTIALS_ENCRYPTION_KEY") or "").strip() or None
+_EPHEMERAL_JWT_SECRET = False
+_configured_jwt_secret = (os.getenv("JWT_SECRET_KEY") or "").strip()
+if not _configured_jwt_secret:
+    logger.warning("JWT_SECRET_KEY not set; generating ephemeral signing key. Tokens will be invalidated on restart.")
+    _configured_jwt_secret = secrets.token_urlsafe(64)
+    _EPHEMERAL_JWT_SECRET = True
+JWT_SECRET_KEY = _configured_jwt_secret
+JWT_REFRESH_SECRET_KEY = (os.getenv("JWT_REFRESH_SECRET_KEY") or JWT_SECRET_KEY).strip()
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS512")
+JWT_ACCESS_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+JWT_REFRESH_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "30"))
+JWT_ISSUER = os.getenv("JWT_ISSUER", "neo-cortex")
+JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "neo-cortex-clients")
+JWT_LEEWAY_SECONDS = int(os.getenv("JWT_LEEWAY_SECONDS", "30"))
+TOKEN_REFRESH_LEEWAY_SECONDS = int(os.getenv("TOKEN_REFRESH_LEEWAY_SECONDS", "60"))
+
+ROLE_ADMIN = "admin"
+ROLE_TRADER = "trader"
+ROLE_READ_ONLY = "read-only"
+ROLE_LICENSE = "license_user"
+DEFAULT_ROLE = os.getenv("DEFAULT_USER_ROLE", ROLE_READ_ONLY)
+ROLE_SCOPES: Dict[str, Set[str]] = {
+    ROLE_ADMIN: {"admin", "trade", "read", "positions", "credentials", "api-keys"},
+    ROLE_TRADER: {"trade", "read", "positions"},
+    ROLE_LICENSE: {"license", "read"},
+    ROLE_READ_ONLY: {"read"},
+}
+MFA_REQUIRED_ROLES: Set[str] = {role.strip() for role in os.getenv("MFA_REQUIRED_ROLES", f"{ROLE_ADMIN},{ROLE_TRADER}").split(",") if role.strip()}
+API_TOKEN_PREFIX = os.getenv("API_TOKEN_PREFIX", "ApiKey")
+API_KEY_SCOPE_SEPARATOR = os.getenv("API_KEY_SCOPE_SEPARATOR", " ")
+ALLOWED_API_SCOPES: Set[str] = set().union(*ROLE_SCOPES.values())
+TOTP_VALID_WINDOW = int(os.getenv("TOTP_VALIDATION_WINDOW", "1"))
+MFA_RECOVERY_CODE_COUNT = int(os.getenv("MFA_RECOVERY_CODE_COUNT", "5"))
+MFA_RECOVERY_CODE_LENGTH = int(os.getenv("MFA_RECOVERY_CODE_LENGTH", "10"))
+
+CREDENTIALS_LEGACY_KEY = (os.getenv("CREDENTIALS_ENCRYPTION_KEY") or "").strip() or None
+CREDENTIALS_KEYSET_RAW = (os.getenv("CREDENTIALS_ENCRYPTION_KEYS") or "").strip()
+CREDENTIALS_ACTIVE_KEY_VERSION = (os.getenv("CREDENTIALS_ACTIVE_KEY_VERSION") or "active").strip()
+CREDENTIALS_ROTATE_ON_START = _env_flag("CREDENTIALS_ROTATE_ON_START", default=False)
+
+AUTH_DB_ENCRYPTION_PASSPHRASE = (os.getenv("AUTH_DB_ENCRYPTION_PASSPHRASE") or "").strip() or None
+
+PINNED_CERT_FINGERPRINT = (os.getenv("PINNED_CERT_FINGERPRINT") or "").replace(":", "").strip().lower()
+PINNED_CERT_HASH_ALGO = (os.getenv("PINNED_CERT_HASH_ALGO") or "sha256").strip().lower()
+ENABLE_CERT_PINNING = bool(PINNED_CERT_FINGERPRINT)
+
+SECURE_HEADERS_TEMPLATE: Dict[str, str] = {
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; object-src 'none'",
+}
+CUSTOM_SECURE_HEADERS = os.getenv("SECURE_HEADERS_EXTRA", "")
+if CUSTOM_SECURE_HEADERS:
+    for header_pair in CUSTOM_SECURE_HEADERS.split(";;"):
+        if not header_pair.strip():
+            continue
+        if "=" not in header_pair:
+            continue
+        name, value = header_pair.split("=", 1)
+        SECURE_HEADERS_TEMPLATE[name.strip()] = value.strip()
+DEFAULT_SECURITY_HEADERS.update(SECURE_HEADERS_TEMPLATE)
+
 WHOP_API_KEY = (os.getenv("WHOP_API_KEY") or "").strip() or None
 WHOP_API_BASE = (os.getenv("WHOP_API_BASE") or "https://api.whop.com").rstrip("/")
 WHOP_PORTAL_URL = (os.getenv("WHOP_PORTAL_URL") or "").strip() or None
@@ -595,6 +668,12 @@ ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "the3istheD3T").strip()
 def _db_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(str(AUTH_DB_PATH))
     conn.row_factory = sqlite3.Row
+    if AUTH_DB_ENCRYPTION_PASSPHRASE:
+        try:
+            conn.execute("PRAGMA key = ?", (AUTH_DB_ENCRYPTION_PASSPHRASE,))
+            conn.execute("PRAGMA cipher_memory_security = ON")
+        except sqlite3.DatabaseError as exc:
+            logger.error("Failed to apply SQLCipher key: %s", exc)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -617,16 +696,37 @@ def _init_auth_db() -> None:
         column_names = {row["name"] for row in info}
         if "is_admin" not in column_names:
             conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        if "role" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT ?", (DEFAULT_ROLE,))
+        if "totp_secret" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT")
+        if "mfa_enabled" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0")
+        if "mfa_delivery" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN mfa_delivery TEXT DEFAULT 'totp'")
+        if "mfa_recovery_codes" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN mfa_recovery_codes TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
+                token_hash TEXT,
                 user_id INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
+                expires_at TEXT,
+                last_used_at TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             """
         )
+        session_info = conn.execute("PRAGMA table_info(sessions)").fetchall()
+        session_columns = {row["name"] for row in session_info}
+        if "token_hash" not in session_columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN token_hash TEXT")
+        if "expires_at" not in session_columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT")
+        if "last_used_at" not in session_columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN last_used_at TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS alpaca_credentials (
@@ -638,6 +738,35 @@ def _init_auth_db() -> None:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (user_id, account_type),
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_tokens (
+                token_id TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                scopes TEXT NOT NULL,
+                label TEXT,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        api_info = conn.execute("PRAGMA table_info(api_tokens)").fetchall()
+        api_columns = {row["name"] for row in api_info}
+        if "label" not in api_columns:
+            conn.execute("ALTER TABLE api_tokens ADD COLUMN label TEXT")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS credential_key_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_version TEXT NOT NULL,
+                rotated_at TEXT NOT NULL,
+                total_records INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -662,45 +791,148 @@ class CredentialEncryptionError(RuntimeError):
     pass
 
 
-_CREDENTIALS_CIPHER: Optional[Fernet] = None
+_CREDENTIAL_CIPHERS: Dict[str, Fernet] = {}
+_CREDENTIAL_KEYSET_CACHE: Dict[str, str] = {}
+_ACTIVE_CREDENTIAL_KEY_VERSION: Optional[str] = None
+_EPHEMERAL_CREDENTIAL_KEY = False
 
 
-def _credentials_cipher() -> Fernet:
-    global _CREDENTIALS_CIPHER
-    if _CREDENTIALS_CIPHER is not None:
-        return _CREDENTIALS_CIPHER
-    if not CREDENTIALS_ENCRYPTION_KEY:
-        raise CredentialEncryptionError(
-            "CREDENTIALS_ENCRYPTION_KEY must be set to store API credentials securely"
+def _reload_credential_keys() -> None:
+    global _CREDENTIAL_KEYSET_CACHE, _ACTIVE_CREDENTIAL_KEY_VERSION, _EPHEMERAL_CREDENTIAL_KEY
+    keyset: Dict[str, str] = {}
+    if CREDENTIALS_KEYSET_RAW:
+        for item in CREDENTIALS_KEYSET_RAW.split(","):
+            item = item.strip()
+            if not item or ":" not in item:
+                continue
+            version, key = item.split(":", 1)
+            version = version.strip()
+            key = key.strip()
+            if not version or not key:
+                continue
+            keyset[version] = key
+    if CREDENTIALS_LEGACY_KEY and "legacy" not in keyset:
+        keyset["legacy"] = CREDENTIALS_LEGACY_KEY
+    if not keyset:
+        logger.warning(
+            "No CREDENTIALS_ENCRYPTION_KEYS configured; generating ephemeral key. Stored credentials will not persist across restarts."
         )
-    key = CREDENTIALS_ENCRYPTION_KEY.encode("utf-8")
-    try:
-        _CREDENTIALS_CIPHER = Fernet(key)
-    except Exception as exc:  # pragma: no cover - defensive
-        raise CredentialEncryptionError(f"Invalid CREDENTIALS_ENCRYPTION_KEY: {exc}") from exc
-    return _CREDENTIALS_CIPHER
+        generated = Fernet.generate_key().decode("utf-8")
+        keyset["ephemeral"] = generated
+        _EPHEMERAL_CREDENTIAL_KEY = True
+    active_version = CREDENTIALS_ACTIVE_KEY_VERSION or "active"
+    if active_version == "active" or active_version not in keyset:
+        active_version = next(iter(keyset))
+    _CREDENTIAL_KEYSET_CACHE = keyset
+    _ACTIVE_CREDENTIAL_KEY_VERSION = active_version
+
+
+def _credentials_cipher(version: Optional[str] = None) -> Tuple[str, Fernet]:
+    if not _CREDENTIAL_KEYSET_CACHE:
+        _reload_credential_keys()
+    assert _CREDENTIAL_KEYSET_CACHE
+    key_version = version or _ACTIVE_CREDENTIAL_KEY_VERSION
+    if key_version not in _CREDENTIAL_KEYSET_CACHE:
+        raise CredentialEncryptionError(f"Unknown credential key version '{key_version}'")
+    cipher = _CREDENTIAL_CIPHERS.get(key_version)
+    if cipher is None:
+        key_value = _CREDENTIAL_KEYSET_CACHE[key_version]
+        try:
+            cipher = Fernet(key_value.encode("utf-8"))
+        except Exception as exc:  # pragma: no cover - defensive
+            raise CredentialEncryptionError(f"Invalid credential key for version '{key_version}': {exc}") from exc
+        _CREDENTIAL_CIPHERS[key_version] = cipher
+    return key_version, cipher
 
 
 def _encrypt_secret(value: str) -> str:
     if not value:
         return value
-    cipher = _credentials_cipher()
+    version, cipher = _credentials_cipher()
     token = cipher.encrypt(value.encode("utf-8")).decode("utf-8")
-    return f"enc:{token}"
+    return f"enc:{version}:{token}"
 
 
 def _decrypt_secret(value: Optional[str]) -> Optional[str]:
     if not value:
         return value
     if value.startswith("enc:"):
-        token = value[4:]
-        cipher = _credentials_cipher()
+        payload = value[4:]
+        version = None
+        token = payload
+        if ":" in payload:
+            version, token = payload.split(":", 1)
+        key_version, cipher = _credentials_cipher(version)
         try:
             decrypted = cipher.decrypt(token.encode("utf-8")).decode("utf-8")
         except InvalidToken as exc:  # pragma: no cover - data corruption safeguard
-            raise CredentialEncryptionError("Unable to decrypt stored credential") from exc
+            raise CredentialEncryptionError(
+                f"Unable to decrypt stored credential with key '{key_version}'"
+            ) from exc
         return decrypted
     return value
+
+
+def _rotate_encrypted_credentials(target_version: Optional[str] = None) -> int:
+    if not _CREDENTIAL_KEYSET_CACHE:
+        _reload_credential_keys()
+    target_version = target_version or _ACTIVE_CREDENTIAL_KEY_VERSION
+    if not target_version:
+        raise CredentialEncryptionError("No active credential encryption key configured")
+    target_version, target_cipher = _credentials_cipher(target_version)
+    migrated = 0
+    with _db_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_id, account_type, api_key, api_secret FROM alpaca_credentials"
+        ).fetchall()
+        for row in rows:
+            api_key = row["api_key"]
+            api_secret = row["api_secret"]
+            try:
+                decrypted_key = _decrypt_secret(api_key)
+                decrypted_secret = _decrypt_secret(api_secret)
+            except CredentialEncryptionError:
+                continue
+            if not decrypted_key and not decrypted_secret:
+                continue
+            current_version = None
+            if isinstance(api_key, str) and api_key.startswith("enc:"):
+                payload = api_key[4:]
+                if ":" in payload:
+                    current_version = payload.split(":", 1)[0]
+            if current_version == target_version:
+                continue
+            enc_key = f"enc:{target_version}:{target_cipher.encrypt(decrypted_key.encode('utf-8')).decode('utf-8')}"
+            enc_secret = f"enc:{target_version}:{target_cipher.encrypt(decrypted_secret.encode('utf-8')).decode('utf-8')}"
+            conn.execute(
+                """
+                UPDATE alpaca_credentials
+                SET api_key = ?, api_secret = ?, updated_at = ?
+                WHERE user_id = ? AND account_type = ?
+                """,
+                (
+                    enc_key,
+                    enc_secret,
+                    datetime.now(timezone.utc).isoformat(),
+                    row["user_id"],
+                    row["account_type"],
+                ),
+            )
+            migrated += 1
+        if migrated:
+            conn.execute(
+                "INSERT INTO credential_key_history (key_version, rotated_at, total_records) VALUES (?, ?, ?)",
+                (target_version, datetime.now(timezone.utc).isoformat(), migrated),
+            )
+    return migrated
+
+
+_reload_credential_keys()
+if CREDENTIALS_ROTATE_ON_START:
+    try:
+        _rotate_encrypted_credentials()
+    except CredentialEncryptionError as exc:
+        logger.error("Credential key rotation failed: %s", exc)
 
 
 def _create_whop_session(license_key: str, email: Optional[str], metadata: Optional[Dict[str, Any]]) -> str:
@@ -766,6 +998,479 @@ def _get_whop_session(token: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _parse_authorization_header(authorization: Optional[str]) -> Tuple[str, Optional[str]]:
+    if not authorization:
+        return "", None
+    header = authorization.strip()
+    if not header:
+        return "", None
+    parts = header.split(" ", 1)
+    if len(parts) == 2:
+        scheme, value = parts[0].lower(), parts[1].strip()
+        return scheme, value or None
+    return "bearer", header
+
+
+def _load_recovery_codes(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if isinstance(data, list):
+        return [str(item) for item in data if str(item).strip()]
+    return []
+
+
+def _roles_from_string(raw_roles: Optional[str], is_admin: bool) -> List[str]:
+    roles: Set[str] = set()
+    if raw_roles:
+        roles = {role.strip() for role in raw_roles.split(",") if role.strip()}
+    if is_admin:
+        roles.add(ROLE_ADMIN)
+    if not roles:
+        roles.add(DEFAULT_ROLE)
+    normalized = []
+    for role in roles:
+        normalized.append(role if role in ROLE_SCOPES else DEFAULT_ROLE)
+    return sorted(set(normalized))
+
+
+def _scopes_for_roles(roles: List[str]) -> Set[str]:
+    scopes: Set[str] = set()
+    for role in roles:
+        scopes.update(ROLE_SCOPES.get(role, set()))
+    return scopes
+
+
+def _load_user_record(user_id: int) -> Dict[str, Any]:
+    with _db_conn() as conn:
+        row = conn.execute(
+            "SELECT id, username, is_admin, role, mfa_enabled, mfa_delivery, totp_secret, mfa_recovery_codes FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=401, detail="unknown user")
+    roles = _roles_from_string(row["role"], bool(row["is_admin"]))
+    scopes = _scopes_for_roles(roles)
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "roles": roles,
+        "scopes": scopes,
+        "mfa_enabled": bool(row["mfa_enabled"]),
+        "mfa_delivery": row["mfa_delivery"] or "totp",
+        "totp_secret": row["totp_secret"],
+        "recovery_codes": _load_recovery_codes(row["mfa_recovery_codes"]),
+    }
+
+
+def _create_access_token(
+    *,
+    user: Dict[str, Any],
+    refresh_id: Optional[str],
+    expires_delta: Optional[timedelta] = None,
+) -> str:
+    now = datetime.now(timezone.utc)
+    expires = now + (expires_delta or timedelta(minutes=JWT_ACCESS_EXPIRE_MINUTES))
+    payload = {
+        "iss": JWT_ISSUER,
+        "sub": str(user["id"]),
+        "aud": JWT_AUDIENCE,
+        "iat": int(now.timestamp()),
+        "nbf": int(now.timestamp()),
+        "exp": int(expires.timestamp()),
+        "type": "access",
+        "sid": refresh_id,
+        "username": user["username"],
+        "roles": user["roles"],
+        "scopes": sorted(user["scopes"]),
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+def _create_refresh_token(user_id: int) -> Tuple[str, str, datetime]:
+    token_id = secrets.token_hex(16)
+    secret = secrets.token_urlsafe(48)
+    token = f"{token_id}.{secret}"
+    expires_at = datetime.now(timezone.utc) + timedelta(days=JWT_REFRESH_EXPIRE_DAYS)
+    token_hash = _hash_token(token)
+    with _db_conn() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO sessions (token, token_hash, user_id, created_at, expires_at, last_used_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                token_id,
+                token_hash,
+                user_id,
+                datetime.now(timezone.utc).isoformat(),
+                expires_at.isoformat(),
+                None,
+            ),
+        )
+    return token, token_id, expires_at
+
+
+def _decode_access_token(token: str, *, verify_exp: bool = True) -> Dict[str, Any]:
+    options = {"verify_exp": verify_exp}
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+            audience=JWT_AUDIENCE,
+            issuer=JWT_ISSUER,
+            leeway=JWT_LEEWAY_SECONDS,
+            options=options,
+        )
+    except ExpiredSignatureError as exc:
+        raise HTTPException(status_code=401, detail="access token expired") from exc
+    except InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail="invalid access token") from exc
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="invalid access token type")
+    return payload
+
+
+def _verify_refresh_token(token: str, *, update_last_used: bool = True) -> Dict[str, Any]:
+    token = (token or "").strip()
+    if not token or "." not in token:
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+    token_id, _secret = token.split(".", 1)
+    token_hash = _hash_token(token)
+    with _db_conn() as conn:
+        row = conn.execute(
+            "SELECT token, token_hash, user_id, expires_at FROM sessions WHERE token = ?",
+            (token_id,),
+        ).fetchone()
+        if row is None or not row["token_hash"]:
+            raise HTTPException(status_code=401, detail="refresh token revoked")
+        if row["token_hash"] != token_hash:
+            raise HTTPException(status_code=401, detail="refresh token mismatch")
+        if row["expires_at"]:
+            try:
+                expires_at = datetime.fromisoformat(row["expires_at"])
+            except ValueError:
+                raise HTTPException(status_code=401, detail="refresh token invalid expiry")
+            if expires_at < datetime.now(timezone.utc):
+                raise HTTPException(status_code=401, detail="refresh token expired")
+        if update_last_used:
+            conn.execute(
+                "UPDATE sessions SET last_used_at = ? WHERE token = ?",
+                (datetime.now(timezone.utc).isoformat(), token_id),
+            )
+    return {"token_id": token_id, "user_id": row["user_id"], "expires_at": row["expires_at"]}
+
+
+def _issue_token_pair(user: Dict[str, Any]) -> Dict[str, Any]:
+    refresh_token, refresh_id, refresh_exp = _create_refresh_token(user["id"])
+    access_token = _create_access_token(user=user, refresh_id=refresh_id)
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "refresh_expires_at": refresh_exp,
+        "refresh_id": refresh_id,
+    }
+
+
+def _set_auth_cookies(response: JSONResponse, tokens: Dict[str, Any]) -> None:
+    access_token = tokens["access_token"]
+    refresh_token = tokens["refresh_token"]
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        access_token,
+        httponly=True,
+        secure=SESSION_COOKIE_SECURE,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        samesite=SESSION_COOKIE_SAMESITE,
+        path="/",
+    )
+    response.set_cookie(
+        REFRESH_COOKIE_NAME,
+        refresh_token,
+        httponly=True,
+        secure=REFRESH_COOKIE_SECURE,
+        max_age=REFRESH_COOKIE_MAX_AGE,
+        samesite=REFRESH_COOKIE_SAMESITE,
+        path="/auth",
+    )
+
+
+def _clear_auth_cookies(response: JSONResponse) -> None:
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        path="/",
+        samesite=SESSION_COOKIE_SAMESITE,
+        secure=SESSION_COOKIE_SECURE,
+    )
+    response.delete_cookie(
+        REFRESH_COOKIE_NAME,
+        path="/auth",
+        samesite=REFRESH_COOKIE_SAMESITE,
+        secure=REFRESH_COOKIE_SECURE,
+    )
+
+
+def _revoke_refresh_token(refresh_token: Optional[str] = None, *, token_id: Optional[str] = None) -> None:
+    candidate_id = token_id
+    if refresh_token:
+        refresh_token = refresh_token.strip()
+        if "." in refresh_token:
+            candidate_id = refresh_token.split(".", 1)[0]
+    if not candidate_id:
+        return
+    with _db_conn() as conn:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (candidate_id,))
+
+
+def _revoke_tokens(access_token: Optional[str], refresh_token: Optional[str]) -> None:
+    sid = None
+    if access_token:
+        try:
+            payload = _decode_access_token(access_token, verify_exp=False)
+            sid = payload.get("sid")
+        except HTTPException:
+            sid = None
+    _revoke_refresh_token(refresh_token, token_id=sid)
+
+
+class _PinnedHTTPSAdapter(requests.adapters.HTTPAdapter):
+    def cert_verify(self, conn, url, verify, cert):
+        super().cert_verify(conn, url, verify, cert)
+        if not ENABLE_CERT_PINNING:
+            return
+        try:
+            der_cert = conn.sock.getpeercert(binary_form=True)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise requests.exceptions.SSLError("Unable to read TLS certificate") from exc
+        fingerprint = hashlib.new(PINNED_CERT_HASH_ALGO, der_cert).hexdigest()
+        if fingerprint.lower() != PINNED_CERT_FINGERPRINT:
+            raise requests.exceptions.SSLError("Certificate pinning validation failed")
+
+
+_HTTP_SESSION: Optional[requests.Session] = None
+
+
+def _http_session() -> requests.Session:
+    global _HTTP_SESSION
+    if _HTTP_SESSION is not None:
+        return _HTTP_SESSION
+    session = requests.Session()
+    if ENABLE_CERT_PINNING:
+        session.mount("https://", _PinnedHTTPSAdapter())
+    _HTTP_SESSION = session
+    return session
+
+
+def _generate_recovery_codes(count: int = MFA_RECOVERY_CODE_COUNT) -> List[str]:
+    codes: List[str] = []
+    for _ in range(max(1, count)):
+        raw = secrets.token_hex(max(4, MFA_RECOVERY_CODE_LENGTH // 2))
+        codes.append(raw[:MFA_RECOVERY_CODE_LENGTH])
+    return codes
+
+
+def _store_recovery_codes(codes: List[str]) -> str:
+    return json.dumps(codes)
+
+
+def _verify_totp_code(secret: Optional[str], code: Optional[str]) -> bool:
+    if not secret or not code:
+        return False
+    try:
+        totp = pyotp.TOTP(secret)
+        return bool(totp.verify(str(code).strip(), valid_window=TOTP_VALID_WINDOW))
+    except Exception:
+        return False
+
+
+def _totp_provisioning_uri(username: str, secret: str) -> str:
+    totp = pyotp.TOTP(secret)
+    return totp.provisioning_uri(name=username, issuer_name=JWT_ISSUER)
+
+
+def _update_mfa_settings(
+    user_id: int,
+    *,
+    secret: Optional[str],
+    enabled: bool,
+    recovery_codes: Optional[List[str]] = None,
+) -> None:
+    codes_json = _store_recovery_codes(recovery_codes or []) if recovery_codes else (None if not enabled else _store_recovery_codes([]))
+    with _db_conn() as conn:
+        conn.execute(
+            "UPDATE users SET totp_secret = ?, mfa_enabled = ?, mfa_recovery_codes = ? WHERE id = ?",
+            (secret, int(enabled), codes_json, user_id),
+        )
+
+
+def _consume_recovery_code(user_id: int, code: str) -> bool:
+    if not code:
+        return False
+    with _db_conn() as conn:
+        row = conn.execute(
+            "SELECT mfa_recovery_codes FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        codes = _load_recovery_codes(row["mfa_recovery_codes"])
+        normalized = [c for c in codes if c]
+        if code not in normalized:
+            return False
+        normalized.remove(code)
+        conn.execute(
+            "UPDATE users SET mfa_recovery_codes = ? WHERE id = ?",
+            (_store_recovery_codes(normalized), user_id),
+        )
+    return True
+
+
+def _normalize_scopes(scopes: Iterable[str]) -> Set[str]:
+    normalized = {scope.strip() for scope in scopes if scope and scope.strip() in ALLOWED_API_SCOPES}
+    return normalized
+
+
+def _create_api_token(user_id: int, scopes: Set[str], label: Optional[str] = None) -> Dict[str, Any]:
+    token_id = secrets.token_hex(16)
+    token_secret = secrets.token_urlsafe(32)
+    raw_token = f"{token_id}.{token_secret}"
+    token_hash = _hash_token(raw_token)
+    scope_str = API_KEY_SCOPE_SEPARATOR.join(sorted(scopes))
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO api_tokens (token_id, token_hash, user_id, scopes, label, created_at, revoked)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
+            """,
+            (token_id, token_hash, user_id, scope_str, label, now),
+        )
+    return {
+        "token": raw_token,
+        "token_id": token_id,
+        "scopes": sorted(scopes),
+        "label": label,
+        "created_at": now,
+    }
+
+
+def _list_api_tokens(user_id: int) -> List[Dict[str, Any]]:
+    with _db_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT token_id, scopes, label, created_at, last_used_at, revoked
+            FROM api_tokens
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    tokens: List[Dict[str, Any]] = []
+    for row in rows:
+        tokens.append(
+            {
+                "token_id": row["token_id"],
+                "scopes": [scope for scope in (row["scopes"] or "").split(API_KEY_SCOPE_SEPARATOR) if scope],
+                "label": row["label"],
+                "created_at": row["created_at"],
+                "last_used_at": row["last_used_at"],
+                "revoked": bool(row["revoked"]),
+            }
+        )
+    return tokens
+
+
+def _revoke_api_token(user_id: int, token_id: str) -> bool:
+    with _db_conn() as conn:
+        result = conn.execute(
+            "UPDATE api_tokens SET revoked = 1 WHERE user_id = ? AND token_id = ?",
+            (user_id, token_id),
+        )
+    return result.rowcount > 0
+
+
+def _ensure_scopes(user_scopes: Set[str], required_scopes: Optional[Set[str]]) -> None:
+    if not required_scopes:
+        return
+    if not required_scopes.issubset(user_scopes):
+        raise HTTPException(status_code=403, detail="insufficient scope")
+
+
+def _ensure_roles(user_roles: List[str], required_roles: Optional[Set[str]]) -> None:
+    if not required_roles:
+        return
+    if not required_roles.intersection(set(user_roles)):
+        raise HTTPException(status_code=403, detail="insufficient role")
+
+
+def _get_user_from_access_token(
+    token: str,
+    *,
+    required_scopes: Optional[Set[str]] = None,
+    required_roles: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    payload = _decode_access_token(token)
+    user = _load_user_record(int(payload["sub"]))
+    _ensure_scopes(set(payload.get("scopes", [])), required_scopes)
+    _ensure_roles(payload.get("roles", []), required_roles)
+    return user
+
+
+def _get_user_from_api_key(token: str, *, required_scopes: Optional[Set[str]] = None) -> Dict[str, Any]:
+    token_hash = _hash_token(token)
+    with _db_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT token_id, token_hash, user_id, scopes, revoked
+            FROM api_tokens
+            WHERE token_hash = ?
+            """,
+            (token_hash,),
+        ).fetchone()
+        if row is None or row["revoked"]:
+            raise HTTPException(status_code=401, detail="api token revoked")
+        conn.execute(
+            "UPDATE api_tokens SET last_used_at = ? WHERE token_id = ?",
+            (datetime.now(timezone.utc).isoformat(), row["token_id"]),
+        )
+    scopes = set((row["scopes"] or "").split(API_KEY_SCOPE_SEPARATOR)) if row["scopes"] else set()
+    user = _load_user_record(int(row["user_id"]))
+    _ensure_scopes(scopes, required_scopes)
+    return user
+
+
+def _require_user(
+    authorization: Optional[str],
+    session_token: Optional[str] = None,
+    *,
+    required_scopes: Optional[Set[str]] = None,
+    required_roles: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    scheme, token = _parse_authorization_header(authorization)
+    if not token and session_token:
+        token = session_token
+        scheme = "bearer"
+    if not token:
+        raise HTTPException(status_code=401, detail="authorization required")
+    if scheme == "bearer":
+        return _get_user_from_access_token(
+            token,
+            required_scopes=required_scopes,
+            required_roles=required_roles,
+        )
+    if scheme == API_TOKEN_PREFIX.lower():
+        return _get_user_from_api_key(token, required_scopes=required_scopes)
+    raise HTTPException(status_code=401, detail="unsupported authorization scheme")
+
+
 def _verify_whop_license(license_key: str) -> Dict[str, Any]:
     if not WHOP_API_KEY:
         raise HTTPException(status_code=503, detail="Whop integration is not configured")
@@ -774,8 +1479,9 @@ def _verify_whop_license(license_key: str) -> Dict[str, Any]:
         "Authorization": f"Bearer {WHOP_API_KEY}",
         "Accept": "application/json",
     }
+    session = _http_session()
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = session.get(url, headers=headers, timeout=10)
     except requests.RequestException as exc:
         logger.error("Whop license verification failed: %s", exc)
         raise HTTPException(status_code=502, detail="Failed to reach Whop API") from exc
@@ -812,63 +1518,6 @@ def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[s
         dklen=256,
     )
     return derived.hex(), salt
-
-
-def _create_session_token(user_id: int) -> str:
-    token = secrets.token_urlsafe(32)
-    with _db_conn() as conn:
-        conn.execute(
-            "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
-            (token, user_id, datetime.now(timezone.utc).isoformat()),
-        )
-    return token
-
-
-def _delete_session_token(token: str) -> None:
-    if not token:
-        return
-    with _db_conn() as conn:
-        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
-
-
-def _authorization_token(authorization: Optional[str]) -> Optional[str]:
-    if not authorization:
-        return None
-    header = authorization.strip()
-    if not header:
-        return None
-    parts = header.split()
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1]
-    return header
-
-
-def _user_from_token(token: str) -> Optional[sqlite3.Row]:
-    if not token:
-        return None
-    with _db_conn() as conn:
-        row = conn.execute(
-            """
-            SELECT u.id, u.username
-            FROM sessions s
-            JOIN users u ON u.id = s.user_id
-            WHERE s.token = ?
-            """,
-            (token,),
-        ).fetchone()
-    return row
-
-
-def _require_user(authorization: Optional[str], session_token: Optional[str] = None) -> sqlite3.Row:
-    token = _authorization_token(authorization)
-    if not token and session_token:
-        token = session_token
-    if not token:
-        raise HTTPException(status_code=401, detail="authorization required")
-    user = _user_from_token(token)
-    if user is None:
-        raise HTTPException(status_code=401, detail="invalid or expired token")
-    return user
 
 
 def _fetch_user_credentials(user_id: int, account_type: str) -> Optional[sqlite3.Row]:
@@ -912,81 +1561,6 @@ def _save_user_credentials(
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
-
-
-def _hash_password_sha2048(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
-    """Derive a 2048-bit PBKDF2-SHA512 digest and return ``(hash_hex, salt_hex)``."""
-    if salt is None:
-        salt = secrets.token_hex(32)
-    salt_bytes = bytes.fromhex(salt)
-    derived = hashlib.pbkdf2_hmac(
-        "sha512",
-        password.encode("utf-8"),
-        salt_bytes,
-        200_000,
-        dklen=256,
-    )
-    return derived.hex(), salt
-
-
-def _create_session_token(user_id: int) -> str:
-    token = secrets.token_urlsafe(32)
-    with _db_conn() as conn:
-        conn.execute(
-            "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
-            (token, user_id, datetime.now(timezone.utc).isoformat()),
-        )
-    return token
-
-
-def _authorization_token(authorization: Optional[str]) -> Optional[str]:
-    if not authorization:
-        return None
-    header = authorization.strip()
-    if not header:
-        return None
-    parts = header.split()
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1]
-    return header
-
-
-def _user_from_token(token: str) -> Optional[sqlite3.Row]:
-    if not token:
-        return None
-    with _db_conn() as conn:
-        row = conn.execute(
-            """
-            SELECT u.id, u.username
-            FROM sessions s
-            JOIN users u ON u.id = s.user_id
-            WHERE s.token = ?
-            """,
-            (token,),
-        ).fetchone()
-    return row
-
-
-def _require_user(authorization: Optional[str]) -> sqlite3.Row:
-    token = _authorization_token(authorization)
-    if not token:
-        raise HTTPException(status_code=401, detail="authorization required")
-    user = _user_from_token(token)
-    if user is None:
-        raise HTTPException(status_code=401, detail="invalid or expired token")
-    return user
-
-
-def _fetch_user_credentials(user_id: int, account_type: str) -> Optional[sqlite3.Row]:
-    with _db_conn() as conn:
-        return conn.execute(
-            """
-            SELECT api_key, api_secret, base_url
-            FROM alpaca_credentials
-            WHERE user_id = ? AND account_type = ?
-            """,
-            (user_id, account_type),
-        ).fetchone()
 
 
 def _save_user_credentials(
@@ -1136,6 +1710,31 @@ if ENABLE_SECURITY_HEADERS or ENABLE_HSTS or DISABLE_SERVER_HEADER:
             del response.headers["server"]
 
         return response
+
+
+@app.middleware("http")
+async def _enforce_token_expiry(request: Request, call_next):
+    authorization = request.headers.get("authorization")
+    token_payload: Optional[Dict[str, Any]] = None
+    scheme = None
+    token = None
+    if authorization:
+        scheme, token = _parse_authorization_header(authorization)
+        if scheme == "bearer" and token:
+            try:
+                token_payload = _decode_access_token(token)
+            except HTTPException as exc:
+                return _json({"ok": False, "detail": exc.detail}, exc.status_code)
+            request.state.access_token_payload = token_payload
+    response = await call_next(request)
+    if token_payload and scheme == "bearer":
+        expires_at = token_payload.get("exp")
+        if isinstance(expires_at, int):
+            remaining = expires_at - int(time.time())
+            response.headers.setdefault("X-Access-Token-Expires-In", str(max(0, remaining)))
+            if remaining <= TOKEN_REFRESH_LEEWAY_SECONDS:
+                response.headers.setdefault("X-Access-Token-Refresh", "required")
+    return response
 
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
@@ -1293,6 +1892,7 @@ class AuthReq(BaseModel):
     password: str
     admin_key: Optional[str] = None
     require_admin: bool = False
+    otp_code: Optional[str] = None
 
 
 async def _auth_req_from_request(request: Request) -> AuthReq:
@@ -1386,6 +1986,36 @@ class PaperTradeOrderRequest(BaseModel):
     future_year: Optional[int] = Field(default=None, ge=2000, le=2100)
 
 
+class TokenRefreshRequest(BaseModel):
+    refresh_token: Optional[str] = None
+
+
+class APITokenCreateRequest(BaseModel):
+    scopes: List[str] = Field(default_factory=list)
+    label: Optional[str] = None
+
+
+class APITokenRevokeRequest(BaseModel):
+    token_id: str
+
+
+class MFASetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    recovery_codes: List[str]
+
+
+class MFAEnableRequest(BaseModel):
+    secret: str
+    otp_code: str
+    recovery_codes: Optional[List[str]] = None
+
+
+class MFADisableRequest(BaseModel):
+    otp_code: Optional[str] = None
+    recovery_code: Optional[str] = None
+
+
 @app.get("/auth/whop/start")
 async def whop_start(request: Request, next: Optional[str] = None):
     if not WHOP_PORTAL_URL:
@@ -1473,8 +2103,15 @@ async def register_whop(req: WhopRegistrationReq):
     try:
         with _db_conn() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (username, password_hash, salt, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
-                (uname, pw_hash, salt, 0, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO users (username, password_hash, salt, is_admin, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    uname,
+                    pw_hash,
+                    salt,
+                    0,
+                    ROLE_LICENSE,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
             )
             user_id = cursor.lastrowid
     except sqlite3.IntegrityError:
@@ -1487,26 +2124,21 @@ async def register_whop(req: WhopRegistrationReq):
             conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         return _json({"ok": False, "detail": str(exc)}, 500)
     _consume_whop_session(token)
-    session_token = _create_session_token(user_id)
+    user = _load_user_record(user_id)
+    tokens = _issue_token_pair(user)
     resp = _json(
         {
             "ok": True,
-            "token": session_token,
+            "access_token": tokens["access_token"],
+            "refresh_token": tokens["refresh_token"],
             "username": uname,
-            "session_cookie": SESSION_COOKIE_NAME,
+            "roles": user["roles"],
+            "scopes": sorted(user["scopes"]),
             "account_type": acct_type,
             "base_url": base_url,
         }
     )
-    resp.set_cookie(
-        SESSION_COOKIE_NAME,
-        session_token,
-        httponly=True,
-        secure=SESSION_COOKIE_SECURE,
-        max_age=SESSION_COOKIE_MAX_AGE,
-        samesite=SESSION_COOKIE_SAMESITE,
-        path="/",
-    )
+    _set_auth_cookies(resp, tokens)
     return resp
 
 
@@ -1526,8 +2158,15 @@ async def register(request: Request):
     try:
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO users (username, password_hash, salt, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
-                (uname, pw_hash, salt, 1, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO users (username, password_hash, salt, is_admin, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    uname,
+                    pw_hash,
+                    salt,
+                    1,
+                    ROLE_ADMIN,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
             )
     except sqlite3.IntegrityError:
         return _json({"ok": False, "detail": "username already exists"}, 400)
@@ -1546,7 +2185,7 @@ async def login(request: Request):
         return _json({"ok": False, "detail": "username and password required"}, 400)
     with _db_conn() as conn:
         row = conn.execute(
-            "SELECT id, password_hash, salt, is_admin FROM users WHERE username = ?",
+            "SELECT id, password_hash, salt, is_admin, role, mfa_enabled, totp_secret FROM users WHERE username = ?",
             (uname,),
         ).fetchone()
     if row is None:
@@ -1556,25 +2195,34 @@ async def login(request: Request):
         return _json({"ok": False, "detail": "invalid credentials"}, 401)
     if req.require_admin and not row["is_admin"]:
         return _json({"ok": False, "detail": "admin access required"}, 403)
-    token = _create_session_token(row["id"])
+    user = _load_user_record(row["id"])
+    roles = set(user["roles"])
+    require_mfa = user["mfa_enabled"] or bool(roles.intersection(MFA_REQUIRED_ROLES))
+    if require_mfa:
+        if row["totp_secret"]:
+            otp_ok = _verify_totp_code(row["totp_secret"], req.otp_code)
+            recovery_ok = False
+            if not otp_ok and req.otp_code:
+                recovery_ok = _consume_recovery_code(user["id"], req.otp_code)
+                if recovery_ok:
+                    user = _load_user_record(user["id"])
+            if not otp_ok and not recovery_ok:
+                return _json({"ok": False, "detail": "otp verification failed"}, 401)
+        else:
+            return _json({"ok": False, "detail": "mfa enrollment required"}, 403)
+    tokens = _issue_token_pair(user)
     resp = _json(
         {
             "ok": True,
-            "token": token,
+            "access_token": tokens["access_token"],
+            "refresh_token": tokens["refresh_token"],
             "username": uname,
-            "session_cookie": SESSION_COOKIE_NAME,
-            "is_admin": bool(row["is_admin"]),
+            "roles": user["roles"],
+            "scopes": sorted(user["scopes"]),
+            "mfa_required": require_mfa,
         }
     )
-    resp.set_cookie(
-        SESSION_COOKIE_NAME,
-        token,
-        httponly=True,
-        secure=SESSION_COOKIE_SECURE,
-        max_age=SESSION_COOKIE_MAX_AGE,
-        samesite=SESSION_COOKIE_SAMESITE,
-        path="/",
-    )
+    _set_auth_cookies(resp, tokens)
     return resp
 
 
@@ -1582,18 +2230,167 @@ async def login(request: Request):
 async def logout(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+    refresh_cookie: Optional[str] = Cookie(None, alias=REFRESH_COOKIE_NAME),
 ):
-    token = _authorization_token(authorization) or session_token
-    if token:
-        _delete_session_token(token)
+    scheme, header_token = _parse_authorization_header(authorization)
+    access_token = header_token if scheme == "bearer" else session_token
+    refresh_token = refresh_cookie
+    _revoke_tokens(access_token, refresh_token)
     resp = _json({"ok": True})
-    resp.delete_cookie(
-        SESSION_COOKIE_NAME,
-        path="/",
-        samesite=SESSION_COOKIE_SAMESITE,
-        secure=SESSION_COOKIE_SECURE,
-    )
+    _clear_auth_cookies(resp)
     return resp
+
+
+@app.post("/auth/refresh")
+async def refresh_tokens(
+    payload: TokenRefreshRequest,
+    authorization: Optional[str] = Header(None),
+    refresh_cookie: Optional[str] = Cookie(None, alias=REFRESH_COOKIE_NAME),
+):
+    refresh_token = payload.refresh_token or refresh_cookie
+    if not refresh_token and authorization:
+        scheme, token = _parse_authorization_header(authorization)
+        if scheme == "bearer":
+            refresh_token = token
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="refresh token required")
+    session = _verify_refresh_token(refresh_token)
+    _revoke_refresh_token(token_id=session["token_id"])
+    user = _load_user_record(int(session["user_id"]))
+    tokens = _issue_token_pair(user)
+    resp = _json(
+        {
+            "ok": True,
+            "access_token": tokens["access_token"],
+            "refresh_token": tokens["refresh_token"],
+            "roles": user["roles"],
+            "scopes": sorted(user["scopes"]),
+        }
+    )
+    _set_auth_cookies(resp, tokens)
+    return resp
+
+
+@app.get("/auth/api-keys")
+async def list_api_keys(
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    user = _require_user(authorization, session_token, required_scopes={"api-keys"})
+    tokens = _list_api_tokens(user["id"])
+    return _json({"ok": True, "api_keys": tokens, "scheme": API_TOKEN_PREFIX})
+
+
+@app.post("/auth/api-keys")
+async def create_api_key(
+    req: APITokenCreateRequest,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    user = _require_user(authorization, session_token, required_scopes={"api-keys"})
+    requested_scopes = _normalize_scopes(req.scopes)
+    if not requested_scopes:
+        raise HTTPException(status_code=400, detail="at least one valid scope is required")
+    token_data = _create_api_token(user["id"], requested_scopes, label=req.label)
+    return _json(
+        {
+            "ok": True,
+            "token": token_data["token"],
+            "token_id": token_data["token_id"],
+            "scopes": token_data["scopes"],
+            "label": token_data["label"],
+            "created_at": token_data["created_at"],
+            "scheme": API_TOKEN_PREFIX,
+        },
+        201,
+    )
+
+
+@app.delete("/auth/api-keys/{token_id}")
+async def revoke_api_key(
+    token_id: str,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    user = _require_user(authorization, session_token, required_scopes={"api-keys"})
+    if not _revoke_api_token(user["id"], token_id):
+        raise HTTPException(status_code=404, detail="api key not found")
+    return _json({"ok": True, "token_id": token_id})
+
+
+@app.get("/auth/mfa/status")
+async def mfa_status(
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    user = _require_user(authorization, session_token)
+    return _json(
+        {
+            "ok": True,
+            "mfa_enabled": user["mfa_enabled"],
+            "delivery": user["mfa_delivery"],
+            "recovery_codes_remaining": len(user.get("recovery_codes", [])),
+        }
+    )
+
+
+@app.post("/auth/mfa/setup")
+async def mfa_setup(
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    user = _require_user(authorization, session_token)
+    secret = pyotp.random_base32()
+    recovery_codes = _generate_recovery_codes()
+    response = MFASetupResponse(
+        secret=secret,
+        provisioning_uri=_totp_provisioning_uri(user["username"], secret),
+        recovery_codes=recovery_codes,
+    )
+    return _json({"ok": True, **response.dict()})
+
+
+@app.post("/auth/mfa/enable")
+async def mfa_enable(
+    req: MFAEnableRequest,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    user = _require_user(authorization, session_token)
+    if not req.secret or not req.otp_code:
+        raise HTTPException(status_code=400, detail="secret and otp_code are required")
+    if not _verify_totp_code(req.secret, req.otp_code):
+        raise HTTPException(status_code=401, detail="otp verification failed")
+    recovery_codes = req.recovery_codes or _generate_recovery_codes()
+    _update_mfa_settings(user["id"], secret=req.secret, enabled=True, recovery_codes=recovery_codes)
+    updated = _load_user_record(user["id"])
+    return _json(
+        {
+            "ok": True,
+            "mfa_enabled": True,
+            "recovery_codes": updated.get("recovery_codes", []),
+        }
+    )
+
+
+@app.post("/auth/mfa/disable")
+async def mfa_disable(
+    req: MFADisableRequest,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    user = _require_user(authorization, session_token)
+    if not user.get("mfa_enabled"):
+        return _json({"ok": True, "mfa_enabled": False})
+    verified = False
+    if req.recovery_code and _consume_recovery_code(user["id"], req.recovery_code):
+        verified = True
+    elif _verify_totp_code(user.get("totp_secret"), req.otp_code):
+        verified = True
+    if not verified:
+        raise HTTPException(status_code=401, detail="otp or recovery code required")
+    _update_mfa_settings(user["id"], secret=None, enabled=False, recovery_codes=None)
+    return _json({"ok": True, "mfa_enabled": False})
 
 
 @app.get("/alpaca/credentials")
@@ -1602,7 +2399,7 @@ async def list_alpaca_credentials(
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
     """Return the Alpaca credential entries associated with the authenticated user."""
-    user = _require_user(authorization, session_token)
+    user = _require_user(authorization, session_token, required_scopes={"credentials"})
     with _db_conn() as conn:
         rows = conn.execute(
             """
@@ -1638,7 +2435,7 @@ async def set_alpaca_credentials(
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
     """Create or update Alpaca API credentials for the authenticated user."""
-    user = _require_user(authorization, session_token)
+    user = _require_user(authorization, session_token, required_scopes={"credentials"})
     acct_type = (req.account_type or "paper").strip().lower()
     if acct_type not in {"paper", "funded"}:
         return _json({"ok": False, "detail": "account_type must be 'paper' or 'funded'"}, 400)
@@ -1666,12 +2463,9 @@ async def get_positions(
     """Fetch the current positions for the specified Alpaca account."""
 
     acct_type = (account or "paper").lower()
-    token = _authorization_token(authorization) or session_token
     user = None
-    if token:
-        user = _user_from_token(token)
-        if user is None:
-            return _json({"ok": False, "detail": "invalid or expired token"}, 401)
+    if authorization or session_token:
+        user = _require_user(authorization, session_token, required_scopes={"positions"})
 
     creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
     key = creds.get("key")
@@ -1685,11 +2479,13 @@ async def get_positions(
         "APCA-API-KEY-ID": key,
         "APCA-API-SECRET-KEY": secret,
     }
+    session = _http_session()
     try:
-        resp = requests.get(url, headers=headers)
-        return _json({"ok": True, "positions": resp.json()})
+        resp = session.get(url, headers=headers, timeout=15)
+        positions = resp.json() if resp.content else []
     except Exception as exc:
         return _json({"ok": False, "detail": f"Failed to fetch positions: {exc}"}, 500)
+    return _json({"ok": True, "positions": positions, "account_type": acct_type})
 
 
 @app.post("/positions/{symbol}/close")
@@ -1704,13 +2500,7 @@ async def close_position(
     if not symbol:
         return _json({"ok": False, "detail": "symbol is required"}, 400)
 
-    token = _authorization_token(authorization) or session_token
-    if not token:
-        return _json({"ok": False, "detail": "authorization required"}, 401)
-
-    user = _user_from_token(token)
-    if user is None:
-        return _json({"ok": False, "detail": "invalid or expired token"}, 401)
+    user = _require_user(authorization, session_token, required_scopes={"trade"})
 
     creds = _resolve_alpaca_credentials(account, user["id"])
     key = creds.get("key")
@@ -1724,8 +2514,9 @@ async def close_position(
         "APCA-API-KEY-ID": key,
         "APCA-API-SECRET-KEY": secret,
     }
+    session = _http_session()
     try:
-        resp = requests.delete(url, headers=headers)
+        resp = session.delete(url, headers=headers, timeout=15)
     except Exception as exc:
         return _json({"ok": False, "detail": f"Failed to close position: {exc}"}, 500)
 
@@ -1771,12 +2562,9 @@ async def get_pnl(
     """Compute unrealized P&L for the authenticated user's Alpaca account."""
 
     acct_type = (account or "paper").lower()
-    token = _authorization_token(authorization) or session_token
     user = None
-    if token:
-        user = _user_from_token(token)
-        if user is None:
-            return _json({"ok": False, "detail": "invalid or expired token"}, 401)
+    if authorization or session_token:
+        user = _require_user(authorization, session_token, required_scopes={"positions"})
 
     creds = _resolve_alpaca_credentials(acct_type, user["id"] if user else None)
     key = creds.get("key")
@@ -1790,8 +2578,9 @@ async def get_pnl(
         "APCA-API-KEY-ID": key,
         "APCA-API-SECRET-KEY": secret,
     }
+    session = _http_session()
     try:
-        pos_resp = requests.get(pos_url, headers=headers)
+        pos_resp = session.get(pos_url, headers=headers, timeout=15)
         pos_list = pos_resp.json() or []
     except Exception as exc:
         return _json({"ok": False, "detail": f"Failed to compute P&L: {exc}"}, 500)
