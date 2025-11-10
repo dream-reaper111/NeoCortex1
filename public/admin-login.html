@@ -4,154 +4,67 @@
         <meta charset="utf-8" />
         <title>Neo Cortex AI – Admin Sign In</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="stylesheet" href="assets/neocortex-theme.css" />
         <style>
-                :root {
-                        --bg: #06090f;
-                        --panel: #101726;
-                        --border: #1b2535;
-                        --accent: #3b82f6;
-                        --text: #e6edf6;
-                        --muted: #93a7c3;
-                        --danger: #ff4d4f;
-                        --success: #2ecc71;
+                .admin-screen {
+                        width: min(460px, 100%);
                 }
 
-                * { box-sizing: border-box; }
-
-                body {
-                        margin: 0;
-                        min-height: 100vh;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        background: radial-gradient(circle at top, rgba(59,130,246,0.25), transparent 55%), var(--bg);
-                        color: var(--text);
-                        font: 14px/1.5 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
-                        padding: 20px;
+                .admin-subtitle {
+                        margin: 0 0 18px;
+                        font-size: 0.95rem;
                 }
 
-                .card {
-                        width: min(420px, 100%);
-                        background: rgba(16, 23, 38, 0.92);
-                        border: 1px solid rgba(59, 130, 246, 0.25);
-                        border-radius: 16px;
-                        padding: 28px 26px;
-                        box-shadow: 0 20px 60px rgba(5, 12, 25, 0.45);
-                        backdrop-filter: blur(12px);
-                }
-
-                h1 {
-                        margin: 0 0 8px;
-                        font-size: 26px;
-                        letter-spacing: 0.3px;
-                }
-
-                p.subtitle {
-                        margin: 0 0 24px;
-                        color: var(--muted);
-                        font-size: 13px;
-                }
-
-                label {
-                        display: block;
-                        font-size: 12px;
-                        letter-spacing: 0.4px;
-                        text-transform: uppercase;
-                        color: var(--muted);
-                        margin-bottom: 6px;
-                }
-
-                .admin-key-label span {
-                        font-size: 11px;
+                .admin-key-hint {
+                        font-size: 0.75rem;
                         text-transform: none;
                         letter-spacing: 0;
                         margin-left: 6px;
-                        color: rgba(147, 167, 195, 0.85);
+                        color: rgba(148, 163, 184, 0.85);
                 }
 
-                input[type="text"],
-                input[type="password"] {
-                        width: 100%;
-                        padding: 10px 12px;
-                        border-radius: 10px;
-                        border: 1px solid var(--border);
-                        background: rgba(7, 11, 19, 0.85);
-                        color: var(--text);
-                        outline: none;
-                        transition: border-color 0.2s ease, box-shadow 0.2s ease;
-                        margin-bottom: 16px;
+                .admin-actions {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 12px;
+                        margin-top: 8px;
                 }
-
-                input:focus {
-                        border-color: rgba(59, 130, 246, 0.85);
-                        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
-                }
-
-                button {
-                        width: 100%;
-                        padding: 12px 14px;
-                        border: none;
-                        border-radius: 10px;
-                        background: linear-gradient(135deg, rgba(59,130,246,0.95), rgba(129,140,248,0.95));
-                        color: #f8fbff;
-                        font-weight: 600;
-                        letter-spacing: 0.4px;
-                        cursor: pointer;
-                        transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.2s ease;
-                }
-
-                button:disabled {
-                        cursor: wait;
-                        opacity: 0.65;
-                        box-shadow: none;
-                }
-
-                button:not(:disabled):hover {
-                        transform: translateY(-1px);
-                        box-shadow: 0 10px 28px rgba(59, 130, 246, 0.35);
-                }
-
-                .secondary {
-                        margin-top: 12px;
-                        background: rgba(16, 23, 38, 0.75);
-                        border: 1px solid rgba(59, 130, 246, 0.35);
-                        color: var(--text);
-                }
-
-                .message {
-                        margin-top: 18px;
-                        min-height: 24px;
-                        font-size: 13px;
-                }
-
-                .message.error { color: var(--danger); }
-                .message.success { color: var(--success); }
 
                 .fine-print {
                         margin-top: 24px;
-                        color: rgba(147, 167, 195, 0.75);
-                        font-size: 11px;
                         text-align: center;
                 }
         </style>
 </head>
-<body>
-        <div class="card">
-                <h1>Admin Portal</h1>
-                <p class="subtitle">Sign in to manage Neo Cortex AI configuration and monitor activity.</p>
-                <form id="loginForm">
-                        <label for="username">Username</label>
-                        <input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required />
-                        <label for="password">Password</label>
-                        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
-                        <label for="adminKey" class="admin-key-label">Admin Private Key <span>(required for account creation)</span></label>
-                        <input id="adminKey" name="adminKey" type="password" autocomplete="off" placeholder="Enter admin key" />
-                        <button type="submit" id="loginBtn">Sign In</button>
-                </form>
-                <button type="button" class="secondary" id="registerBtn">Create Admin Account</button>
-                <div id="message" class="message"></div>
-                <div class="fine-print">Passwords are hashed with PBKDF2-SHA512 and never stored in plain text.</div>
-        </div>
+<body class="nc-centered">
+        <main class="nc-card admin-screen">
+                <div class="nc-stack">
+                        <header>
+                                <h1>Admin Portal</h1>
+                                <p class="admin-subtitle nc-text-muted">Sign in to manage Neo Cortex AI configuration and monitor activity.</p>
+                        </header>
+                        <form id="loginForm" class="nc-stack">
+                                <div>
+                                        <label for="username">Username</label>
+                                        <input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required />
+                                </div>
+                                <div>
+                                        <label for="password">Password</label>
+                                        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+                                </div>
+                                <div>
+                                        <label for="adminKey">Admin Private Key <span class="admin-key-hint">Required for account creation</span></label>
+                                        <input id="adminKey" name="adminKey" type="password" autocomplete="off" placeholder="Enter admin key" />
+                                </div>
+                                <button type="submit" id="loginBtn" class="nc-btn nc-btn-block">Sign In</button>
+                        </form>
+                        <div class="admin-actions">
+                                <button type="button" class="nc-btn nc-btn-secondary nc-btn-block" id="registerBtn">Create Admin Account</button>
+                                <div id="message" class="nc-message"></div>
+                        </div>
+                        <p class="fine-print nc-text-muted nc-text-small">Passwords are hashed with PBKDF2-SHA512 and never stored in plain text.</p>
+                </div>
+        </main>
 
         <script>
                 const TOKEN_KEY = 'nc_token';
@@ -191,7 +104,7 @@
 
                 function setMessage(text, type) {
                         messageEl.textContent = text || '';
-                        messageEl.className = 'message' + (type ? ' ' + type : '');
+                        messageEl.className = 'nc-message' + (type ? ' ' + type : '');
                 }
 
                 async function sendAuth(path, body) {

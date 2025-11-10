@@ -4,443 +4,388 @@
 	<meta charset="utf-8" />
 	<title>Neo Cortex AI Dashboard</title>
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<style>
-		:root {
-			--bg: #0b0f14;
-			--panel: #121821;
-			--border: #1c2733;
-			--muted: #9fb8d6;
-			--text: #e8eef6;
-			--ink: #cfe2ff;
-			--link: #84a9ff;
-			--accent: #2a3b52;
-			--chip: #1d2a3a;
-			--ok: #34c759;
-			--warn: #ff9f0a;
-			--bad: #ff453a;
-		}
+        <link rel="stylesheet" href="assets/neocortex-theme.css" />
+        <style>
+                body {
+                        margin: 0;
+                }
 
-		* {
-			box-sizing: border-box
-		}
+                .dashboard-page {
+                        display: flex;
+                        flex-direction: column;
+                        gap: clamp(24px, 5vw, 32px);
+                }
 
-		body {
-			margin: 0;
-			padding: 20px;
-			background: var(--bg);
-			color: var(--text);
-			font: 14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif
-		}
+                .dashboard-topbar h1 {
+                        margin: 0;
+                        font-size: clamp(1.4rem, 2.6vw, 1.8rem);
+                        letter-spacing: 0.3px;
+                }
 
-		a {
-			color: var(--link);
-			text-decoration: none
-		}
+                .dashboard-topbar .nc-pill {
+                        font-size: 0.75rem;
+                        background: rgba(14, 165, 233, 0.22);
+                }
 
-		h1 {
-			margin: 0 0 10px;
-			font-weight: 700;
-			letter-spacing: .3px
-		}
+                .dashboard-topbar .nc-text-muted {
+                        font-size: 0.85rem;
+                }
 
-		h2 {
-			margin: 0 0 12px;
-			font-size: 18px;
-			color: #b9cee3
-		}
+                .dashboard-row {
+                        display: flex;
+                        flex-wrap: wrap;
+                        gap: clamp(16px, 3vw, 24px);
+                }
 
-		.row {
-			display: flex;
-			gap: 20px;
-			flex-wrap: wrap
-		}
+                .dashboard-card {
+                        flex: 1 1 320px;
+                        padding: clamp(20px, 4vw, 28px);
+                }
 
-		.card {
-			background: var(--panel);
-			border: 1px solid var(--border);
-			border-radius: 12px;
-			padding: 16px;
-			box-shadow: 0 4px 14px rgba(0,0,0,.25)
-		}
+                .dashboard-card-flex {
+                        flex: 1 1 680px;
+                }
 
-			.card.flex {
-				flex: 1 1 680px
-			}
+                .dashboard-grid {
+                        gap: 16px;
+                }
 
-		.grid {
-			display: grid;
-			grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
-			gap: 12px
-		}
+                .dashboard-inline,
+                .dashboard-actions {
+                        display: flex;
+                        align-items: center;
+                        gap: 12px;
+                        flex-wrap: wrap;
+                }
 
-		label {
-			display: block;
-			font-size: 12px;
-			color: var(--muted);
-			margin-bottom: 4px
-		}
+                .dashboard-actions {
+                        margin-top: 12px;
+                }
 
-		input, select, textarea {
-			width: 100%;
-			padding: 8px 10px;
-			border-radius: 8px;
-			border: 1px solid #223043;
-			background: var(--bg);
-			color: var(--text)
-		}
+                .dashboard-note {
+                        margin-top: 8px;
+                }
 
-		textarea {
-			resize: vertical
-		}
+                .dashboard-media {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                        gap: clamp(12px, 3vw, 20px);
+                }
 
-		.btn {
-			padding: 10px 14px;
-			border-radius: 8px;
-			border: 1px solid var(--accent);
-			background: var(--chip);
-			color: var(--ink);
-			cursor: pointer
-		}
+                .dashboard-media img {
+                        width: 100%;
+                        border-radius: 16px;
+                        border: 1px solid rgba(56, 189, 248, 0.25);
+                        background: rgba(15, 23, 42, 0.6);
+                }
 
-			.btn:disabled {
-				opacity: .5;
-				cursor: not-allowed
-			}
+                .dashboard-split {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+                        gap: clamp(16px, 3vw, 24px);
+                }
 
-		.small {
-			font-size: 12px
-		}
+                .dashboard-canvas {
+                        width: 100%;
+                        display: block;
+                        background: rgba(8, 13, 22, 0.85);
+                        border: 1px solid rgba(56, 189, 248, 0.22);
+                        border-radius: 16px;
+                }
 
-		.muted {
-			color: #7f96b2
-		}
+                .dashboard-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                }
 
-		.pill {
-			display: inline-flex;
-			gap: 8px;
-			align-items: center;
-			padding: 4px 10px;
-			border-radius: 999px;
-			background: var(--chip);
-			border: 1px solid var(--accent);
-			color: #c8d9ee;
-			font-size: 12px
-		}
+                .dashboard-table th,
+                .dashboard-table td {
+                        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+                        padding: 8px 10px;
+                        text-align: left;
+                }
 
-		.inline {
-			display: flex;
-			gap: 10px;
-			align-items: center;
-			flex-wrap: wrap
-		}
+                .dashboard-pre-small {
+                        max-height: 180px;
+                }
 
-		pre {
-			white-space: pre-wrap;
-			max-height: 260px;
-			overflow: auto;
-			background: var(--bg);
-			padding: 10px;
-			border-radius: 8px;
-			border: 1px solid #1f2a3a;
-			margin: 0
-		}
+                .dashboard-check label {
+                        text-transform: none;
+                        letter-spacing: 0.15px;
+                        font-size: 0.85rem;
+                }
 
-		.mono {
-			font-family: ui-monospace,SFMono-Regular,Consolas,monospace
-		}
+                .dashboard-card h2 {
+                        margin-top: 0;
+                        margin-bottom: 16px;
+                }
 
-		table {
-			width: 100%;
-			border-collapse: collapse
-		}
+                .kvs {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                        gap: 16px;
+                }
 
-		td, th {
-			border-bottom: 1px solid #1f2a3a;
-			padding: 6px 8px
-		}
+                .kv {
+                        padding: 12px 14px;
+                        border-radius: 16px;
+                        border: 1px solid rgba(56, 189, 248, 0.22);
+                        background: rgba(15, 23, 42, 0.72);
+                }
 
-		thead td, thead th {
-			color: var(--muted);
-			font-size: 12px
-		}
+                .kv .k {
+                        color: var(--text-muted);
+                        font-size: 0.8rem;
+                        letter-spacing: 0.25px;
+                        text-transform: uppercase;
+                        margin-bottom: 4px;
+                }
 
-		img.tile {
-			max-width: 100%;
-			border-radius: 8px;
-			border: 1px solid #1f2a3a;
-			background: var(--bg)
-		}
+                .kv .v {
+                        font-weight: 600;
+                        font-size: 1rem;
+                }
 
-		canvas {
-			display: block;
-			max-width: 100%
-		}
+                .mono {
+                        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+                }
 
-		.topbar {
-			display: flex;
-			gap: 10px;
-			align-items: center;
-			justify-content: space-between;
-			margin-bottom: 12px
-		}
+                .small {
+                        font-size: 0.8rem;
+                }
 
-		.kvs {
-			display: grid;
-			grid-template-columns: repeat(auto-fit,minmax(160px,1fr));
-			gap: 12px
-		}
+                .ok {
+                        color: var(--success);
+                }
 
-		.kv {
-			padding: 10px;
-			border: 1px solid var(--border);
-			border-radius: 8px;
-			background: #0f141c
-		}
+                .warn {
+                        color: var(--warning);
+                }
 
-			.kv .k {
-				color: var(--muted);
-				font-size: 12px
-			}
+                .danger {
+                        color: var(--danger);
+                }
 
-			.kv .v {
-				font-weight: 600
-			}
-
-		.danger {
-			color: var(--bad)
-		}
-
-		.warn {
-			color: var(--warn)
-		}
-
-		.ok {
-			color: var(--ok)
-		}
-
-		.two {
-			display: grid;
-			grid-template-columns: 1fr 1fr;
-			gap: 20px
-		}
-
-		@media (max-width: 1100px) {
-			.two {
-				grid-template-columns: 1fr
-			}
-		}
-	</style>
+                @media (max-width: 700px) {
+                        .dashboard-topbar {
+                                flex-direction: column;
+                                align-items: flex-start;
+                                gap: 18px;
+                        }
+                }
+        </style>
 </head>
 <body>
 
-        <div class="topbar">
-                <div class="inline">
-                        <h1 style="margin:0">Neo Cortex AI</h1>
-                        <span id="gpu-pill" class="pill small">GPU: <em class="muted">loading…</em></span>
-                        <span id="run-pill" class="pill small">Run: <span class="muted">-</span></span>
+        <main class="nc-page dashboard-page">
+                <div class="nc-topbar dashboard-topbar">
+                        <div class="nc-inline">
+                                <h1>Neo Cortex AI</h1>
+                                <span id="gpu-pill" class="nc-pill nc-text-small">GPU: <em class="nc-text-muted">loading…</em></span>
+                                <span id="run-pill" class="nc-pill nc-text-small">Run: <span class="nc-text-muted">-</span></span>
+                        </div>
+                        <div class="nc-inline nc-text-small dashboard-inline">
+                                <span id="userBadge" class="nc-pill nc-text-small">Signed out</span>
+                                <span class="nc-text-muted">•</span>
+                                <a href="#" id="logoutBtn">Log out</a>
+                                <span class="nc-text-muted">•</span>
+                                <a href="/preflight" target="_blank">Preflight JSON</a>
+                                <span class="nc-text-muted">•</span>
+                                <a href="#" id="refreshBtn">Refresh</a>
+                        </div>
                 </div>
-                <div class="inline small">
-                        <span id="userBadge" class="pill small">Signed out</span>
-                        <span class="muted">•</span>
-                        <a href="#" id="logoutBtn">Log out</a>
-                        <span class="muted">•</span>
-                        <a href="/preflight" target="_blank">Preflight JSON</a>
-                        <span class="muted">•</span>
-                        <a href="#" id="refreshBtn">Refresh</a>
-                </div>
-        </div>
 
-	<div class="row">
-		<div class="card flex">
-			<h2>Train Model</h2>
-			<div class="grid">
-				<div><label>Ticker</label><input id="ticker" value="SPY" placeholder="e.g., SPY, AAPL, BTC-USD" /></div>
-				<div>
-					<label>Interval</label>
-					<select id="interval">
-						<option>1m</option>
-						<option>2m</option>
-						<option>5m</option>
-						<option>15m</option>
-						<option selected>1h</option>
-						<option>1d</option>
-					</select>
-				</div>
-				<div>
-					<label>Mode</label>
-					<select id="mode"><option selected>HFT</option><option>LFT</option></select>
-				</div>
-				<div>
-					<label>Pine Mode</label>
-					<select id="pine_mode"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
-				</div>
-				<div>
-					<label>Aggressiveness</label>
-					<select id="aggr"><option>chill</option><option selected>normal</option><option>spicy</option><option>insane</option></select>
-				</div>
-				<div>
-					<label>Sides</label>
-					<select id="sides"><option>LONG</option><option>SHORT</option><option selected>BOTH</option></select>
-				</div>
-				<div><label>Max Iter</label><input id="max_iter" type="number" value="300" min="50" step="50" /></div>
-				<div>
-					<label>Data Source</label>
-					<select id="source"><option value="yfinance">yfinance</option><option value="ingest">ingest</option><option value="both" selected>both</option></select>
-				</div>
-				<div class="inline"><input id="merge_sources" type="checkbox" checked /><label for="merge_sources">Merge Sources (prefer latest)</label></div>
-				<div class="inline"><input id="use_fa" type="checkbox" checked /><label for="use_fa">Use Fundamentals (from /ingest/fundamentals)</label></div>
+                <section class="dashboard-row dashboard-media">
+                        <article class="nc-card dashboard-card dashboard-card-flex">
+                                <h2>Train Model</h2>
+                                <div class="nc-grid nc-grid-auto dashboard-grid">
+                                        <div><label for="ticker">Ticker</label><input id="ticker" value="SPY" placeholder="e.g., SPY, AAPL, BTC-USD" /></div>
+                                        <div>
+                                                <label for="interval">Interval</label>
+                                                <select id="interval">
+                                                        <option>1m</option>
+                                                        <option>2m</option>
+                                                        <option>5m</option>
+                                                        <option>15m</option>
+                                                        <option selected>1h</option>
+                                                        <option>1d</option>
+                                                </select>
+                                        </div>
+                                        <div>
+                                                <label for="mode">Mode</label>
+                                                <select id="mode"><option selected>HFT</option><option>LFT</option></select>
+                                        </div>
+                                        <div>
+                                                <label for="pine_mode">Pine Mode</label>
+                                                <select id="pine_mode"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
+                                        </div>
+                                        <div>
+                                                <label for="aggr">Aggressiveness</label>
+                                                <select id="aggr"><option>chill</option><option selected>normal</option><option>spicy</option><option>insane</option></select>
+                                        </div>
+                                        <div>
+                                                <label for="sides">Sides</label>
+                                                <select id="sides"><option>LONG</option><option>SHORT</option><option selected>BOTH</option></select>
+                                        </div>
+                                        <div><label for="max_iter">Max Iter</label><input id="max_iter" type="number" value="300" min="50" step="50" /></div>
+                                        <div>
+                                                <label for="source">Data Source</label>
+                                                <select id="source"><option value="yfinance">yfinance</option><option value="ingest">ingest</option><option value="both" selected>both</option></select>
+                                        </div>
+                                        <div class="nc-inline dashboard-check"><input id="merge_sources" type="checkbox" checked /><label for="merge_sources">Merge Sources (prefer latest)</label></div>
+                                        <div class="nc-inline dashboard-check"><input id="use_fa" type="checkbox" checked /><label for="use_fa">Use Fundamentals (from /ingest/fundamentals)</label></div>
 
-				<div>
-					<label>Range Mode</label>
-					<select id="rangeMode"><option value="period" selected>Period</option><option value="dates">Start/End</option></select>
-				</div>
-				<div id="periodWrap">
-					<label>Period</label>
-					<select id="period"><option>1mo</option><option>3mo</option><option selected>6mo</option><option>1y</option><option>2y</option><option>5y</option></select>
-				</div>
-				<div id="startWrap" style="display:none"><label>Start</label><input id="start" placeholder="YYYY-MM-DD" /></div>
-				<div id="endWrap" style="display:none"><label>End</label><input id="end" placeholder="YYYY-MM-DD" /></div>
+                                        <div>
+                                                <label for="rangeMode">Range Mode</label>
+                                                <select id="rangeMode"><option value="period" selected>Period</option><option value="dates">Start/End</option></select>
+                                        </div>
+                                        <div id="periodWrap">
+                                                <label for="period">Period</label>
+                                                <select id="period"><option>1mo</option><option>3mo</option><option selected>6mo</option><option>1y</option><option>2y</option><option>5y</option></select>
+                                        </div>
+                                        <div id="startWrap" style="display:none"><label for="start">Start</label><input id="start" placeholder="YYYY-MM-DD" /></div>
+                                        <div id="endWrap" style="display:none"><label for="end">End</label><input id="end" placeholder="YYYY-MM-DD" /></div>
 
-				<div><label>Entry Thr (opt)</label><input id="entry_thr" placeholder="auto" /></div>
-				<div><label>|Z| Thr (opt)</label><input id="z_thr" placeholder="auto" /></div>
-				<div><label>Vol k (opt)</label><input id="vol_k" placeholder="auto" /></div>
-			</div>
-			<div class="inline" style="margin-top:12px">
-				<button class="btn" id="trainBtn">Start Training</button>
-				<span class="muted small" id="trainHint">Streams log below</span>
-			</div>
-			<div id="trainResult" class="small muted" style="margin-top:8px"></div>
-		</div>
+                                        <div><label for="entry_thr">Entry Thr (opt)</label><input id="entry_thr" placeholder="auto" /></div>
+                                        <div><label for="z_thr">|Z| Thr (opt)</label><input id="z_thr" placeholder="auto" /></div>
+                                        <div><label for="vol_k">Vol k (opt)</label><input id="vol_k" placeholder="auto" /></div>
+                                </div>
+                                <div class="dashboard-actions">
+                                        <button class="nc-btn" id="trainBtn">Start Training</button>
+                                        <span class="nc-text-muted nc-text-small" id="trainHint">Streams log below</span>
+                                </div>
+                                <div id="trainResult" class="nc-text-muted nc-text-small dashboard-note"></div>
+                        </article>
 
-		<div class="card">
-			<h2>Latest Metrics</h2>
-			<div class="inline" style="margin-bottom:8px">
-				<label>View Side</label>
-				<select id="sideSelect"><option value="long" selected>LONG</option><option value="short">SHORT</option></select>
-			</div>
-			<div id="metrics" class="kvs"></div>
-			<div class="small muted" id="updated">updated: -</div>
-			<div class="small muted" id="ingest">webhooks: -</div>
-		</div>
-	</div>
+                        <article class="nc-card dashboard-card">
+                                <h2>Latest Metrics</h2>
+                                <div class="nc-inline dashboard-inline">
+                                        <label for="sideSelect">View Side</label>
+                                        <select id="sideSelect"><option value="long" selected>LONG</option><option value="short">SHORT</option></select>
+                                </div>
+                                <div id="metrics" class="kvs"></div>
+                                <div class="nc-text-muted nc-text-small" id="updated">updated: -</div>
+                                <div class="nc-text-muted nc-text-small" id="ingest">webhooks: -</div>
+                        </article>
+                </section>
 
-	<div class="row">
-		<div class="card">
-			<h2>Price Preview</h2>
-			<img id="img_price" class="tile" src="" alt="Price Preview" onerror="this.style.display='none'" />
-		</div>
-		<div class="card">
-			<h2>Confusion Matrix</h2>
-			<img id="img_cm" class="tile" src="" alt="Confusion Matrix" onerror="this.style.display='none'" />
-		</div>
-		<div class="card">
-			<h2>ROC Curve</h2>
-			<img id="img_roc" class="tile" src="" alt="ROC" onerror="this.style.display='none'" />
-		</div>
-		<div class="card">
-			<h2>Feature Importance</h2>
-			<img id="img_feat" class="tile" src="" alt="Feature Importance" onerror="this.style.display='none'" />
-		</div>
-	</div>
+                <section class="dashboard-row">
+                        <article class="nc-card dashboard-card">
+                                <h2>Price Preview</h2>
+                                <img id="img_price" src="" alt="Price Preview" onerror="this.style.display='none'" />
+                        </article>
+                        <article class="nc-card dashboard-card">
+                                <h2>Confusion Matrix</h2>
+                                <img id="img_cm" src="" alt="Confusion Matrix" onerror="this.style.display='none'" />
+                        </article>
+                        <article class="nc-card dashboard-card">
+                                <h2>ROC Curve</h2>
+                                <img id="img_roc" src="" alt="ROC" onerror="this.style.display='none'" />
+                        </article>
+                        <article class="nc-card dashboard-card">
+                                <h2>Feature Importance</h2>
+                                <img id="img_feat" src="" alt="Feature Importance" onerror="this.style.display='none'" />
+                        </article>
+                </section>
 
-	<div class="two" style="margin-top:20px">
-		<div class="card">
-			<h2>Live P&L (Pred)</h2>
-			<canvas id="equityCanvas" width="800" height="210" style="background:#0b0f14;border:1px solid #1f2a3a;border-radius:8px"></canvas>
-			<div class="small muted">Streaming from <code class="mono">/stream/training</code></div>
-			<div id="pnlStats" class="small">-</div>
-			<h2 style="margin-top:16px">Trades (Live)</h2>
-			<table class="mono small" id="tradesTable">
-				<thead><tr><th>Time</th><th>Side</th><th>Price</th><th>PnL</th><th>Reason</th></tr></thead>
-				<tbody></tbody>
-			</table>
-		</div>
-		<div class="card">
-			<h2>Neural Net (Live)</h2>
-			<canvas id="nnCanvas" width="640" height="320" style="background:#0b0f14;border:1px solid #1f2a3a;border-radius:8px"></canvas>
-			<div class="small muted">Graph: <code class="mono">/nn/graph</code> • Stats: <code class="mono">/stream/nn</code></div>
-			<pre id="nnStats" class="mono small" style="max-height:140px;margin-top:8px"></pre>
-			<div class="inline small" style="margin-top:8px">
-				<button class="btn" id="reloadNNBtn">Reload Graph</button>
-			</div>
-		</div>
-	</div>
+                <section class="dashboard-split">
+                        <article class="nc-card dashboard-card">
+                                <h2>Live P&amp;L (Pred)</h2>
+                                <canvas id="equityCanvas" class="dashboard-canvas" width="800" height="210"></canvas>
+                                <div class="nc-text-muted nc-text-small">Streaming from <code class="mono">/stream/training</code></div>
+                                <div id="pnlStats" class="nc-text-small">-</div>
+                                <h2>Trades (Live)</h2>
+                                <table class="dashboard-table nc-text-small" id="tradesTable">
+                                        <thead><tr><th>Time</th><th>Side</th><th>Price</th><th>PnL</th><th>Reason</th></tr></thead>
+                                        <tbody></tbody>
+                                </table>
+                        </article>
+                        <article class="nc-card dashboard-card">
+                                <h2>Neural Net (Live)</h2>
+                                <canvas id="nnCanvas" class="dashboard-canvas" width="640" height="320"></canvas>
+                                <div class="nc-text-muted nc-text-small">Graph: <code class="mono">/nn/graph</code> • Stats: <code class="mono">/stream/nn</code></div>
+                                <pre id="nnStats" class="dashboard-pre-small nc-text-small mono"></pre>
+                                <div class="dashboard-actions nc-text-small">
+                                        <button class="nc-btn nc-btn-secondary" id="reloadNNBtn">Reload Graph</button>
+                                </div>
+                        </article>
+                </section>
 
-	<div class="row" style="margin-top:20px">
-		<div class="card flex">
-			<h2>Idle / Parallel Trainer</h2>
-			<div class="grid">
-				<div><label>Idle Name</label><input id="idle_name" value="nightly" /></div>
-				<div><label>Every (sec)</label><input id="idle_every" value="3600" /></div>
-				<div><label>Period</label><input id="idle_period" value="6mo" /></div>
-				<div>
-					<label>Interval</label>
-					<select id="idle_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
-				</div>
-				<div>
-					<label>Tickers JSON</label>
-					<textarea id="idle_tickers" rows="3">["AAPL","MSFT","SPY"]</textarea>
-				</div>
-				<div>
-					<label>Pine Mode</label>
-					<select id="idle_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
-				</div>
-				<div>
-					<label>Mode</label>
-					<select id="idle_mode"><option selected>HFT</option><option>LFT</option></select>
-				</div>
-				<div>
-					<label>Source</label>
-					<select id="idle_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
-				</div>
-				<div class="inline"><input id="idle_merge" type="checkbox" checked /><label for="idle_merge">Merge Sources</label></div>
-				<div class="inline"><input id="idle_fa" type="checkbox" checked /><label for="idle_fa">Use Fundamentals</label></div>
-			</div>
-			<div class="inline" style="margin-top:12px">
-				<button class="btn" id="idleStartBtn">Start Idle</button>
-				<button class="btn" id="idleStopBtn">Stop Idle</button>
-				<button class="btn" id="idleStatusBtn">Status</button>
-				<span id="idleStatus" class="muted small">-</span>
-			</div>
-		</div>
+                <section class="dashboard-row">
+                        <article class="nc-card dashboard-card dashboard-card-flex">
+                                <h2>Idle / Parallel Trainer</h2>
+                                <div class="nc-grid nc-grid-auto dashboard-grid">
+                                        <div><label for="idle_name">Idle Name</label><input id="idle_name" value="nightly" /></div>
+                                        <div><label for="idle_every">Every (sec)</label><input id="idle_every" value="3600" /></div>
+                                        <div><label for="idle_period">Period</label><input id="idle_period" value="6mo" /></div>
+                                        <div>
+                                                <label for="idle_interval">Interval</label>
+                                                <select id="idle_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
+                                        </div>
+                                        <div>
+                                                <label for="idle_tickers">Tickers JSON</label>
+                                                <textarea id="idle_tickers" rows="3">["AAPL","MSFT","SPY"]</textarea>
+                                        </div>
+                                        <div>
+                                                <label for="idle_pine">Pine Mode</label>
+                                                <select id="idle_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
+                                        </div>
+                                        <div>
+                                                <label for="idle_mode">Mode</label>
+                                                <select id="idle_mode"><option selected>HFT</option><option>LFT</option></select>
+                                        </div>
+                                        <div>
+                                                <label for="idle_source">Source</label>
+                                                <select id="idle_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
+                                        </div>
+                                        <div class="nc-inline dashboard-check"><input id="idle_merge" type="checkbox" checked /><label for="idle_merge">Merge Sources</label></div>
+                                        <div class="nc-inline dashboard-check"><input id="idle_fa" type="checkbox" checked /><label for="idle_fa">Use Fundamentals</label></div>
+                                </div>
+                                <div class="dashboard-actions">
+                                        <button class="nc-btn" id="idleStartBtn">Start Idle</button>
+                                        <button class="nc-btn nc-btn-secondary" id="idleStopBtn">Stop Idle</button>
+                                        <button class="nc-btn nc-btn-secondary" id="idleStatusBtn">Status</button>
+                                        <span id="idleStatus" class="nc-text-muted nc-text-small">-</span>
+                                </div>
+                        </article>
 
-		<div class="card">
-			<h2>Multi / Parallel Train (once)</h2>
-			<div class="grid">
-				<div><label>Tickers JSON</label><textarea id="multi_tickers" rows="4">["AAPL","MSFT","SPY"]</textarea></div>
-				<div>
-					<label>Interval</label>
-					<select id="multi_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
-				</div>
-				<div><label>Period</label><input id="multi_period" value="6mo" /></div>
-				<div><label>Max Iter</label><input id="multi_max" type="number" value="250" /></div>
-				<div>
-					<label>Pine Mode</label>
-					<select id="multi_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
-				</div>
-				<div>
-					<label>Source</label>
-					<select id="multi_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
-				</div>
-				<div class="inline"><input id="multi_merge" type="checkbox" checked /><label for="multi_merge">Merge Sources</label></div>
-				<div class="inline"><input id="multi_fa" type="checkbox" checked /><label for="multi_fa">Use Fundamentals</label></div>
-			</div>
-			<div class="inline" style="margin-top:12px">
-				<button class="btn" id="multiBtn">Run Multi-Train</button>
-			</div>
-			<pre id="multiOut" class="mono small" style="margin-top:8px;max-height:160px"></pre>
-		</div>
-	</div>
+                        <article class="nc-card dashboard-card">
+                                <h2>Multi / Parallel Train (once)</h2>
+                                <div class="nc-grid nc-grid-auto dashboard-grid">
+                                        <div><label for="multi_tickers">Tickers JSON</label><textarea id="multi_tickers" rows="4">["AAPL","MSFT","SPY"]</textarea></div>
+                                        <div>
+                                                <label for="multi_interval">Interval</label>
+                                                <select id="multi_interval"><option>1m</option><option>2m</option><option>5m</option><option>15m</option><option selected>1h</option><option>1d</option></select>
+                                        </div>
+                                        <div><label for="multi_period">Period</label><input id="multi_period" value="6mo" /></div>
+                                        <div><label for="multi_max">Max Iter</label><input id="multi_max" type="number" value="250" /></div>
+                                        <div>
+                                                <label for="multi_pine">Pine Mode</label>
+                                                <select id="multi_pine"><option>OFF</option><option>SCALPER</option><option>ULTRA</option><option>SWING</option></select>
+                                        </div>
+                                        <div>
+                                                <label for="multi_source">Source</label>
+                                                <select id="multi_source"><option>yfinance</option><option>ingest</option><option selected>both</option></select>
+                                        </div>
+                                        <div class="nc-inline dashboard-check"><input id="multi_merge" type="checkbox" checked /><label for="multi_merge">Merge Sources</label></div>
+                                        <div class="nc-inline dashboard-check"><input id="multi_fa" type="checkbox" checked /><label for="multi_fa">Use Fundamentals</label></div>
+                                </div>
+                                <div class="dashboard-actions">
+                                        <button class="nc-btn" id="multiBtn">Run Multi-Train</button>
+                                </div>
+                                <pre id="multiOut" class="dashboard-pre-small nc-text-small mono"></pre>
+                        </article>
+                </section>
 
-	<div class="row" style="margin-top:20px">
-		<div class="card flex">
-			<h2>Live Training Log</h2>
-			<pre id="log" class="mono"></pre>
-			<div class="small muted">SSE: <code class="mono">/stream/training</code></div>
-		</div>
-	</div>
-
-        <script>
+                <section class="dashboard-row">
+                        <article class="nc-card dashboard-card dashboard-card-flex">
+                                <h2>Live Training Log</h2>
+                                <pre id="log" class="mono"></pre>
+                                <div class="nc-text-muted nc-text-small">SSE: <code class="mono">/stream/training</code></div>
+                        </article>
+                </section>
+        </main>
+<script
                 const $ = (id) => document.getElementById(id);
                 const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
                 const TOKEN_KEY = 'nc_token';
@@ -577,7 +522,7 @@
 
 				refreshArtifacts();
 			} catch (e) {
-				$('metrics').innerHTML = '<div class="muted small">No metrics yet or error: ' + (e.message || e) + '</div>';
+                            $('metrics').innerHTML = '<div class="nc-text-muted nc-text-small">No metrics yet or error: ' + (e.message || e) + '</div>';
 			}
 		}
 		$('refreshBtn').addEventListener('click', (e) => { e.preventDefault(); fetchMetrics(); loadGPU(); });
