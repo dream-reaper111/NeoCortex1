@@ -26,6 +26,39 @@ display account positions and unrealized P&L from Alpaca Markets.
 - `public/liquidity/` – Mobile and desktop friendly Liquidity Sweep Radar UI
   that consumes the `/strategy/liquidity-sweeps` API.
 
+## Platform Highlights
+
+- **py-Trading API Enhancements** – Mirror trades between multiple linked
+  accounts with adjustable size factors so risk can be tuned per follower.
+- **Strategy Leaderboards** – Rank strategies by configurable metrics such as
+  Sharpe ratio or profit factor to spotlight top performers for users.
+- **Multi-User Dashboard** – Segregate data per user with OAuth2-protected
+  access controls across the entire analytics suite.
+
+## Developer Utilities
+
+- **Strategy Backtester API** – Accepts JSON definitions, transforms them into
+  Pandas data structures, and returns structured results for rapid iteration.
+- **Indicator Sandbox** – Compile Pine scripts into Python with `ta-lib`
+  bindings, enabling custom indicator experimentation inside the platform.
+- **Live Code Reloader** – Hot-swap strategies at runtime without restarting
+  the FastAPI server, drastically reducing deployment downtime.
+- **API Versioning & Docs** – Leverages FastAPI's interactive `/docs` explorer
+  so developers can quickly validate request/response schemas.
+
+## Suggested Next Builds
+
+1. **AI Portfolio Dashboard** – Deliver full analytics, attribution, and visual
+   insights across portfolios.
+2. **Broker Aggregator** – Manage and rebalance multiple brokerage accounts
+   from a unified control panel.
+3. **Model Lab** – Train, test, and export machine learning models directly
+   within NeoCortex.
+4. **Security Core v2** – Expand vault storage, auditing, and self-healing
+   watchdog capabilities.
+5. **Data Reactor** – Integrate sentiment and macroeconomic data feeds to
+   enrich strategy inputs and signals.
+
 ## Installation
 
 1. **Clone or extract** the repository and open it in Visual Studio or your
