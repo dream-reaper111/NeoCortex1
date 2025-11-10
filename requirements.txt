@@ -11,7 +11,7 @@ psutil
 psutil>=5.9
 pydantic
 pyngrok
-pyngrok>=7.1
+pyngrok==7.2.2
 python-dotenv
 python-dotenv>=1.0
 requests==2.32.4
@@ -23,3 +23,5 @@ torch
 uvicorn[standard]
 uvicorn[standard]>=0.30
 yfinance
+
+starlette==0.47.2
