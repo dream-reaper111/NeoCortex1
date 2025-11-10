@@ -140,7 +140,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 import jwt
 from jwt import InvalidTokenError, ExpiredSignatureError
-import pyotp
+try:
+    import pyotp
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    pyotp = None  # type: ignore[assignment]
+
+PYOTP_MISSING_MESSAGE = (
+    "pyotp is required for multi-factor authentication features. Install it with 'pip install pyotp'."
+)
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
@@ -1311,8 +1318,17 @@ def _store_recovery_codes(codes: List[str]) -> str:
     return json.dumps(codes)
 
 
+def _ensure_pyotp() -> Any:
+    if pyotp is None:
+        raise ModuleNotFoundError(PYOTP_MISSING_MESSAGE)
+    return pyotp
+
+
 def _verify_totp_code(secret: Optional[str], code: Optional[str]) -> bool:
     if not secret or not code:
+        return False
+    if pyotp is None:
+        logger.warning("pyotp is not installed; cannot verify TOTP codes")
         return False
     try:
         totp = pyotp.TOTP(secret)
@@ -1322,7 +1338,8 @@ def _verify_totp_code(secret: Optional[str], code: Optional[str]) -> bool:
 
 
 def _totp_provisioning_uri(username: str, secret: str) -> str:
-    totp = pyotp.TOTP(secret)
+    module = _ensure_pyotp()
+    totp = module.TOTP(secret)
     return totp.provisioning_uri(name=username, issuer_name=JWT_ISSUER)
 
 
@@ -2234,10 +2251,8 @@ async def whop_login(req: WhopLoginReq):
 
 @app.post("/register")
 async def register(request: Request):
-    """
-    Create a new user account backed by the SQLite credential store. Passwords are
-    hashed with a 2048-bit PBKDF2-SHA512 digest and salted prior to being persisted.
-    """
+    # Create a new user account backed by the SQLite credential store. Passwords are
+    # hashed with a 2048-bit PBKDF2-SHA512 digest and salted prior to being persisted.
     req = await _auth_req_from_request(request)
     uname = req.username.strip().lower()
     if not uname or not req.password:
@@ -2264,11 +2279,9 @@ async def register(request: Request):
 
 @app.post("/login")
 async def login(request: Request):
-    """
-    Authenticate a user and return a bearer token tied to the SQLite credential store.
-    The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
-    manage user-specific Alpaca credentials.
-    """
+    # Authenticate a user and return a bearer token tied to the SQLite credential store.
+    # The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
+    # manage user-specific Alpaca credentials.
     req = await _auth_req_from_request(request)
     uname = req.username.strip().lower()
     if not uname or not req.password:
@@ -2290,6 +2303,8 @@ async def login(request: Request):
     require_mfa = user["mfa_enabled"] or bool(roles.intersection(MFA_REQUIRED_ROLES))
     if require_mfa:
         if row["totp_secret"]:
+            if pyotp is None:
+                return _json({"ok": False, "detail": PYOTP_MISSING_MESSAGE}, 500)
             otp_ok = _verify_totp_code(row["totp_secret"], req.otp_code)
             recovery_ok = False
             if not otp_ok and req.otp_code:
@@ -2430,7 +2445,11 @@ async def mfa_setup(
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
     user = _require_user(authorization, session_token)
-    secret = pyotp.random_base32()
+    try:
+        module = _ensure_pyotp()
+    except ModuleNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    secret = module.random_base32()
     recovery_codes = _generate_recovery_codes()
     response = MFASetupResponse(
         secret=secret,
@@ -2449,6 +2468,8 @@ async def mfa_enable(
     user = _require_user(authorization, session_token)
     if not req.secret or not req.otp_code:
         raise HTTPException(status_code=400, detail="secret and otp_code are required")
+    if pyotp is None:
+        raise HTTPException(status_code=500, detail=PYOTP_MISSING_MESSAGE)
     if not _verify_totp_code(req.secret, req.otp_code):
         raise HTTPException(status_code=401, detail="otp verification failed")
     recovery_codes = req.recovery_codes or _generate_recovery_codes()
@@ -2475,6 +2496,8 @@ async def mfa_disable(
     verified = False
     if req.recovery_code and _consume_recovery_code(user["id"], req.recovery_code):
         verified = True
+    elif pyotp is None:
+        raise HTTPException(status_code=500, detail=PYOTP_MISSING_MESSAGE)
     elif _verify_totp_code(user.get("totp_secret"), req.otp_code):
         verified = True
     if not verified:
@@ -2488,18 +2511,16 @@ async def list_alpaca_credentials(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
-    """Return the Alpaca credential entries associated with the authenticated user."""
+    # Return the Alpaca credential entries associated with the authenticated user.
     user = _require_user(authorization, session_token, required_scopes={"credentials"})
+    query = (
+        "SELECT account_type, api_key, base_url, updated_at\n"
+        "FROM alpaca_credentials\n"
+        "WHERE user_id = ?\n"
+        "ORDER BY account_type"
+    )
     with _db_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT account_type, api_key, base_url, updated_at
-            FROM alpaca_credentials
-            WHERE user_id = ?
-            ORDER BY account_type
-            """,
-            (user["id"],),
-        ).fetchall()
+        rows = conn.execute(query, (user["id"],)).fetchall()
     credentials = []
     for row in rows:
         try:
@@ -2524,7 +2545,7 @@ async def set_alpaca_credentials(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
-    """Create or update Alpaca API credentials for the authenticated user."""
+    # Create or update Alpaca API credentials for the authenticated user.
     user = _require_user(authorization, session_token, required_scopes={"credentials"})
     acct_type = (req.account_type or "paper").strip().lower()
     if acct_type not in {"paper", "funded"}:
@@ -2550,7 +2571,7 @@ async def get_positions(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
-    """Fetch the current positions for the specified Alpaca account."""
+    # Fetch the current positions for the specified Alpaca account.
 
     acct_type = (account or "paper").lower()
     user = None
@@ -2585,7 +2606,7 @@ async def close_position(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
-    """Close a single Alpaca position for the authenticated user."""
+    # Close a single Alpaca position for the authenticated user.
 
     if not symbol:
         return _json({"ok": False, "detail": "symbol is required"}, 400)
@@ -2649,7 +2670,7 @@ async def get_pnl(
     authorization: Optional[str] = Header(None),
     session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
 ):
-    """Compute unrealized P&L for the authenticated user's Alpaca account."""
+    # Compute unrealized profit and loss for the authenticated user's Alpaca account.
 
     acct_type = (account or "paper").lower()
     user = None
@@ -2742,18 +2763,16 @@ def strategy_liquidity_sweeps(ticker: str, session_date: Optional[str] = None, i
 #
 # NOTE: This handler does not perform any trading actions. It simply returns
 # ``{"ok": true}`` and logs the received JSON. You can extend it to update
-# your own database or notify your front‑end. In this hosted context, any
+# your own database or notify your front-end. In this hosted context, any
 # external HTTP requests (e.g. to Alpaca) are not executed; the code is
 # illustrative only.
 @app.post("/alpaca/webhook")
 async def alpaca_webhook(req: Request):
-    """
-    Receive webhook callbacks from Alpaca. This endpoint accepts any JSON
-    payload and logs it. It returns ``{"ok": True}`` on success. If you set
-    ``ALPACA_WEBHOOK_SECRET`` in your environment, the request's header
-    ``X‑Webhook‑Signature`` will be verified against this secret using HMAC
-    SHA‑256. Mismatched signatures return a 400.
-    """
+    # Receive webhook callbacks from Alpaca. This endpoint accepts any JSON
+    # payload and logs it. It returns ``{"ok": True}`` on success. If you set
+    # ``ALPACA_WEBHOOK_SECRET`` in your environment, the request's header
+    # ``X-Webhook-Signature`` will be verified against this secret using HMAC
+    # SHA-256. Mismatched signatures return a 400.
     body_bytes = await req.body()
     try:
         payload = await req.json()
@@ -2833,7 +2852,7 @@ def alpaca_webhook_test(req: AlpacaWebhookTest):
 
 @app.get("/alpaca/webhook/tests")
 def alpaca_webhook_tests():
-    """Return recently generated Alpaca webhook test artifacts."""
+    # Return recently generated Alpaca webhook test artifacts.
     tests = []
     for file_path in sorted(ALPACA_TEST_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
@@ -2972,15 +2991,13 @@ async def webhook_tv(req: Request):
 # --- webhook: Alpaca broker (disabled) ---
 @app.post("/webhook/alpaca")
 async def webhook_alpaca(req: Request):
-    """
-    Placeholder for a future Alpaca trade execution webhook.
+    # Placeholder for a future Alpaca trade execution webhook.
 
-    Executing high‑stakes financial transactions (such as buying or selling securities)
-    is disabled in this environment. Any POSTed payload will be ignored and an error
-    response returned. To integrate live trading functionality, you would need to
-    use the Alpaca Orders API with appropriate safeguards, and run the code outside
-    of this assistant.
-    """
+    # Executing high-stakes financial transactions (such as buying or selling securities)
+    # is disabled in this environment. Any POSTed payload will be ignored and an error
+    # response returned. To integrate live trading functionality, you would need to
+    # use the Alpaca Orders API with appropriate safeguards, and run the code outside
+    # of this assistant.
     return _json({"ok": False, "detail": "Trade execution via Alpaca is disabled in this environment"}, 403)
 
 # --- ingestion: generic candles (Robinhood/Webull) ---
