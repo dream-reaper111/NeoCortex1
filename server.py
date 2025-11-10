@@ -53,7 +53,7 @@ import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager, suppress
-from typing import Any, Dict, List, Optional, Tuple, Literal, Set, Iterable
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Literal, Set
 from types import SimpleNamespace
 from collections import defaultdict, deque
 
@@ -2950,12 +2950,7 @@ async def log_requests(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    print("[NeoCortex ERROR]", traceback.format_exc())
-    if "text/html" in (request.headers.get("accept", "") or ""):
-        return HTMLResponse(
-            f"<html><body><h2>Internal Server Error</h2><pre>{str(exc)}</pre></body></html>",
-            status_code=500,
-        )
+    print("[NeoCortex Error]", traceback.format_exc())
     return JSONResponse({"error": str(exc)}, status_code=500)
 if FORCE_HTTPS_REDIRECT:
     app.add_middleware(HTTPSRedirectMiddleware)
@@ -3419,7 +3414,10 @@ _AUTH_FIELD_ALIASES: Dict[str, str] = {
 }
 
 
-async def _auth_req_from_request(request: Request) -> AuthReq:
+async def _auth_req_from_request(
+    request: Request,
+    data_override: Optional[Mapping[str, Any]] = None,
+) -> AuthReq:
     '''Parse an AuthReq from JSON or form-encoded payloads.'''
 
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
@@ -3446,14 +3444,21 @@ async def _auth_req_from_request(request: Request) -> AuthReq:
     form_markers = ("multipart/form-data", "application/x-www-form-urlencoded")
     json_markers = ("application/json", "text/json")
 
-    if any(marker in content_type for marker in form_markers):
-        data = await _parse_form(warn=True)
-    elif content_type.endswith("+json") or any(marker in content_type for marker in json_markers):
-        data = await _parse_json(warn=True)
+    if data_override is not None:
+        items = data_override.items() if hasattr(data_override, "items") else data_override
+        if items is not None:
+            for key, value in items:
+                if value is not None:
+                    data[str(key)] = value
     else:
-        data = await _parse_json()
-        if not data:
-            data = await _parse_form()
+        if any(marker in content_type for marker in form_markers):
+            data = await _parse_form(warn=True)
+        elif content_type.endswith("+json") or any(marker in content_type for marker in json_markers):
+            data = await _parse_json(warn=True)
+        else:
+            data = await _parse_json()
+            if not data:
+                data = await _parse_form()
 
     if not data and request.query_params:
         provided = {
@@ -4013,12 +4018,20 @@ def _require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str
 async def login(request: Request):
     """Authenticate a user and issue a bearer token."""
 
-    req = await _auth_req_from_request(request)
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    form_data: Optional[Mapping[str, Any]] = None
+    if content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+        with suppress(Exception):
+            form = await request.form()
+            form_data = dict(form.multi_items()) if hasattr(form, "multi_items") else dict(form.items())
+
+    req = await _auth_req_from_request(request, data_override=form_data)
     next_hint = req.next or request.query_params.get("next")
+    prefer_redirect = bool(form_data) or _wants_html_response(request)
     return _handle_login(
         req,
         request,
-        prefer_redirect=_wants_html_response(request),
+        prefer_redirect=prefer_redirect,
         next_hint=next_hint,
     )
 
@@ -4027,13 +4040,21 @@ async def login(request: Request):
 async def admin_login(request: Request):
     """Admin-specific login endpoint that enforces elevated privileges."""
 
-    req = await _auth_req_from_request(request)
-    next_hint = req.next or request.query_params.get("next")
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    form_data: Optional[Mapping[str, Any]] = None
+    if content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+        with suppress(Exception):
+            form = await request.form()
+            form_data = dict(form.multi_items()) if hasattr(form, "multi_items") else dict(form.items())
+
+    req = await _auth_req_from_request(request, data_override=form_data)
+    next_hint = req.next or request.query_params.get("next") or ("/admin/dashboard" if form_data else None)
+    prefer_redirect = bool(form_data) or _wants_html_response(request)
     return _handle_login(
         req,
         request,
         enforce_admin=True,
-        prefer_redirect=_wants_html_response(request),
+        prefer_redirect=prefer_redirect,
         next_hint=next_hint,
     )
 
