@@ -13,104 +13,464 @@ app_js_path = STATIC_DIR / "app.js"
 if not index_path.exists():
     index_path.write_text("""
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-	<meta charset="utf-8" />
-	<title>PineMimic Trader UI</title>
-	<meta name="viewport" content="width=device-width,initial-scale=1" />
-	<style>
-		body {
-			font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-			margin: 2rem;
-		}
+        <meta charset="utf-8" />
+        <title>PineMimic Control Center</title>
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <style>
+                :root {
+                        color-scheme: dark light;
+                        --bg-gradient: radial-gradient(circle at 10% -10%, rgba(168, 85, 247, 0.18), transparent 55%),
+                                        radial-gradient(circle at 90% 0%, rgba(79, 70, 229, 0.22), transparent 45%),
+                                        linear-gradient(160deg, #040008, #0b021f 55%, #000000 100%);
+                        --panel-bg: linear-gradient(160deg, rgba(17, 24, 39, 0.92), rgba(76, 29, 149, 0.78));
+                        --panel-border: rgba(139, 92, 246, 0.35);
+                        --text-primary: #f8f5ff;
+                        --text-secondary: rgba(214, 214, 255, 0.78);
+                        --accent: #a855f7;
+                        --accent-strong: #7c3aed;
+                        --success: #34d399;
+                        --warn: #facc15;
+                        --error: #fb7185;
+                        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+                }
 
-		.card {
-			border: 1px solid #e5e7eb;
-			border-radius: 12px;
-			padding: 16px;
-			max-width: 960px;
-			box-shadow: 0 2px 10px rgba(0,0,0,0.04);
-		}
+                * {
+                        box-sizing: border-box;
+                }
 
-		h1 {
-			margin: 0 0 1rem 0;
-		}
+                body {
+                        margin: 0;
+                        min-height: 100vh;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        padding: clamp(2rem, 4vw, 3rem);
+                        background: var(--bg-gradient);
+                        color: var(--text-primary);
+                }
 
-		label {
-			display: block;
-			margin: .5rem 0 .25rem;
-			font-weight: 600;
-		}
+                .shell {
+                        width: min(1100px, 100%);
+                        margin: 0 auto;
+                        backdrop-filter: blur(18px);
+                        background: linear-gradient(135deg, rgba(10, 5, 25, 0.88), rgba(46, 16, 101, 0.82));
+                        border: 1px solid rgba(168, 85, 247, 0.32);
+                        border-radius: 28px;
+                        padding: clamp(1.75rem, 3vw, 2.75rem);
+                        box-shadow: 0 24px 60px rgba(15,23,42,0.45);
+                        position: relative;
+                        overflow: hidden;
+                }
 
-		input, select {
-			padding: .5rem;
-			width: 240px;
-		}
+                .shell::before {
+                        content: '';
+                        position: absolute;
+                        inset: -120px;
+                        background: radial-gradient(circle at 20% 15%, rgba(168, 85, 247, 0.22), transparent 55%),
+                                    radial-gradient(circle at 70% 5%, rgba(76, 29, 149, 0.25), transparent 45%),
+                                    radial-gradient(circle at 85% 65%, rgba(17, 24, 39, 0.35), transparent 55%);
+                        filter: blur(40px);
+                        z-index: 0;
+                }
 
-		button {
-			padding: .6rem 1rem;
-			border-radius: 8px;
-			border: 0;
-			background: #3b82f6;
-			color: #fff;
-			cursor: pointer;
-		}
+                .content {
+                        position: relative;
+                        z-index: 1;
+                }
 
-			button:disabled {
-				opacity: .6;
-				cursor: not-allowed;
-			}
+                header {
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        gap: 1rem;
+                        margin-bottom: clamp(1.75rem, 3vw, 2.5rem);
+                }
 
-		pre {
-			background: #0b1020;
-			color: #c9d1d9;
-			padding: 12px;
-			border-radius: 8px;
-			overflow: auto;
-		}
-	</style>
+                .title {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 0.35rem;
+                }
+
+                h1 {
+                        font-size: clamp(1.8rem, 4vw, 2.6rem);
+                        font-weight: 700;
+                        letter-spacing: -0.02em;
+                        margin: 0;
+                        color: #e9d5ff;
+                        text-shadow: 0 8px 24px rgba(79, 70, 229, 0.45);
+                }
+
+                .subtitle {
+                        color: var(--text-secondary);
+                        font-size: 0.98rem;
+                        max-width: 560px;
+                        line-height: 1.5;
+                }
+
+                .status-chip {
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 0.6rem;
+                        padding: 0.55rem 0.95rem;
+                        border-radius: 999px;
+                        font-size: 0.95rem;
+                        font-weight: 600;
+                        letter-spacing: 0.01em;
+                        text-transform: uppercase;
+                        border: 1px solid rgba(148, 87, 235, 0.42);
+                        background: rgba(46, 16, 101, 0.45);
+                        color: rgba(226, 219, 255, 0.86);
+                        transition: background 0.25s ease, color 0.25s ease, border 0.25s ease;
+                }
+
+                .status-chip::before {
+                        content: '';
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 50%;
+                        background: rgba(192, 132, 252, 0.75);
+                        box-shadow: 0 0 0 4px rgba(192, 132, 252, 0.18);
+                        transition: background 0.25s ease, box-shadow 0.25s ease;
+                }
+
+                .status-ok {
+                        border-color: rgba(52, 211, 153, 0.45);
+                        color: var(--success);
+                        background: rgba(46, 204, 113, 0.14);
+                }
+
+                .status-ok::before {
+                        background: var(--success);
+                        box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.16);
+                }
+
+                .status-warn {
+                        border-color: rgba(250, 204, 21, 0.5);
+                        color: #fcd34d;
+                        background: rgba(202, 138, 4, 0.2);
+                }
+
+                .status-warn::before {
+                        background: var(--warn);
+                        box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.16);
+                }
+
+                .status-error {
+                        border-color: rgba(251, 113, 133, 0.52);
+                        color: #fda4af;
+                        background: rgba(190, 18, 60, 0.22);
+                }
+
+                .status-error::before {
+                        background: var(--error);
+                        box-shadow: 0 0 0 4px rgba(251, 113, 133, 0.18);
+                }
+
+                .status-loading {
+                        border-color: rgba(148, 87, 235, 0.55);
+                        color: rgba(214, 201, 255, 0.92);
+                        background: rgba(168, 85, 247, 0.18);
+                }
+
+                .status-loading::before {
+                        background: var(--accent);
+                        box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.22);
+                        animation: pulse 1.6s ease-in-out infinite;
+                }
+
+                .panels {
+                        display: grid;
+                        gap: clamp(1.5rem, 3vw, 2.25rem);
+                        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                }
+
+                .panel {
+                        background: var(--panel-bg);
+                        border: 1px solid var(--panel-border);
+                        border-radius: 22px;
+                        padding: clamp(1.5rem, 3vw, 2rem);
+                        position: relative;
+                        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+                        overflow: hidden;
+                }
+
+                .panel::after {
+                        content: '';
+                        position: absolute;
+                        inset: 0;
+                        border-radius: inherit;
+                        background: linear-gradient(135deg, rgba(124, 58, 237, 0.12), rgba(30, 8, 68, 0.05));
+                        pointer-events: none;
+                        z-index: 0;
+                }
+
+                .panel > * {
+                        position: relative;
+                        z-index: 1;
+                }
+
+                .panel h2 {
+                        margin: 0 0 0.65rem;
+                        font-size: 1.35rem;
+                        font-weight: 600;
+                        color: #c4b5fd;
+                        text-shadow: 0 4px 18px rgba(76, 29, 149, 0.45);
+                }
+
+                .panel p.description {
+                        margin: 0 0 1.4rem;
+                        color: var(--text-secondary);
+                        font-size: 0.96rem;
+                        line-height: 1.6;
+                }
+
+                .form-grid {
+                        display: grid;
+                        gap: 1rem;
+                        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+                        margin-bottom: 1.5rem;
+                }
+
+                label {
+                        display: block;
+                        margin-bottom: 0.45rem;
+                        font-size: 0.8rem;
+                        letter-spacing: 0.08em;
+                        text-transform: uppercase;
+                        color: rgba(196, 181, 253, 0.82);
+                }
+
+                input,
+                select {
+                        width: 100%;
+                        border-radius: 14px;
+                        border: 1px solid rgba(139, 92, 246, 0.28);
+                        background: rgba(24, 6, 44, 0.72);
+                        color: var(--text-primary);
+                        padding: 0.75rem 0.85rem;
+                        font-size: 1rem;
+                        font-family: inherit;
+                        transition: border 0.2s ease, box-shadow 0.2s ease;
+                }
+
+                input:focus,
+                select:focus {
+                        outline: none;
+                        border-color: rgba(168, 85, 247, 0.75);
+                        box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.14);
+                }
+
+                button {
+                        border-radius: 16px;
+                        padding: 0.85rem 1.4rem;
+                        font-size: 1rem;
+                        font-weight: 600;
+                        border: none;
+                        cursor: pointer;
+                        transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
+                        gap: 0.65rem;
+                }
+
+                .btn-primary {
+                        background: linear-gradient(135deg, #bf5af2, #6d28d9);
+                        color: #fdf5ff;
+                        box-shadow: 0 16px 30px rgba(138, 43, 226, 0.36);
+                }
+
+                .btn-secondary {
+                        background: rgba(17, 24, 39, 0.78);
+                        color: rgba(214, 214, 255, 0.78);
+                        border: 1px solid rgba(148, 87, 235, 0.24);
+                }
+
+                button:hover:not(:disabled) {
+                        transform: translateY(-1px);
+                        box-shadow: 0 18px 40px rgba(111, 30, 180, 0.42);
+                }
+
+                button:active:not(:disabled) {
+                        transform: translateY(0);
+                }
+
+                button:disabled {
+                        opacity: 0.65;
+                        cursor: not-allowed;
+                        box-shadow: none;
+                }
+
+                button.is-loading::after {
+                        content: '';
+                        width: 16px;
+                        height: 16px;
+                        border-radius: 50%;
+                        border: 2px solid rgba(248, 250, 252, 0.4);
+                        border-top-color: #fff;
+                        animation: spin 0.65s linear infinite;
+                }
+
+                pre {
+                        margin-top: 1.5rem;
+                        background: rgba(8, 0, 25, 0.78);
+                        border-radius: 18px;
+                        padding: 1.25rem 1.4rem;
+                        font-size: 0.92rem;
+                        line-height: 1.55;
+                        color: rgba(233, 213, 255, 0.92);
+                        border: 1px solid rgba(88, 28, 135, 0.42);
+                        box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.12);
+                        overflow-x: auto;
+                        min-height: 110px;
+                        white-space: pre-wrap;
+                        word-break: break-word;
+                }
+
+                code.emptystate {
+                        color: rgba(148, 163, 184, 0.75);
+                        font-style: italic;
+                }
+
+                @keyframes spin {
+                        to { transform: rotate(360deg); }
+                }
+
+                @keyframes pulse {
+                        0%, 100% { opacity: 0.45; transform: scale(1); }
+                        50% { opacity: 1; transform: scale(1.2); }
+                }
+
+                @media (max-width: 720px) {
+                        header {
+                                flex-direction: column;
+                                align-items: flex-start;
+                        }
+
+                        .status-chip {
+                                align-self: flex-start;
+                        }
+                }
+        </style>
 </head>
 <body>
-	<div class="card">
-		<h1>📈 PineMimic Trader</h1>
-		<p>Status: <span id="status">checking…</span></p>
+        <div class="shell">
+                <div class="content">
+                        <header>
+                                <div class="title">
+                                        <h1>📈 PineMimic Control Center</h1>
+                                        <p class="subtitle">Command and monitor your PineMimic models with a refreshed workspace inspired by the original dashboard aesthetic.</p>
+                                </div>
+                                <span id="status" class="status-chip status-loading">Checking status…</span>
+                        </header>
 
-		<h2>Train</h2>
-		<div>
-			<label>Ticker</label>
-			<input id="ticker" value="SPY" />
-			<label>Period</label>
-			<select id="period">
-				<option>1mo</option>
-				<option selected>6mo</option>
-				<option>1y</option>
-				<option>2y</option>
-			</select>
-			<label>Interval</label>
-			<select id="interval">
-				<option>5m</option>
-				<option>15m</option>
-				<option selected>1h</option>
-				<option>1d</option>
-			</select>
-			<label>Max Iter</label>
-			<input id="max_iter" type="number" value="200" />
-		</div>
-		<p><button id="trainBtn">Train</button></p>
-		<pre id="trainOut"></pre>
+                        <div class="panels">
+                                <section class="panel">
+                                        <h2>Train Strategy</h2>
+                                        <p class="description">Select the market inputs below to launch a fresh training session. Defaults mirror the classic PineMimic setup.</p>
+                                        <div class="form-grid">
+                                                <div>
+                                                        <label for="ticker">Ticker</label>
+                                                        <input id="ticker" value="SPY" />
+                                                </div>
+                                                <div>
+                                                        <label for="period">Period</label>
+                                                        <select id="period">
+                                                                <option>1mo</option>
+                                                                <option selected>6mo</option>
+                                                                <option>1y</option>
+                                                                <option>2y</option>
+                                                        </select>
+                                                </div>
+                                                <div>
+                                                        <label for="interval">Interval</label>
+                                                        <select id="interval">
+                                                                <option>5m</option>
+                                                                <option>15m</option>
+                                                                <option selected>1h</option>
+                                                                <option>1d</option>
+                                                        </select>
+                                                </div>
+                                                <div>
+                                                        <label for="max_iter">Max Iterations</label>
+                                                        <input id="max_iter" type="number" value="200" />
+                                                </div>
+                                        </div>
+                                        <button id="trainBtn" class="btn-primary">Launch Training</button>
+                                        <pre id="trainOut"><code class="emptystate">Awaiting training run…</code></pre>
+                                </section>
 
-		<h2>System Check</h2>
-		<p><button id="checkBtn">Run /system-check</button></p>
-		<pre id="sysOut"></pre>
-	</div>
+                                <section class="panel">
+                                        <h2>System Diagnostics</h2>
+                                        <p class="description">Run the health check to confirm infrastructure readiness before executing your next trades.</p>
+                                        <button id="checkBtn" class="btn-secondary">Run /system-check</button>
+                                        <pre id="sysOut"><code class="emptystate">Diagnostics not run yet.</code></pre>
+                                </section>
+                        </div>
+                </div>
+        </div>
 
-	<script src="/ui/app.js"></script>
+        <script src="/ui/app.js"></script>
 </body>
 </html>""", encoding="utf-8")
 
 if not app_js_path.exists():
     app_js_path.write_text("""(function () {
   const $ = (id) => document.getElementById(id);
+
+  const statusEl = $('status');
+  const trainBtn = $('trainBtn');
+  const checkBtn = $('checkBtn');
+  const trainOut = $('trainOut');
+  const sysOut = $('sysOut');
+  const tickerInput = $('ticker');
+  const periodSelect = $('period');
+  const intervalSelect = $('interval');
+  const maxIterInput = $('max_iter');
+
+  const setStatus = (state, message) => {
+    if (!statusEl) return;
+    statusEl.className = 'status-chip status-' + state;
+    statusEl.textContent = message;
+  };
+
+  const toggleLoading = (btn, isLoading, busyLabel) => {
+    if (!btn) return;
+    if (isLoading) {
+      if (!btn.dataset.originalLabel) {
+        btn.dataset.originalLabel = btn.textContent;
+      }
+      btn.textContent = busyLabel;
+      btn.classList.add('is-loading');
+      btn.disabled = true;
+    } else {
+      const label = btn.dataset.originalLabel || btn.textContent;
+      btn.textContent = label;
+      btn.classList.remove('is-loading');
+      btn.disabled = false;
+    }
+  };
+
+  const setEmptyState = (pre, message) => {
+    if (!pre) return;
+    pre.innerHTML = '';
+    const code = document.createElement('code');
+    code.className = 'emptystate';
+    code.textContent = message;
+    pre.appendChild(code);
+  };
+
+  const writeJSON = (pre, value) => {
+    if (!pre) return;
+    if (typeof value === 'string') {
+      pre.textContent = value;
+    } else {
+      pre.textContent = JSON.stringify(value, null, 2);
+    }
+  };
 
   async function getJSON(url, opts) {
     const r = await fetch(url, opts);
@@ -119,43 +479,70 @@ if not app_js_path.exists():
   }
 
   async function boot() {
+    setStatus('loading', 'Checking status…');
     try {
       const r = await getJSON('/preflight');
-      $('status').textContent = r.overall_ok ? 'OK' : 'WARN (see /preflight)';
+      if (r.overall_ok) {
+        setStatus('ok', 'All systems nominal');
+      } else {
+        setStatus('warn', 'Warnings detected – review /preflight');
+      }
     } catch (e) {
-      $('status').textContent = 'ERROR: ' + e.message;
+      setStatus('error', 'Error: ' + e.message);
     }
   }
 
-  $('checkBtn').onclick = async () => {
-    $('sysOut').textContent = '…';
-    try {
-      const r = await getJSON('/system-check');
-      $('sysOut').textContent = JSON.stringify(r, null, 2);
-    } catch (e) {
-      $('sysOut').textContent = 'ERROR: ' + e.message;
-    }
-  };
+  if (checkBtn) {
+    checkBtn.addEventListener('click', async () => {
+      toggleLoading(checkBtn, true, 'Running…');
+      writeJSON(sysOut, 'Collecting diagnostics…');
+      try {
+        const r = await getJSON('/system-check');
+        writeJSON(sysOut, r);
+      } catch (e) {
+        writeJSON(sysOut, 'ERROR: ' + e.message);
+      } finally {
+        toggleLoading(checkBtn, false);
+      }
+    });
+  }
 
-  $('trainBtn').onclick = async () => {
-    $('trainOut').textContent = 'Training…';
-    const body = {
-      ticker: $('ticker').value || 'SPY',
-      period: $('period').value,
-      interval: $('interval').value,
-      max_iter: Number($('max_iter').value) || 200
-    };
-    try {
-      const r = await getJSON('/train', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body)
-      });
-      $('trainOut').textContent = JSON.stringify(r, null, 2);
-    } catch (e) {
-      $('trainOut').textContent = 'ERROR: ' + e.message;
-    }
-  };
+  if (trainBtn) {
+    trainBtn.addEventListener('click', async () => {
+      toggleLoading(trainBtn, true, 'Launching…');
+      writeJSON(trainOut, 'Training in progress…');
+      const ticker = tickerInput && typeof tickerInput.value === 'string' ? tickerInput.value.trim() : '';
+      const period = periodSelect ? periodSelect.value : undefined;
+      const interval = intervalSelect ? intervalSelect.value : undefined;
+      const maxIterRaw = maxIterInput && typeof maxIterInput.value === 'string' ? maxIterInput.value.trim() : '';
+      const body = {
+        ticker: ticker || 'SPY',
+        period: period,
+        interval: interval,
+        max_iter: Number(maxIterRaw) || 200
+      };
+      try {
+        const r = await getJSON('/train', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+        writeJSON(trainOut, r);
+      } catch (e) {
+        writeJSON(trainOut, 'ERROR: ' + e.message);
+      } finally {
+        toggleLoading(trainBtn, false);
+      }
+    });
+  }
+
+  // Restore placeholder text when panels are cleared manually.
+  if (trainOut && !trainOut.textContent.trim()) {
+    setEmptyState(trainOut, 'Awaiting training run…');
+  }
+  if (sysOut && !sysOut.textContent.trim()) {
+    setEmptyState(sysOut, 'Diagnostics not run yet.');
+  }
 
   boot();
 })();""", encoding="utf-8")
