@@ -2961,6 +2961,8 @@ async def log_requests(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, HTTPException):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
     print("[NeoCortex Error]", traceback.format_exc())
     return JSONResponse({"error": str(exc)}, status_code=500)
 if FORCE_HTTPS_REDIRECT:

@@ -125,6 +125,15 @@ $env:NGROK_DOMAIN = "trader.example.ngrok-free.dev"
 python run_with_ngrok.py
 ```
 
+## Deployment Tooling
+
+- `docker-compose.yml` orchestrates the FastAPI API, Redis, PostgreSQL, Celery workers, and
+  the Prometheus/Grafana monitoring stack. Start everything locally with `docker compose up --build`.
+- `deploy/k8s/` contains Kubernetes manifests for clustered deployments, including health probes,
+  config maps, secrets, and monitoring components.
+- `deploy/fly/fly.toml` provides a ready-to-use Fly.io application definition for quickly pushing
+  the API to the edge.
+
 The script prints a public URL (e.g. `https://1234.ngrok.io`). Use this URL to
 access your API externally. For Alpaca webhooks, append `/alpaca/webhook` to
 that URL and configure it in your Alpaca dashboard.
