@@ -21,15 +21,13 @@ if not index_path.exists():
         <style>
                 :root {
                         color-scheme: dark light;
-                        --bg-gradient: radial-gradient(circle at 10% -10%, rgba(168, 85, 247, 0.18), transparent 55%),
-                                        radial-gradient(circle at 90% 0%, rgba(79, 70, 229, 0.22), transparent 45%),
-                                        linear-gradient(160deg, #040008, #0b021f 55%, #000000 100%);
-                        --panel-bg: linear-gradient(160deg, rgba(17, 24, 39, 0.92), rgba(76, 29, 149, 0.78));
-                        --panel-border: rgba(139, 92, 246, 0.35);
-                        --text-primary: #f8f5ff;
-                        --text-secondary: rgba(214, 214, 255, 0.78);
-                        --accent: #a855f7;
-                        --accent-strong: #7c3aed;
+                        --bg-gradient: radial-gradient(circle at top, rgba(63,94,251,0.22), rgba(252,70,107,0.12)), linear-gradient(135deg, #0f172a, #111827 60%, #020617);
+                        --panel-bg: rgba(15, 23, 42, 0.84);
+                        --panel-border: rgba(148, 163, 184, 0.12);
+                        --text-primary: #f8fafc;
+                        --text-secondary: rgba(226, 232, 240, 0.78);
+                        --accent: #6366f1;
+                        --accent-strong: #8b5cf6;
                         --success: #34d399;
                         --warn: #facc15;
                         --error: #fb7185;
@@ -55,8 +53,8 @@ if not index_path.exists():
                         width: min(1100px, 100%);
                         margin: 0 auto;
                         backdrop-filter: blur(18px);
-                        background: linear-gradient(135deg, rgba(10, 5, 25, 0.88), rgba(46, 16, 101, 0.82));
-                        border: 1px solid rgba(168, 85, 247, 0.32);
+                        background: linear-gradient(135deg, rgba(15,23,42,0.92), rgba(30,41,59,0.88));
+                        border: 1px solid rgba(99,102,241,0.25);
                         border-radius: 28px;
                         padding: clamp(1.75rem, 3vw, 2.75rem);
                         box-shadow: 0 24px 60px rgba(15,23,42,0.45);
@@ -68,9 +66,8 @@ if not index_path.exists():
                         content: '';
                         position: absolute;
                         inset: -120px;
-                        background: radial-gradient(circle at 20% 15%, rgba(168, 85, 247, 0.22), transparent 55%),
-                                    radial-gradient(circle at 70% 5%, rgba(76, 29, 149, 0.25), transparent 45%),
-                                    radial-gradient(circle at 85% 65%, rgba(17, 24, 39, 0.35), transparent 55%);
+                        background: radial-gradient(circle at 20% 20%, rgba(99,102,241,0.18), transparent 55%),
+                                    radial-gradient(circle at 80% 0%, rgba(236,72,153,0.12), transparent 45%);
                         filter: blur(40px);
                         z-index: 0;
                 }
@@ -99,8 +96,6 @@ if not index_path.exists():
                         font-weight: 700;
                         letter-spacing: -0.02em;
                         margin: 0;
-                        color: #e9d5ff;
-                        text-shadow: 0 8px 24px rgba(79, 70, 229, 0.45);
                 }
 
                 .subtitle {
@@ -120,9 +115,9 @@ if not index_path.exists():
                         font-weight: 600;
                         letter-spacing: 0.01em;
                         text-transform: uppercase;
-                        border: 1px solid rgba(148, 87, 235, 0.42);
-                        background: rgba(46, 16, 101, 0.45);
-                        color: rgba(226, 219, 255, 0.86);
+                        border: 1px solid rgba(148, 163, 184, 0.28);
+                        background: rgba(15, 23, 42, 0.72);
+                        color: var(--text-secondary);
                         transition: background 0.25s ease, color 0.25s ease, border 0.25s ease;
                 }
 
@@ -131,15 +126,15 @@ if not index_path.exists():
                         width: 10px;
                         height: 10px;
                         border-radius: 50%;
-                        background: rgba(192, 132, 252, 0.75);
-                        box-shadow: 0 0 0 4px rgba(192, 132, 252, 0.18);
+                        background: rgba(148, 163, 184, 0.6);
+                        box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.15);
                         transition: background 0.25s ease, box-shadow 0.25s ease;
                 }
 
                 .status-ok {
                         border-color: rgba(52, 211, 153, 0.45);
                         color: var(--success);
-                        background: rgba(46, 204, 113, 0.14);
+                        background: rgba(22, 163, 74, 0.1);
                 }
 
                 .status-ok::before {
@@ -150,7 +145,7 @@ if not index_path.exists():
                 .status-warn {
                         border-color: rgba(250, 204, 21, 0.5);
                         color: #fcd34d;
-                        background: rgba(202, 138, 4, 0.2);
+                        background: rgba(202, 138, 4, 0.16);
                 }
 
                 .status-warn::before {
@@ -161,7 +156,7 @@ if not index_path.exists():
                 .status-error {
                         border-color: rgba(251, 113, 133, 0.52);
                         color: #fda4af;
-                        background: rgba(190, 18, 60, 0.22);
+                        background: rgba(190, 18, 60, 0.18);
                 }
 
                 .status-error::before {
@@ -170,14 +165,14 @@ if not index_path.exists():
                 }
 
                 .status-loading {
-                        border-color: rgba(148, 87, 235, 0.55);
-                        color: rgba(214, 201, 255, 0.92);
-                        background: rgba(168, 85, 247, 0.18);
+                        border-color: rgba(99, 102, 241, 0.5);
+                        color: rgba(129, 140, 248, 0.9);
+                        background: rgba(99, 102, 241, 0.12);
                 }
 
                 .status-loading::before {
                         background: var(--accent);
-                        box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.22);
+                        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.18);
                         animation: pulse 1.6s ease-in-out infinite;
                 }
 
@@ -194,30 +189,12 @@ if not index_path.exists():
                         padding: clamp(1.5rem, 3vw, 2rem);
                         position: relative;
                         box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-                        overflow: hidden;
-                }
-
-                .panel::after {
-                        content: '';
-                        position: absolute;
-                        inset: 0;
-                        border-radius: inherit;
-                        background: linear-gradient(135deg, rgba(124, 58, 237, 0.12), rgba(30, 8, 68, 0.05));
-                        pointer-events: none;
-                        z-index: 0;
-                }
-
-                .panel > * {
-                        position: relative;
-                        z-index: 1;
                 }
 
                 .panel h2 {
                         margin: 0 0 0.65rem;
                         font-size: 1.35rem;
                         font-weight: 600;
-                        color: #c4b5fd;
-                        text-shadow: 0 4px 18px rgba(76, 29, 149, 0.45);
                 }
 
                 .panel p.description {
@@ -240,15 +217,15 @@ if not index_path.exists():
                         font-size: 0.8rem;
                         letter-spacing: 0.08em;
                         text-transform: uppercase;
-                        color: rgba(196, 181, 253, 0.82);
+                        color: rgba(148, 163, 184, 0.78);
                 }
 
                 input,
                 select {
                         width: 100%;
                         border-radius: 14px;
-                        border: 1px solid rgba(139, 92, 246, 0.28);
-                        background: rgba(24, 6, 44, 0.72);
+                        border: 1px solid rgba(148, 163, 184, 0.2);
+                        background: rgba(15, 23, 42, 0.75);
                         color: var(--text-primary);
                         padding: 0.75rem 0.85rem;
                         font-size: 1rem;
@@ -259,8 +236,8 @@ if not index_path.exists():
                 input:focus,
                 select:focus {
                         outline: none;
-                        border-color: rgba(168, 85, 247, 0.75);
-                        box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.14);
+                        border-color: rgba(99, 102, 241, 0.65);
+                        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12);
                 }
 
                 button {
@@ -278,20 +255,20 @@ if not index_path.exists():
                 }
 
                 .btn-primary {
-                        background: linear-gradient(135deg, #bf5af2, #6d28d9);
-                        color: #fdf5ff;
-                        box-shadow: 0 16px 30px rgba(138, 43, 226, 0.36);
+                        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+                        color: #f8fafc;
+                        box-shadow: 0 16px 30px rgba(99, 102, 241, 0.28);
                 }
 
                 .btn-secondary {
-                        background: rgba(17, 24, 39, 0.78);
-                        color: rgba(214, 214, 255, 0.78);
-                        border: 1px solid rgba(148, 87, 235, 0.24);
+                        background: rgba(15, 23, 42, 0.82);
+                        color: var(--text-secondary);
+                        border: 1px solid rgba(148, 163, 184, 0.25);
                 }
 
                 button:hover:not(:disabled) {
                         transform: translateY(-1px);
-                        box-shadow: 0 18px 40px rgba(111, 30, 180, 0.42);
+                        box-shadow: 0 18px 40px rgba(99, 102, 241, 0.36);
                 }
 
                 button:active:not(:disabled) {
@@ -316,13 +293,13 @@ if not index_path.exists():
 
                 pre {
                         margin-top: 1.5rem;
-                        background: rgba(8, 0, 25, 0.78);
+                        background: rgba(2, 6, 23, 0.84);
                         border-radius: 18px;
                         padding: 1.25rem 1.4rem;
                         font-size: 0.92rem;
                         line-height: 1.55;
-                        color: rgba(233, 213, 255, 0.92);
-                        border: 1px solid rgba(88, 28, 135, 0.42);
+                        color: rgba(203, 213, 225, 0.92);
+                        border: 1px solid rgba(71, 85, 105, 0.35);
                         box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.12);
                         overflow-x: auto;
                         min-height: 110px;
