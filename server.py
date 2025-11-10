@@ -69,11 +69,11 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
 else:  # pragma: no cover - exercised when pandas is installed
     _PANDAS_AVAILABLE = True
 
-from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Depends
+from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Depends, Form
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi import FastAPI, HTTPException, Request, Header, Cookie
+from fastapi import FastAPI, HTTPException, Request, Header, Cookie, Form
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 
 
@@ -2548,6 +2548,10 @@ class WhopLoginReq(BaseModel):
     token: str
 
 
+class WhopSessionRequest(BaseModel):
+    token: str
+
+
 class AlpacaWebhookTest(BaseModel):
     symbol: str = "SPY"
     quantity: float = 1.0
@@ -2653,13 +2657,14 @@ async def whop_callback(
     return RedirectResponse(redirect_url)
 
 
-@app.get("/auth/whop/session")
-async def whop_session(token: str):
-    session = _get_whop_session(token.strip())
+@app.post("/auth/whop/session")
+async def whop_session(req: WhopSessionRequest):
+    token = (req.token or "").strip()
+    session = _get_whop_session(token)
     if not session:
         return _json({"ok": False, "detail": "Invalid or expired Whop session"}, 404)
     account = _lookup_whop_account(session["license_key"])
-    payload: Dict[str, Any] = {
+    response_payload: Dict[str, Any] = {
         "ok": True,
         "license_key": session["license_key"],
         "email": session.get("email"),
@@ -2667,8 +2672,8 @@ async def whop_session(token: str):
         "registered": account is not None,
     }
     if account:
-        payload["username"] = account["username"]
-    return _json(payload)
+        response_payload["username"] = account["username"]
+    return _json(response_payload)
 
 
 @app.post("/register/whop")
@@ -2809,17 +2814,7 @@ async def register(request: Request):
         return _json({"ok": False, "detail": "username already exists"}, 400)
     return _json({"ok": True, "created": uname})
 
-@app.post("/login")
-async def login(request: Request):
-    # Authenticate a user and return a bearer token tied to the SQLite credential store.
-    # The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
-    # manage user-specific Alpaca credentials.
-    '''
-    Authenticate a user and return a bearer token tied to the SQLite credential store.
-    The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
-    manage user-specific Alpaca credentials.
-    '''
-    req = await _auth_req_from_request(request)
+def _perform_login(req: AuthReq) -> JSONResponse:
     uname = req.username.strip().lower()
     if not uname or not req.password:
         return _json({"ok": False, "detail": "username and password required"}, 400)
@@ -2870,6 +2865,39 @@ async def login(request: Request):
     )
     _set_auth_cookies(resp, tokens)
     return resp
+
+
+@app.post("/login")
+async def login(request: Request):
+    # Authenticate a user and return a bearer token tied to the SQLite credential store.
+    # The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
+    # manage user-specific Alpaca credentials.
+    '''
+    Authenticate a user and return a bearer token tied to the SQLite credential store.
+    The token may be supplied via the ``Authorization: Bearer`` header for endpoints that
+    manage user-specific Alpaca credentials.
+    '''
+    req = await _auth_req_from_request(request)
+    return _perform_login(req)
+
+
+@app.post("/admin/login")
+async def admin_login(
+    username: str = Form(...),
+    password: str = Form(...),
+    adminKey: Optional[str] = Form(None),
+    otp_code: Optional[str] = Form(None),
+):
+    '''Handle admin portal authentication via form submissions.'''
+
+    req = AuthReq(
+        username=username,
+        password=password,
+        admin_key=adminKey,
+        require_admin=True,
+        otp_code=otp_code,
+    )
+    return _perform_login(req)
 
 
 @app.post("/logout")
