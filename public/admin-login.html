@@ -4,10 +4,8 @@
         <meta charset="utf-8" />
         <title>Neo Cortex AI – Admin Sign In</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="stylesheet" href="/public/assets/neocortex-theme.css" />
+        <link rel="stylesheet" href="/assets/neocortex-theme.css" />
         <link rel="stylesheet" href="/public/enduserapp/style.css" />
-        <link rel="stylesheet" href="assets/neocortex-theme.css" />
-        <link rel="stylesheet" href="enduserapp/style.css" />
         <style>
                 .admin-screen {
                         width: min(460px, 100%);
@@ -71,6 +69,20 @@
         </main>
 
         <script>
+                function getCookie(name) {
+                        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+                        return match ? match[2] : null;
+                }
+
+                async function csrfFetch(url, options = {}) {
+                        const token = getCookie('csrftoken');
+                        options.headers = Object.assign({}, options.headers, {
+                                'X-CSRF-Token': token || '',
+                        });
+                        options.credentials = 'include';
+                        return fetch(url, options);
+                }
+
                 const TOKEN_KEY = 'nc_token';
                 const USERNAME_KEY = 'nc_user';
                 const COOKIE_NAME_KEY = 'nc_cookie';
@@ -137,10 +149,9 @@
                 }
 
                 async function sendAuth(path, body) {
-                        const resp = await fetch(path, {
+                        const resp = await csrfFetch(path, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                credentials: 'include',
                                 body: JSON.stringify(body)
                         });
                         const text = await resp.text();
@@ -159,10 +170,9 @@
                                 if (value === undefined || value === null) { continue; }
                                 params.append(key, value);
                         }
-                        const resp = await fetch(path, {
+                        const resp = await csrfFetch(path, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                                credentials: 'include',
                                 body: params
                         });
                         const text = await resp.text();
