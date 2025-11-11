@@ -13,6 +13,7 @@ plotly>=5.22
 psutil>=5.9
 pyngrok==7.2.2
 pyotp
+segno>=1.5
 python-dotenv>=1.0
 PyJWT
 requests==2.32.4
