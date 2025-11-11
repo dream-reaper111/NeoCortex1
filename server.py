@@ -1502,6 +1502,10 @@ WHOP_PORTAL_URL = (os.getenv("WHOP_PORTAL_URL") or "").strip() or None
 WHOP_SESSION_TTL = int(os.getenv("WHOP_SESSION_TTL", "900"))
 ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "the3istheD3T").strip()
 ADMIN_PRIVATE_KEY = (os.getenv("ADMIN_PRIVATE_KEY") or "").strip()
+DEFAULT_ADMIN_USERNAME = (
+    os.getenv("DEFAULT_ADMIN_USERNAME") or "dreamreaper"
+).strip().lower()
+DEFAULT_ADMIN_PASSWORD = (os.getenv("DEFAULT_ADMIN_PASSWORD") or "fall2025").strip()
 ADMIN_PORTAL_BASIC_USER = (os.getenv("ADMIN_PORTAL_BASIC_USER") or "").strip()
 ADMIN_PORTAL_BASIC_PASS = (os.getenv("ADMIN_PORTAL_BASIC_PASS") or "").strip()
 ADMIN_PORTAL_BASIC_REALM = (
@@ -2772,6 +2776,54 @@ def _verify_password(password: str, stored_hash: str, salt: str, algo: Optional[
             return False
     expected_hash, _ = _hash_password_sha2048(password, salt)
     return secrets.compare_digest(expected_hash, stored_hash)
+
+
+def _ensure_default_admin_account() -> None:
+    """Create the default admin account if it does not already exist."""
+
+    username = DEFAULT_ADMIN_USERNAME
+    password = DEFAULT_ADMIN_PASSWORD
+    if not username or not password:
+        return
+
+    try:
+        with _db_conn() as conn:
+            existing = conn.execute(
+                "SELECT id FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            if existing:
+                return
+
+            password_hash, salt, algo = _hash_password_secure(password)
+            conn.execute(
+                """
+                INSERT INTO users (username, password_hash, salt, password_algo, is_admin, role, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    username,
+                    password_hash,
+                    salt,
+                    algo,
+                    1,
+                    ROLE_ADMIN,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            logger.warning(
+                "Bootstrap admin account '%s' with default credentials; update DEFAULT_ADMIN_PASSWORD immediately.",
+                username,
+            )
+    except sqlite3.DatabaseError as exc:
+        logger.error(
+            "Failed to bootstrap default admin account '%s': %s",
+            username,
+            exc,
+        )
+
+
+_ensure_default_admin_account()
 
 
 def _fetch_user_credentials(user_id: int, account_type: str) -> Optional[sqlite3.Row]:
