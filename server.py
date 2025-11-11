@@ -45,6 +45,7 @@ _os.environ.setdefault("PYTORCH_ENABLE_COMPILATION", "0")
 _os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---- std imports ----
+import io
 import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, tempfile, stat, ipaddress, traceback
 from urllib.parse import quote, urlencode
 import os, json, time, math, shutil, asyncio, importlib, hashlib, sqlite3, secrets, logging, hmac, re, base64, threading, random, tempfile, stat, ipaddress
@@ -363,6 +364,11 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 PYOTP_MISSING_MESSAGE = (
     "pyotp is required for multi-factor authentication features. Install it with 'pip install pyotp'."
 )
+
+try:
+    import segno
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    segno = None  # type: ignore[assignment]
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
@@ -2491,6 +2497,23 @@ def _totp_provisioning_uri(username: str, secret: str) -> str:
     return totp.provisioning_uri(name=username, issuer_name=JWT_ISSUER)
 
 
+def _generate_totp_qr_code(provisioning_uri: str) -> Optional[str]:
+    if not provisioning_uri:
+        return None
+    if segno is None:
+        logger.debug("segno is not installed; skipping QR code generation for MFA setup")
+        return None
+    try:
+        qr = segno.make(provisioning_uri, error="M")
+        buffer = io.BytesIO()
+        qr.save(buffer, kind="png", scale=5)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+    except Exception as exc:  # pragma: no cover - defensive guard against QR library issues
+        logger.warning("Failed to generate MFA QR code: %s", exc)
+        return None
+
+
 def _update_mfa_settings(
     user_id: int,
     *,
@@ -2541,16 +2564,6 @@ def _create_api_token(user_id: int, scopes: Set[str], label: Optional[str] = Non
     scope_str = API_KEY_SCOPE_SEPARATOR.join(sorted(scopes))
     now = datetime.now(timezone.utc).isoformat()
     with _db_conn() as conn:
-        conn.execute(
-            '''
-            INSERT INTO whop_accounts (license_key, user_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(license_key) DO UPDATE SET
-                user_id = excluded.user_id,
-                updated_at = excluded.updated_at
-            ''',
-            (license_key, user_id, now, now),
-        )
         conn.execute(
             '''
             INSERT INTO api_tokens (token_id, token_hash, user_id, scopes, label, created_at, revoked)
@@ -3834,6 +3847,7 @@ class MFASetupResponse(BaseModel):
     secret: str
     provisioning_uri: str
     recovery_codes: List[str]
+    qr_code: Optional[str] = None
 
 
 class MFAEnableRequest(BaseModel):
@@ -4516,12 +4530,15 @@ async def mfa_setup(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     secret = module.random_base32()
     recovery_codes = _generate_recovery_codes()
+    provisioning_uri = _totp_provisioning_uri(user["username"], secret)
+    qr_code = _generate_totp_qr_code(provisioning_uri)
     response = MFASetupResponse(
         secret=secret,
-        provisioning_uri=_totp_provisioning_uri(user["username"], secret),
+        provisioning_uri=provisioning_uri,
         recovery_codes=recovery_codes,
+        qr_code=qr_code,
     )
-    return _json({"ok": True, **response.dict()})
+    return _json({"ok": True, **response.dict(exclude_none=True)})
 
 
 @app.post("/auth/mfa/enable")
