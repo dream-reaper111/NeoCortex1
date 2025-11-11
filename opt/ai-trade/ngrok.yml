@@ -1,0 +1,18 @@
+authtoken: ${NGROK_AUTH_TOKEN}
+version: "3"
+tunnels:
+  gpu0:
+    proto: https
+    addr: caddy:443
+    hostname: ai0.yourdomain.ngrok.io
+    inspect: false
+  gpu1:
+    proto: https
+    addr: caddy:443
+    hostname: ai1.yourdomain.ngrok.io
+    inspect: false
+  trainer:
+    proto: https
+    addr: caddy:443
+    hostname: ai-train.yourdomain.ngrok.io
+    inspect: false

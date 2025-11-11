@@ -1,0 +1,185 @@
+version: "3.9"
+
+x-api-common: &api-common
+  image: ghcr.io/example/ai-trading-api:latest
+  restart: unless-stopped
+  env_file:
+    - .env
+  environment:
+    REDIS_URL: ${REDIS_URL}
+    DB_URL: ${DB_URL}
+    JWT_SECRET: ${JWT_SECRET}
+  networks:
+    - ai_net
+  expose:
+    - "8000"
+  volumes:
+    - api_logs:/var/log/ai-trade
+
+services:
+  api_gpu0:
+    <<: *api-common
+    container_name: api_gpu0
+    environment:
+      <<: *api-common.environment
+      CUDA_VISIBLE_DEVICES: "0"
+      SERVICE_BIND_PORT: "8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["0"]
+
+  api_gpu1:
+    <<: *api-common
+    container_name: api_gpu1
+    environment:
+      <<: *api-common.environment
+      CUDA_VISIBLE_DEVICES: "1"
+      SERVICE_BIND_PORT: "8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["1"]
+
+  trainer_gpu2:
+    image: ghcr.io/example/ai-trading-trainer:latest
+    container_name: trainer_gpu2
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: ${REDIS_URL}
+      DB_URL: ${DB_URL}
+      CUDA_VISIBLE_DEVICES: "2"
+    command: ["/app/run_trainer.sh"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["2"]
+    networks:
+      - ai_net
+    expose:
+      - "8010"
+    volumes:
+      - trainer_logs:/var/log/ai-trade
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-redispass}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redispass}
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai_net
+
+  db:
+    image: timescale/timescaledb:latest-pg14
+    container_name: db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ai_trader
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ai_trading
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - ai_net
+
+  grafana:
+    image: grafana/grafana:10.4.3
+    container_name: grafana
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASS:-changeme}
+      GF_SERVER_ROOT_URL: https://grafana.${PUBLIC_DOMAIN:-example.com}
+    depends_on:
+      - db
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - ai_net
+
+  authelia:
+    image: authelia/authelia:latest
+    container_name: authelia
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AUTHELIA_JWT_SECRET: ${AUTHELIA_JWT_SECRET}
+      AUTHELIA_SESSION_SECRET: ${AUTHELIA_SESSION_SECRET:-changeme}
+    volumes:
+      - ./authelia:/config
+    networks:
+      - ai_net
+    expose:
+      - "9091"
+
+  caddy:
+    image: caddy:2.7
+    container_name: caddy
+    restart: unless-stopped
+    depends_on:
+      - api_gpu0
+      - api_gpu1
+      - authelia
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      AUTHELIA_FORWARD_AUTH: authelia:9091
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    networks:
+      - ai_net
+
+  ngrok:
+    image: ngrok/ngrok:3
+    container_name: ngrok
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["start", "--all", "--config", "/etc/ngrok.yml"]
+    volumes:
+      - ./ngrok.yml:/etc/ngrok.yml:ro
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTH_TOKEN}
+    depends_on:
+      - caddy
+    networks:
+      - ai_net
+
+volumes:
+  api_logs:
+  trainer_logs:
+  redis_data:
+  db_data:
+  grafana_data:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
+
+networks:
+  ai_net:
+    driver: bridge
