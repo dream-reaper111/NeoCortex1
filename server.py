@@ -3250,11 +3250,13 @@ async def _auth_failure_observer(request: Request, call_next):
 async def csp_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self' data: blob: https: 'unsafe-inline' 'unsafe-eval';"
-        "img-src 'self' data: blob: https:;"
-        "style-src 'self' 'unsafe-inline' https:;"
-        "font-src 'self' https: data:;"
-        "connect-src 'self' https: wss:;"
+        "default-src 'self';"
+        "img-src 'self' data: blob:;"
+        "style-src 'self' 'unsafe-inline';"
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval';"
+        "connect-src 'self' ws: wss: https:;"
+        "font-src 'self' data:;"
+        "frame-ancestors 'none';"
     )
     return response
 
@@ -4200,24 +4202,43 @@ def _require_user(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str,
 def require_admin(
     request: Request, user: Optional[Dict[str, Any]] = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    candidate: Optional[Dict[str, Any]]
-    if isinstance(user, Request) or not isinstance(user, Mapping):
-        candidate = getattr(request.state, "user", None)
+    user_obj: Any = (
+        getattr(request.state, "user", None)
+        or getattr(request, "user", None)
+        or None
+    )
+
+    if not user_obj and user:
+        user_obj = user
+
+    roles_iterable: Iterable[Any]
+    if isinstance(user_obj, Mapping):
+        roles_iterable = user_obj.get("roles") or []
+    elif user_obj is not None:
+        roles_iterable = getattr(user_obj, "roles", None) or []
     else:
-        candidate = user
-    if not candidate or "roles" not in candidate:
+        roles_iterable = []
+
+    normalized_roles = {str(role).strip().lower() for role in roles_iterable if role is not None}
+    if "admin" not in normalized_roles:
         raise HTTPException(
             status_code=HTTP_403_FORBIDDEN,
             detail="Admin access only",
         )
-    roles = candidate.get("roles") or []
-    if ROLE_ADMIN not in set(roles):
-        raise HTTPException(
-            status_code=HTTP_403_FORBIDDEN,
-            detail="Admin access only",
-        )
-    request.state.user = candidate
-    return candidate
+
+    if isinstance(user_obj, Mapping):
+        request.state.user = dict(user_obj)
+        return dict(user_obj)
+
+    request.state.user = user_obj
+    if isinstance(user_obj, dict):
+        return user_obj
+
+    data = {}
+    if hasattr(user_obj, "__dict__") and isinstance(user_obj.__dict__, Mapping):
+        data.update(user_obj.__dict__)
+    data.setdefault("roles", list(normalized_roles))
+    return data
 
 
 def _require_admin(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:

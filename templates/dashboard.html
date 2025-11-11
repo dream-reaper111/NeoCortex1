@@ -249,7 +249,7 @@
 </section>
 {% endblock %}
 {% block extra_scripts %}
-<script>
+<script defer>
     const $ = (id) => document.getElementById(id);
     const cb = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
     const TOKEN_KEY = 'nc_token';

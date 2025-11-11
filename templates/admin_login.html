@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}NeoCortex – Admin Access{% endblock %}
 {% block body_class %}auth-layout{% endblock %}
+{% block header %}{% endblock %}
 {% block content %}
 <section class="auth-page">
     <div class="auth-shell">
@@ -41,7 +42,7 @@
 </section>
 {% endblock %}
 {% block extra_scripts %}
-<script>
+<script defer>
     const TOKEN_KEY = 'nc_token';
     const USERNAME_KEY = 'nc_user';
     const COOKIE_NAME_KEY = 'nc_cookie';
@@ -160,247 +161,25 @@
         const username = usernameEl.value.trim().toLowerCase();
         const password = passwordEl.value;
         const adminKey = adminKeyEl.value.trim();
-        if (!username || !password) {
-            setMessage('Choose a username and password before creating an account.', 'error');
+        if (!username || !password || !adminKey) {
+            setMessage('Username, password, and admin key are required to register.', 'error');
             return;
         }
-        if (!adminKey) {
-            setMessage('Enter the admin private key to create an account.', 'error');
-            return;
-        }
-        registerBtn.disabled = true;
         loginBtn.disabled = true;
-        setMessage('Creating admin account…');
+        registerBtn.disabled = true;
+        setMessage('Registering admin…');
         try {
             const data = await sendAuth('/admin/register', { username, password, admin_key: adminKey });
-            setMessage(data.message || 'Admin account created. You can now sign in.', 'success');
+            if (!data.ok) {
+                throw new Error(data.detail || 'Registration failed');
+            }
+            setMessage('Admin account created. You can now sign in.', 'success');
         } catch (err) {
-            setMessage(err.message || 'Admin account creation failed', 'error');
+            setMessage(err.message || 'Registration failed', 'error');
         } finally {
-            registerBtn.disabled = false;
             loginBtn.disabled = false;
+            registerBtn.disabled = false;
         }
     });
 </script>
 {% endblock %}
-<!doctype html>
-<html lang="en">
-<head>
-        <meta charset="utf-8" />
-        <title>Neo Cortex AI – Admin Sign In</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='assets/neocortex-theme.css') }}" />
-        <link rel="stylesheet" href="{{ request.url_for('public', path='enduserapp/style.css') }}" />
-        <style>
-                .admin-screen {
-                        width: min(460px, 100%);
-                }
-
-                .admin-subtitle {
-                        margin: 0 0 18px;
-                        font-size: 0.95rem;
-                }
-
-                .admin-key-hint {
-                        font-size: 0.75rem;
-                        text-transform: none;
-                        letter-spacing: 0;
-                        margin-left: 6px;
-                        color: rgba(224, 196, 255, 0.78);
-                }
-
-                .admin-actions {
-                        display: flex;
-                        flex-direction: column;
-                        gap: 12px;
-                        margin-top: 8px;
-                }
-
-                .fine-print {
-                        margin-top: 24px;
-                        text-align: center;
-                }
-        </style>
-</head>
-<body class="nc-centered">
-        <main class="nc-card admin-screen">
-                <div class="nc-stack">
-                        <header>
-                                <h1>Admin Portal</h1>
-                                <p class="admin-subtitle nc-text-muted">Sign in to manage Neo Cortex AI configuration and monitor activity.</p>
-                        </header>
-                        <form id="loginForm" class="nc-stack" method="post" action="/admin/login">
-                                <input type="hidden" name="next" id="nextInput" value="{{ request.query_params.get('next', '') }}" />
-                                <div>
-                                        <label for="username">Username</label>
-                                        <input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required />
-                                </div>
-                                <div>
-                                        <label for="password">Password</label>
-                                        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
-                                </div>
-                                <div>
-                                        <label for="adminKey">Admin Private Key <span class="admin-key-hint">Required for account creation</span></label>
-                                        <input id="adminKey" name="adminKey" type="password" autocomplete="off" placeholder="Enter admin key" />
-                                </div>
-                                <button type="submit" id="loginBtn" class="nc-btn nc-btn-block">Sign In</button>
-                        </form>
-                        <div class="admin-actions">
-                                <button type="button" class="nc-btn nc-btn-secondary nc-btn-block" id="registerBtn">Create Admin Account</button>
-                                <div id="message" class="nc-message"></div>
-                        </div>
-                        <p class="fine-print nc-text-muted nc-text-small">Passwords are hashed with PBKDF2-SHA512 and never stored in plain text.</p>
-                </div>
-        </main>
-
-        <script>
-                const TOKEN_KEY = 'nc_token';
-                const USERNAME_KEY = 'nc_user';
-                const COOKIE_NAME_KEY = 'nc_cookie';
-                const REFRESH_KEY = 'nc_refresh';
-                const nextInput = document.getElementById('nextInput');
-                const params = new URLSearchParams(window.location.search);
-
-                function resolveNext(candidate) {
-                        if (!candidate) { return '/dashboard'; }
-                        try {
-                                const parsed = new URL(candidate, window.location.origin);
-                                if (parsed.origin !== window.location.origin) {
-                                        return '/dashboard';
-                                }
-                                return parsed.pathname + parsed.search + parsed.hash;
-                        } catch (_) {
-                                return '/dashboard';
-                        }
-                }
-
-                const rawNext = params.get('next');
-                const nextUrl = resolveNext(rawNext);
-                if (nextInput) {
-                        nextInput.value = rawNext || '';
-                }
-
-                const sanitizedParams = new URLSearchParams();
-                if (rawNext) {
-                        sanitizedParams.set('next', rawNext);
-                }
-                const sensitiveKeys = ['username', 'password', 'adminkey', 'adminKey'];
-                let scrubbed = false;
-                for (const key of sensitiveKeys) {
-                        if (params.has(key)) {
-                                scrubbed = true;
-                                break;
-                        }
-                }
-                const sanitizedQuery = sanitizedParams.toString();
-                const desiredSearch = sanitizedQuery ? `?${sanitizedQuery}` : '';
-                if (scrubbed || window.location.search !== desiredSearch) {
-                        const newUrl = desiredSearch ? `${window.location.pathname}${desiredSearch}` : window.location.pathname;
-                        window.history.replaceState(null, document.title, newUrl);
-                }
-
-                if (localStorage.getItem(TOKEN_KEY)) {
-                        window.location.replace(nextUrl);
-                }
-
-                if (!localStorage.getItem(COOKIE_NAME_KEY)) {
-                        localStorage.setItem(COOKIE_NAME_KEY, 'session_token');
-                }
-
-                const messageEl = document.getElementById('message');
-                const usernameEl = document.getElementById('username');
-                const passwordEl = document.getElementById('password');
-                const loginBtn = document.getElementById('loginBtn');
-                const registerBtn = document.getElementById('registerBtn');
-                const adminKeyEl = document.getElementById('adminKey');
-
-                function setMessage(text, type) {
-                        messageEl.textContent = text || '';
-                        messageEl.className = 'nc-message' + (type ? ' ' + type : '');
-                }
-
-                async function sendAuth(path, body) {
-                        const resp = await fetch(path, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                credentials: 'include',
-                                body: JSON.stringify(body)
-                        });
-                        const text = await resp.text();
-                        let data;
-                        try { data = JSON.parse(text); }
-                        catch (_) { throw new Error(`HTTP ${resp.status} ${resp.statusText}`); }
-                        if (!resp.ok || !data.ok) {
-                                throw new Error(data.detail || data.reason || 'Request failed');
-                        }
-                        return data;
-                }
-
-                document.getElementById('loginForm').addEventListener('submit', async (event) => {
-                        event.preventDefault();
-                        const username = usernameEl.value.trim().toLowerCase();
-                        const password = passwordEl.value;
-                        if (!username || !password) {
-                                setMessage('Enter a username and password to continue.', 'error');
-                                return;
-                        }
-                        loginBtn.disabled = true;
-                        registerBtn.disabled = true;
-                        setMessage('Signing you in…');
-                        try {
-                                const data = await sendAuth('/admin/login', { username, password, require_admin: true });
-                                const token = data.access_token || data.token;
-                                if (!token) {
-                                        throw new Error('Login response missing access token');
-                                }
-                                localStorage.setItem(TOKEN_KEY, token);
-                                localStorage.setItem(USERNAME_KEY, data.username || username);
-                                if (data.refresh_token) {
-                                        localStorage.setItem(REFRESH_KEY, data.refresh_token);
-                                } else {
-                                        localStorage.removeItem(REFRESH_KEY);
-                                }
-                                const cookieName = data.session_cookie || localStorage.getItem(COOKIE_NAME_KEY) || 'session_token';
-                                localStorage.setItem(COOKIE_NAME_KEY, cookieName);
-                                setMessage('Success! Redirecting…', 'success');
-                                window.location.replace(nextUrl);
-                        } catch (err) {
-                                setMessage(err.message || 'Login failed', 'error');
-                        } finally {
-                                loginBtn.disabled = false;
-                                registerBtn.disabled = false;
-                        }
-                });
-
-                registerBtn.addEventListener('click', async () => {
-                        const username = usernameEl.value.trim().toLowerCase();
-                        const password = passwordEl.value;
-                        const adminKey = adminKeyEl.value.trim();
-                        if (!username || !password) {
-                                setMessage('Choose a username and password before creating an account.', 'error');
-                                return;
-                        }
-                        if (!adminKey) {
-                                setMessage('Enter the admin private key to create an account.', 'error');
-                                return;
-                        }
-                        registerBtn.disabled = true;
-                        loginBtn.disabled = true;
-                        setMessage('Creating admin account…');
-                        try {
-                                await sendAuth('/register', { username, password, admin_key: adminKey });
-                                setMessage('Account created! You can sign in now.', 'success');
-                                passwordEl.focus();
-                                adminKeyEl.value = '';
-                        } catch (err) {
-                                setMessage(err.message || 'Registration failed', 'error');
-                        } finally {
-                                registerBtn.disabled = false;
-                                loginBtn.disabled = false;
-                        }
-                });
-
-                usernameEl.focus();
-        </script>
-</body>
-</html>
