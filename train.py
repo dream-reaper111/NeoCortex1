@@ -178,61 +178,7 @@ def load_tradingview_webhooks(ticker: str) -> pd.DataFrame:
     recs: List[Dict[str, Any]] = []
     for r in rows:
         p = r.get("payload", {})
-        order = p.get("order", {}) if isinstance(p, dict) else {}
-        sym = order.get("symbol") or p.get("symbol") or p.get("ticker") or ticker
-        side = (order.get("side") or "").lower()
-        reduce_only = bool(order.get("reduceOnly", False))
-        client_id = str(p.get("clientOrderId") or p.get("client_id") or p.get("clientOrderID") or "")
 
-        evt = "entry"
-        if reduce_only or side == "sell":
-            evt = "exit"
-            if client_id.endswith("-TP1"): evt = "tp1"
-            elif client_id.endswith("-TP2"): evt = "tp2"
-            elif client_id.endswith("-TP3"): evt = "tp3"
-            elif client_id.endswith("-SL"):  evt = "sl"
-
-        t_bar_ms = r.get("t_bar")
-        if t_bar_ms:
-            ts = pd.to_datetime(int(t_bar_ms), unit="ms", utc=True)
-        else:
-            ts = pd.to_datetime(r.get("t_server"), utc=True, errors="coerce")
-
-        recs.append({
-            "ts": ts,
-            "ticker": str(sym).upper(),
-            "evt": evt,
-            "side": side or ("buy" if evt == "entry" else "sell")
-        })
-    df = pd.DataFrame.from_records(recs)
-    if df.empty:
-        return pd.DataFrame(columns=["ts","ticker","evt","side"]).astype({"ts":"datetime64[ns, UTC]"})
-    return df.sort_values("ts").reset_index(drop=True)
-
-def augment_with_tradingview(df_bars: pd.DataFrame, ticker: str) -> pd.DataFrame:
-    out = df_bars.copy()
-    out["tv_entry_recent"] = 0
-    out["tv_exit_recent"]  = 0
-    tv = load_tradingview_webhooks(ticker)
-    if tv.empty:
-        return out
-
-    dt = (df_bars.index[2] - df_bars.index[1]) if len(df_bars) >= 3 else pd.Timedelta(minutes=60)
-    entries = tv[tv["evt"] == "entry"][["ts"]].rename(columns={"ts":"ts_tv"}).copy()
-    exits   = tv[tv["evt"].isin(["tp1","tp2","tp3","sl","exit"])][["ts"]].rename(columns={"ts":"ts_tv"}).copy()
-
-    def _flag_recent(events: pd.DataFrame) -> pd.Series:
-        if events.empty:
-            return pd.Series(0, index=df_bars.index, dtype=int)
-        merged = pd.merge_asof(
-            left=pd.DataFrame({"ts_bar": df_bars.index}).sort_values("ts_bar"),
-            right=events.sort_values("ts_tv"),
-            left_on="ts_bar", right_on="ts_tv",
-            direction="backward", tolerance=dt
-        )
-        return merged["ts_tv"].notna().astype(int).set_axis(df_bars.index)
-
-    out["tv_entry_recent"] = _flag_recent(entries)
     out["tv_exit_recent"]  = _flag_recent(exits)
     return out
 
@@ -353,39 +299,7 @@ def _basic_pack(df: pd.DataFrame) -> pd.DataFrame:
     mline, msig, _ = macd(c, fast=4, slow=8, signal=3)
     rsi7 = rsi_wilder(c, 7)
     upVol   = v.where(c > o, 0.0); downVol = v.where(c < o, 0.0)
-    delta   = upVol - downVol
-    bullEngulf = (c > o) & (c.shift(1) < o.shift(1)) & (c > o.shift(1)) & (o < c.shift(1))
-    bearEngulf = (c < o) & (c.shift(1) > o.shift(1)) & (c < o.shift(1)) & (o > c.shift(1))
-    scoreL = ((fast>slow).astype(float) + (mline>msig).astype(float) + (rsi7.between(35,75)).astype(float)) / 3.0
-    scoreS = ((fast<slow).astype(float) + (mline<msig).astype(float) + (rsi7.between(25,65)).astype(float)) / 3.0
-    out = df.copy()
-    out["fast"]=fast; out["slow"]=slow
-    out["macdLine"]=mline; out["sigLine"]=msig
-    out["rsi"]=rsi7; out["deltaZ"]=0.0
-    out["volSpike"]= (v > v.rolling(3, min_periods=1).mean()).astype(int)
-    out["bullEngulf"]=bullEngulf.astype(int); out["bearEngulf"]=bearEngulf.astype(int)
-    out["LabelLong"]=(scoreL>=0.5).astype(int); out["LabelShort"]=(scoreS>=0.5).astype(int)
-    req = ["fast","slow","macdLine","sigLine","rsi","deltaZ","volSpike","bullEngulf","bearEngulf","LabelLong","LabelShort"]
-    out = _nan_safe_finalize(out, req)
-    if len(out) == 1:
-        out = pd.concat([out, out.tail(1)], axis=0)  # duplicate to reach 2
-    return out
-
-def build_features_and_labels(
-    df: pd.DataFrame,
-    *,
-    mode: str = "hft",
-    # thresholds left as-is; robustness handled internally
-    htfTf: str = "60",
-    entryThrBase: float = 1.2,
-    zThreshBase: float = -2.4,
-    cooldownBase: int = 0,
-    minVotesBase: int = 3,
-    relaxAfterBarsBase: int = 300,
-    relaxFactorBase: float = 0.85,
-    useHTFTrend: bool = False,
-    useHTFVWAP: bool = False,
-    useVoteGate: bool = False,
+ 
     useTimeWindow: bool = False,
     sessionTimes: str = "0930-1600",
     debugMode: bool = False,
@@ -479,48 +393,7 @@ def build_features_and_labels(
 
     out = df.copy()
     out["fast"] = fastMA; out["slow"] = slowMA
-    out["macdLine"] = macdLine; out["sigLine"] = sigLine
-    out["rsi"] = rsi; out["deltaZ"] = deltaZ
-    out["volSpike"] = volSpike.astype(int)
-    out["bullEngulf"] = bullEngulf.astype(int)
-    out["bearEngulf"] = bearEngulf.astype(int)
-    out["scoreL"] = scoreL; out["scoreS"] = scoreS
-    out["LabelLong"]  = doEnterLong.astype(int)
-    out["LabelShort"] = doEnterShort.astype(int)
 
-    # Only require these to be finite; don't blanket-drop
-    required = ["fast","slow","macdLine","sigLine","rsi","deltaZ","volSpike","bullEngulf","bearEngulf","LabelLong","LabelShort"]
-    out = _nan_safe_finalize(out, required)
-
-    if len(out) < 2:
-        # fallback tiny pack
-        out = _basic_pack(df)
-
-    print(f"Bars={len(out)}  L= {int(out['LabelLong'].sum())} ({out['LabelLong'].mean():.2%})  "
-          f"S= {int(out['LabelShort'].sum())} ({out['LabelShort'].mean():.2%})  mode={mode.upper()}")
-    return out
-
-# -----------------------------
-# UI compatibility: build_features wrapper with exog
-# -----------------------------
-def _harmonize_exog(df_base: pd.DataFrame, exog: Any) -> pd.DataFrame:
-    if exog is None:
-        return pd.DataFrame(index=df_base.index)
-    if isinstance(exog, dict):
-        exog = pd.DataFrame(exog)
-    if not isinstance(exog, pd.DataFrame):
-        raise TypeError("exog must be a pandas DataFrame or dict of arrays/Series")
-    ex = exog.copy()
-    ex.index = pd.to_datetime(ex.index, utc=True, errors="coerce")
-    ex = ex.sort_index().reindex(df_base.index, method="ffill")
-    cols = {}
-    for c in ex.columns:
-        col = f"ex_{c}" if not str(c).startswith("ex_") else str(c)
-        cols[c] = col
-    ex = ex.rename(columns=cols)
-    for c in ex.columns:
-        ex[c] = pd.to_numeric(ex[c], errors="coerce")
-    ex = ex.fillna(method="ffill").fillna(method="bfill")
     return ex
 
 def build_features(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
@@ -644,45 +517,7 @@ def gpu_logreg_fit(X_np: np.ndarray, y_np: np.ndarray, *, lr=0.05, epochs=1500, 
     return w_np, b_np, preds_np, probs_np
 
 class MLP(nn.Module):
-    def __init__(self, d_in, d_hid=32):
-        super().__init__()
-        self.fc1 = nn.Linear(d_in, d_hid)
-        self.fc2 = nn.Linear(d_hid, d_hid)
-        self.fc3 = nn.Linear(d_hid, 1)
-    def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
-
-def train_logreg(df_feat: pd.DataFrame, side: str, *, epochs=1500, lr=0.05, l2=0.0, verbose=True, run_dir: Path=None, xcols: Optional[List[str]]=None):
-    nn_emit = _make_nn_emitter(run_dir) if run_dir else None
-    Xcols = xcols or BASE_X_COLUMNS
-    X = df_feat[Xcols].astype(float).values
-    y = (df_feat["LabelLong"] if side=="long" else df_feat["LabelShort"]).astype(int).values
-    X, y = _guard_min_samples(X, y, need=2)
-    w, b, preds, probs = gpu_logreg_fit(X, y, lr=lr, epochs=epochs, l2=l2, verbose=verbose, nn_emit=nn_emit)
-    out = df_feat.copy()
-    col = "PredLong" if side=="long" else "PredShort"
-    out[col] = preds
-    _write_nn_graph(run_dir, [len(Xcols), 1], "logreg")
-    acc = (out[col] == (df_feat["LabelLong"] if side=="long" else df_feat["LabelShort"])).mean()
-    return out, {"acc": float(acc), "probs": probs.tolist(), "xcols": Xcols}
-
-def train_torch(df_feat: pd.DataFrame, side: str, *, epochs=200, lr=1e-3, run_dir: Path=None, device=None, xcols: Optional[List[str]]=None):
-    if not TORCH_OK:
-        raise SystemExit("PyTorch not installed, cannot use --model torch")
-    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    Xcols = xcols or BASE_X_COLUMNS
-    X = df_feat[Xcols].astype(float).values
-    y = (df_feat["LabelLong"] if side=="long" else df_feat["LabelShort"]).astype(float).values.reshape(-1,1)
-    X, y = _guard_min_samples(X, y.ravel(), need=2); y = y.reshape(-1,1)
-    X = torch.tensor(X, dtype=torch.float32).to(device)
-    y = torch.tensor(y, dtype=torch.float32).to(device)
-    model = MLP(X.shape[1], d_hid=32).to(device)
-    opt = optim.Adam(model.parameters(), lr=lr)
-    lossf = nn.BCEWithLogitsLoss()
-    nn_emit = _make_nn_emitter(run_dir) if run_dir else (lambda **kw: None)
+ (lambda **kw: None)
     _write_nn_graph(run_dir, [X.shape[1], 32, 32, 1], "torch")
     model.train()
     for e in range(1, epochs+1):
@@ -744,34 +579,86 @@ def plot_results_to(run_dir: Path, df_feat: pd.DataFrame, ticker: str, use_pred:
     if side in ("long", "both"):
         lblL = df_feat.index[df_feat["LabelLong"]==1]
         prdL = df_feat.index[df_feat.get("PredLong", pd.Series(index=df_feat.index, dtype=int))==1] if use_pred else lblL
-    else:
-        lblL = prdL = pd.Index([])
-    if side in ("short", "both"):
-        lblS = df_feat.index[df_feat["LabelShort"]==1]
-        prdS = df_feat.index[df_feat.get("PredShort", pd.Series(index=df_feat.index, dtype=int))==1] if use_pred else lblS
-    else:
-        lblS = prdS = pd.Index([])
-    plt.figure(figsize=(13,6))
-    plt.plot(df_feat.index, close, label="Close", linewidth=1.0)
-    if len(lblL):
-        ymin = close.loc[lblL] * 0.995; ymax = close.loc[lblL] * 1.005
-        plt.vlines(lblL, ymin=ymin, ymax=ymax, colors="green", alpha=0.25, label="Label Long")
-    if len(lblS):
-        ymin = close.loc[lblS] * 0.995; ymax = close.loc[lblS] * 1.005
-        plt.vlines(lblS, ymin=ymin, ymax=ymax, colors="red", alpha=0.25, label="Label Short")
-    if len(prdL): plt.scatter(prdL, close.loc[prdL], marker="^", s=36, label="Model Long")
-    if len(prdS): plt.scatter(prdS, close.loc[prdS], marker="v", s=36, label="Model Short")
-    plt.title(f"{ticker} - Entries ({'Pred' if use_pred else 'Labels'}) [{side.upper()}]")
-    plt.grid(True, alpha=0.3); plt.legend(); plt.tight_layout()
-    plt.savefig(run_dir / (f"trades_pred_{side}.png" if use_pred else f"trades_label_{side}.png"), dpi=140)
-    plt.close()
+    else: ex.columns:
+        col = f"ex_{c}" if not str(c).startswith("ex_") else str(c)
+        cols[c] = col
+    ex = ex.rename(columns=cols)
+    for c in ex.columns:
+        ex[c] = pd.to_numeric(ex[c], errors="coerce")
+    ex = ex.fillna(method="ffill").fillna(method="bfill")
+    return ex
 
-def save_confusion_and_roc(run_dir: Path, y_true, y_pred, y_prob, side: str):
+def build_features(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    exog = kwargs.pop("exog", None)
+    out = build_features_and_labels(df, **kwargs)
+    if exog is not None and len(out):
+        ex = _harmonize_exog(out, exog)
+        out = out.join(ex, how="left")
+    return out
+
+# -----------------------------
+# Models (logreg | torch | lgbm)
+# -----------------------------
+BASE_X_COLUMNS = ["fast","slow","macdLine","sigLine","rsi","deltaZ","volSpike","bullEngulf","bearEngulf"]
+TV_X_COLUMNS   = ["tv_entry_recent","tv_exit_recent"]
+FA_X_COLUMNS   = [c for _, c in FA_KEYS]
+EXT_X_COLUMNS  = ["robinhood_bar_recent","webull_bar_recent"]
+
+def _is_within(base: Path, candidate: Path) -> bool:
     try:
-        cm = confusion_matrix(y_true, y_pred, labels=[0,1])
-        plt.figure(figsize=(3.6,3.2))
-        plt.imshow(cm, cmap="Blues"); plt.title(f"CM ({side})")
-        for i in range(2):
+        candidate.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+def _ensure_artifact_dir(path: Path) -> Path:
+    runs_root = RUNS_ROOT.resolve()
+    resolved = path.resolve()
+    if not _is_within(runs_root, resolved):
+        raise ValueError(f"refusing to operate on artifact path outside {runs_root}: {resolved}")
+    resolved.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+def _ensure_dir(p: Path):
+    _ensure_artifact_dir(p)
+
+def _artifact_file(run_dir: Path, filename: str) -> Path:
+    safe_dir = _ensure_artifact_dir(run_dir)
+    name = Path(filename).name
+    if name != filename:
+        raise ValueError(f"invalid artifact filename: {filename}")
+    return safe_dir / name
+
+def _open_jsonl(path: Path):
+    safe_path = _artifact_file(path.parent, path.name)
+    return safe_path.open("a", encoding="utf-8")
+
+def _emit_jsonl(fh, obj):
+    fh.write(json.dumps(obj, separators=(",",":")) + "\n"); fh.flush()
+
+def _write_nn_graph(run_dir: Path, layers: List[int], model_name: str):
+    obj = {"title": "Neural Network", "model": f"{model_name} " + "+".join(map(str,layers)), "layers":[{"size":s} for s in layers]}
+    _artifact_file(run_dir, "nn_graph.json").write_text(json.dumps(obj, indent=2))
+
+def _make_nn_emitter(run_dir: Path):
+    _ensure_dir(run_dir)
+    fh = _open_jsonl(run_dir / "nn_state.jsonl")
+    def emit(**kw):
+        row = {"type":"nn_stats","t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **kw}
+        _emit_jsonl(fh, row)
+    return emit
+
+def _make_train_logger(run_dir: Path):
+    _ensure_dir(run_dir)
+    fh = _open_jsonl(run_dir / "train.log.jsonl")
+    def emit(row):
+        _emit_jsonl(fh, row)
+    return emit
+
+def _select_xcols(df_feat: pd.DataFrame, use_tv: bool, use_fa: bool, use_ext: bool) -> List[str]:
+    cols = list(BASE_X_COLUMNS)
+    if use_tv:  cols += [c for c in TV_X_COLUMNS if c in df_feat.columns]
+
             for j in range(2):
                 plt.text(j, i, str(cm[i,j]), ha="center", va="center", color="black")
         plt.xticks([0,1], ["0","1"]); plt.yticks([0,1], ["0","1"])
