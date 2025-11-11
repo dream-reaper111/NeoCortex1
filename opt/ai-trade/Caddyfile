@@ -1,0 +1,60 @@
+{
+  email admin@yourdomain.com
+  acme_ca https://acme-v02.api.letsencrypt.org/directory
+  admin off
+}
+
+(security_headers) {
+  header {
+    Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    X-XSS-Protection "1; mode=block"
+    Referrer-Policy "no-referrer"
+    Content-Security-Policy "default-src 'self'"
+    Cache-Control "no-store"
+  }
+}
+
+:80 {
+  redir https://{host}{uri}
+}
+
+:443 {
+  import security_headers
+  encode gzip zstd
+
+  rate_limit {
+    zone api_per_ip {
+      key {remote_ip}
+      events 20
+      window 1s
+    }
+  }
+
+  @api path /api/*
+  handle @api {
+    forward_auth authelia:9091 {
+      uri /api/verify?rd=https://{host}{uri}
+      copy_headers Remote-User Remote-Groups Remote-Name Remote-Email Authorization
+    }
+    reverse_proxy {
+      lb_policy random
+      to api_gpu0:8000 api_gpu1:8000
+      health_uri /health
+    }
+  }
+
+  handle /grafana* {
+    reverse_proxy grafana:3000
+  }
+
+  handle {
+    respond "AI Trading Gateway" 200
+  }
+
+  log {
+    output file /var/log/caddy/access.log
+    format single_field common_log
+  }
+}
