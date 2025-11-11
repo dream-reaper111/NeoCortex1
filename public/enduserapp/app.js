@@ -521,6 +521,8 @@ if (whopToken) {
 
 async function setupWhopButton() {
   if (!authWhopBtn || whopMode) return;
+
+  let availability = 'unknown';
   try {
     const resp = await fetch('/auth/whop/start?mode=status', { credentials: 'include' });
     let data = null;
@@ -529,18 +531,18 @@ async function setupWhopButton() {
     } catch (_err) {
       data = null;
     }
-    if (!resp.ok || !data || data.enabled !== true) {
-      authWhopBtn.hidden = true;
-      authWhopBtn.disabled = true;
-      setAuthMessage('Whop sign-in is not currently available. Contact support for assistance.', 'error');
-      return;
+
+    if (resp.ok && data && data.enabled === true) {
+      availability = 'enabled';
+    } else if (resp.ok) {
+      availability = 'disabled';
+    } else {
+      availability = 'unknown';
+      console.warn('Whop availability check returned an error response', resp.status, data);
     }
   } catch (err) {
+    availability = 'unknown';
     console.warn('Unable to determine Whop availability', err);
-    authWhopBtn.hidden = true;
-    authWhopBtn.disabled = true;
-    setAuthMessage('Unable to reach Whop. Check your connection or try again later.', 'error');
-    return;
   }
 
   if (!authWhopBtn.dataset.bound) {
@@ -550,6 +552,20 @@ async function setupWhopButton() {
     });
     authWhopBtn.dataset.bound = '1';
   }
+
+  if (availability === 'disabled') {
+    showWhopNotice('Whop sign-in is not currently available. Contact support for assistance.', 'error');
+    authWhopBtn.hidden = false;
+    authWhopBtn.disabled = true;
+    setAuthMessage('Whop sign-in is offline for your account. Reach out to support to regain access.', 'error');
+    return;
+  }
+
+  if (availability === 'unknown') {
+    showWhopNotice('We detected a login issue while contacting Whop. Try again or contact support if the issue persists.', 'error');
+    setAuthMessage('We detected a login issue. You can retry the Whop sign-in flow or contact support for help.', 'error');
+  }
+
   authWhopBtn.hidden = false;
   authWhopBtn.disabled = false;
 }

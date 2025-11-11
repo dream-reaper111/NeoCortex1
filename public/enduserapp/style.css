@@ -293,6 +293,14 @@ code {
   transform: none;
 }
 
+.btn.primary:disabled {
+  opacity: 1;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  color: rgba(255, 247, 255, 0.75);
+  filter: saturate(0.85) brightness(0.92);
+  box-shadow: none;
+}
+
 .btn.primary {
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
   border: none;
