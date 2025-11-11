@@ -98,11 +98,32 @@
 
     (function patchFetch() {
         const originalFetch = window.fetch.bind(window);
-        window.fetch = (input, init = {}) => {
+        window.fetch = async (input, init = {}) => {
             const token = authToken();
             const headers = new Headers(init.headers || {});
             if (token && !headers.has('Authorization')) {
                 headers.set('Authorization', 'Bearer ' + token);
+            }
+            const requestMethod = init && init.method
+                ? String(init.method)
+                : (input && typeof input === 'object' && 'method' in input ? String(input.method) : 'GET');
+            const method = requestMethod.toUpperCase();
+            if (window.CSRF) {
+                if (!['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method)) {
+                    try {
+                        const csrfToken = await window.CSRF.ensureToken();
+                        if (csrfToken) {
+                            headers.set(window.CSRF.headerName, csrfToken);
+                        }
+                    } catch (err) {
+                        console.warn('Unable to attach CSRF token', err);
+                    }
+                } else {
+                    const csrfToken = window.CSRF.token();
+                    if (csrfToken && !headers.has(window.CSRF.headerName)) {
+                        headers.set(window.CSRF.headerName, csrfToken);
+                    }
+                }
             }
             const finalInit = Object.assign({}, init, { headers });
             if (!finalInit.credentials) {

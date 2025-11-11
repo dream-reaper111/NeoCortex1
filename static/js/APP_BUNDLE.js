@@ -54,7 +54,18 @@ document.addEventListener('DOMContentLoaded', () => {
             event.preventDefault();
             logoutBtn.disabled = true;
             try {
-                await fetch('/logout', { method: 'POST', credentials: 'include' });
+                const headers = {};
+                if (window.CSRF) {
+                    try {
+                        const token = await window.CSRF.ensureToken();
+                        if (token) {
+                            headers[window.CSRF.headerName] = token;
+                        }
+                    } catch (err) {
+                        console.warn('Unable to refresh CSRF token before logout', err);
+                    }
+                }
+                await fetch('/logout', { method: 'POST', credentials: 'include', headers });
             } catch (_) {
                 /* swallow */
             }

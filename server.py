@@ -117,6 +117,7 @@ from starlette.status import (
     HTTP_403_FORBIDDEN,
     HTTP_502_BAD_GATEWAY,
 )
+from csrf import clear_csrf, csrf_manager, issue_csrf_token
 try:
     from fastapi.templating import Jinja2Templates
 except ModuleNotFoundError:  # pragma: no cover - fallback when optional extras missing
@@ -1395,11 +1396,13 @@ AUTH_DB_PATH = _resolve_auth_db_path(resolved_auth_db)
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "access_token")
 SESSION_COOKIE_SECURE = _env_flag("AUTH_COOKIE_SECURE", default=SSL_ENABLED)
 SESSION_COOKIE_MAX_AGE = int(os.getenv("SESSION_COOKIE_MAX_AGE", str(15 * 60)))
-SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax") or "lax"
+SESSION_COOKIE_SAMESITE = (os.getenv("SESSION_COOKIE_SAMESITE") or "strict").strip().lower() or "strict"
 REFRESH_COOKIE_NAME = os.getenv("REFRESH_TOKEN_COOKIE_NAME", "refresh_token")
 REFRESH_COOKIE_SECURE = _env_flag("REFRESH_COOKIE_SECURE", default=SESSION_COOKIE_SECURE)
 REFRESH_COOKIE_MAX_AGE = int(os.getenv("REFRESH_COOKIE_MAX_AGE", str(30 * 24 * 3600)))
-REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "lax") or "lax"
+REFRESH_COOKIE_SAMESITE = (os.getenv("REFRESH_COOKIE_SAMESITE") or "strict").strip().lower() or "strict"
+
+csrf_manager.secure_cookie = SESSION_COOKIE_SECURE
 
 _EPHEMERAL_JWT_SECRET = False
 _configured_jwt_secret = (os.getenv("JWT_SECRET_KEY") or "").strip()
@@ -3313,7 +3316,22 @@ async def lifespan(app: FastAPI):
     print(json.dumps(run_preflight(), indent=2), flush=True)
     yield
 
-app = FastAPI(title="Neo Cortex AI Trainer", version="4.4", lifespan=lifespan)
+app = FastAPI(
+    title="Neo Cortex AI Trainer",
+    version="4.4",
+    lifespan=lifespan,
+    dependencies=[Depends(csrf_manager)],
+)
+
+
+@app.get("/csrf-token")
+async def get_csrf_token(request: Request, response: Response) -> Dict[str, str]:
+    """Return a fresh CSRF token bound to the caller's session."""
+
+    token = issue_csrf_token(request, response)
+    response.headers.setdefault("cache-control", "no-store")
+    response.headers.setdefault("pragma", "no-cache")
+    return {"csrf_token": token}
 
 
 @app.middleware("http")
@@ -4570,6 +4588,7 @@ async def logout(
     _clear_auth_failures(client_ip)
     resp = _json({"ok": True})
     _clear_auth_cookies(resp)
+    clear_csrf(request, resp)
     return resp
 
 

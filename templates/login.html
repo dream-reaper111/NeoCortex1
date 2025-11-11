@@ -13,6 +13,8 @@
             </div>
             <div id="notice" class="auth-notice" hidden></div>
             <form id="loginForm" class="auth-form">
+                <noscript class="auth-noscript">JavaScript is required to load security credentials. Enable JavaScript to continue.</noscript>
+                <input type="hidden" id="csrf_token" name="csrf_token" />
                 <div class="auth-field">
                     <label for="username">Username</label>
                     <input id="username" name="username" type="text" autocomplete="username" placeholder="yourname" required />
@@ -122,9 +124,11 @@
     const resetBtn = document.getElementById('resetBtn');
 
     async function sendAuth(path, body) {
+        const csrfToken = window.CSRF ? await window.CSRF.ensureToken() : null;
         const resp = await fetch(path, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: Object.assign({ 'Content-Type': 'application/json' },
+                csrfToken ? { [window.CSRF.headerName]: csrfToken } : {}),
             credentials: 'include',
             body: JSON.stringify(body)
         });
