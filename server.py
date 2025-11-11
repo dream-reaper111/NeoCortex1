@@ -1421,7 +1421,7 @@ DEFAULT_ROLE = os.getenv("DEFAULT_USER_ROLE", ROLE_READ_ONLY)
 ROLE_SCOPES: Dict[str, Set[str]] = {
     ROLE_ADMIN: {"admin", "trade", "read", "positions", "credentials", "api-keys", "ml-chat"},
     ROLE_TRADER: {"trade", "read", "positions", "ml-chat"},
-    ROLE_LICENSE: {"license", "read", "ml-chat"},
+    ROLE_LICENSE: {"license", "read", "positions", "credentials", "trade", "ml-chat"},
     ROLE_READ_ONLY: {"read", "ml-chat"},
 }
 MFA_REQUIRED_ROLES: Set[str] = {role.strip() for role in os.getenv("MFA_REQUIRED_ROLES", f"{ROLE_ADMIN},{ROLE_TRADER}").split(",") if role.strip()}
@@ -1690,6 +1690,23 @@ def _init_auth_db() -> None:
                 base_url TEXT,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (user_id, account_type),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            '''
+        )
+        conn.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS alpaca_client_credentials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                account_type TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                api_secret TEXT NOT NULL,
+                base_url TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(user_id, label),
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             '''
@@ -2931,6 +2948,152 @@ def _resolve_alpaca_credentials(account: str, user_id: Optional[int]) -> Dict[st
         "base_url": ALPACA_BASE_URL_PAPER,
     }
 
+
+def _list_client_credentials(user_id: int) -> List[Dict[str, Any]]:
+    with _db_conn() as conn:
+        rows = conn.execute(
+            '''
+            SELECT id, label, account_type, api_key, base_url, created_at, updated_at
+            FROM alpaca_client_credentials
+            WHERE user_id = ?
+            ORDER BY label COLLATE NOCASE
+            ''',
+            (user_id,),
+        ).fetchall()
+    credentials: List[Dict[str, Any]] = []
+    for row in rows:
+        try:
+            api_key = _decrypt_secret(row["api_key"])
+        except CredentialEncryptionError as exc:
+            logger.error("Failed to decrypt stored client credentials for user %s", user_id)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        credentials.append(
+            {
+                "id": row["id"],
+                "label": row["label"],
+                "account_type": row["account_type"],
+                "api_key": api_key,
+                "base_url": row["base_url"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        )
+    return credentials
+
+
+def _save_client_credentials(
+    user_id: int,
+    label: str,
+    account_type: str,
+    api_key: str,
+    api_secret: str,
+    base_url: Optional[str],
+    client_id: Optional[int] = None,
+) -> int:
+    stored_key = _encrypt_secret(api_key)
+    stored_secret = _encrypt_secret(api_secret)
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_conn() as conn:
+        if client_id is not None:
+            cur = conn.execute(
+                '''
+                UPDATE alpaca_client_credentials
+                SET label = ?,
+                    account_type = ?,
+                    api_key = ?,
+                    api_secret = ?,
+                    base_url = ?,
+                    updated_at = ?
+                WHERE id = ? AND user_id = ?
+                ''',
+                (label, account_type, stored_key, stored_secret, base_url, now, client_id, user_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="client_not_found")
+            return client_id
+
+        conn.execute(
+            '''
+            INSERT INTO alpaca_client_credentials (
+                user_id, label, account_type, api_key, api_secret, base_url, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, label) DO UPDATE SET
+                account_type = excluded.account_type,
+                api_key = excluded.api_key,
+                api_secret = excluded.api_secret,
+                base_url = excluded.base_url,
+                updated_at = excluded.updated_at
+            ''',
+            (user_id, label, account_type, stored_key, stored_secret, base_url, now, now),
+        )
+        row = conn.execute(
+            '''
+            SELECT id FROM alpaca_client_credentials WHERE user_id = ? AND label = ?
+            ''',
+            (user_id, label),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=500, detail="client_save_failed")
+    return int(row["id"])
+
+
+def _delete_client_credential(user_id: int, client_id: int) -> bool:
+    with _db_conn() as conn:
+        cur = conn.execute(
+            '''
+            DELETE FROM alpaca_client_credentials WHERE id = ? AND user_id = ?
+            ''',
+            (client_id, user_id),
+        )
+    return cur.rowcount > 0
+
+
+def _fetch_client_credential(
+    user_id: int,
+    *,
+    client_id: Optional[int] = None,
+    label: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if client_id is None and not label:
+        return None
+    query = (
+        "SELECT id, label, account_type, api_key, api_secret, base_url, created_at, updated_at\n"
+        "FROM alpaca_client_credentials\n"
+        "WHERE user_id = ? AND "
+    )
+    params: List[Any]
+    if client_id is not None:
+        query += "id = ?"
+        params = [user_id, client_id]
+    else:
+        query += "label = ?"
+        params = [user_id, label]
+    with _db_conn() as conn:
+        row = conn.execute(query, params).fetchone()
+    if row is None:
+        return None
+    try:
+        api_key = _decrypt_secret(row["api_key"])
+        api_secret = _decrypt_secret(row["api_secret"])
+    except CredentialEncryptionError as exc:
+        logger.error("Failed to decrypt stored client credentials for user %s", user_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    base_url = row["base_url"] or (
+        ALPACA_BASE_URL_FUND if row["account_type"] == "funded" else ALPACA_BASE_URL_PAPER
+    )
+    return {
+        "id": row["id"],
+        "label": row["label"],
+        "account_type": row["account_type"],
+        "key": api_key,
+        "secret": api_secret,
+        "base_url": base_url,
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
 def _nocache() -> Dict[str, str]:
     return {
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -3747,6 +3910,15 @@ class CredentialReq(BaseModel):
     base_url: Optional[str] = None
 
 
+class ClientCredentialReq(BaseModel):
+    label: str
+    account_type: Literal["paper", "funded"] = "paper"
+    api_key: str
+    api_secret: str
+    base_url: Optional[str] = None
+    client_id: Optional[int] = None
+
+
 class WhopRegistrationReq(BaseModel):
     token: str
     username: str
@@ -3815,6 +3987,8 @@ class AutoTradeOrderRequest(BaseModel):
     strike: Optional[float] = Field(default=None, ge=0)
     future_month: Optional[str] = None
     future_year: Optional[int] = Field(default=None, ge=2000, le=2100)
+    client_id: Optional[int] = None
+    client_label: Optional[str] = None
 
 
 class TokenRefreshRequest(BaseModel):
@@ -4613,7 +4787,11 @@ async def list_alpaca_credentials(
                 "updated_at": row["updated_at"],
             }
         )
-    return _json({"ok": True, "credentials": credentials})
+    try:
+        client_credentials = _list_client_credentials(user["id"])
+    except HTTPException:
+        raise
+    return _json({"ok": True, "credentials": credentials, "clients": client_credentials})
 
 
 @app.post("/alpaca/credentials")
@@ -4640,6 +4818,63 @@ async def set_alpaca_credentials(
         logger.error("Failed to persist credentials for user %s", user["id"])
         return _json({"ok": False, "detail": str(exc)}, 500)
     return _json({"ok": True, "account_type": acct_type, "base_url": base_url})
+
+
+@app.post("/alpaca/clients")
+async def save_alpaca_client_credentials(
+    req: ClientCredentialReq,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    user = _require_user(authorization, session_token, required_scopes={"credentials"})
+    label = (req.label or "").strip()
+    if not label:
+        return _json({"ok": False, "detail": "label is required"}, 400)
+    acct_type = (req.account_type or "paper").strip().lower()
+    if acct_type not in {"paper", "funded"}:
+        return _json({"ok": False, "detail": "account_type must be 'paper' or 'funded'"}, 400)
+    api_key = (req.api_key or "").strip()
+    api_secret = (req.api_secret or "").strip()
+    if not api_key or not api_secret:
+        return _json({"ok": False, "detail": "api_key and api_secret are required"}, 400)
+    base_url = (req.base_url or "").strip()
+    if not base_url:
+        base_url = ALPACA_BASE_URL_FUND if acct_type == "funded" else ALPACA_BASE_URL_PAPER
+    try:
+        client_id = _save_client_credentials(
+            user["id"],
+            label,
+            acct_type,
+            api_key,
+            api_secret,
+            base_url,
+            req.client_id,
+        )
+    except CredentialEncryptionError as exc:
+        logger.error("Failed to persist client credentials for user %s", user["id"])
+        return _json({"ok": False, "detail": str(exc)}, 500)
+    return _json(
+        {
+            "ok": True,
+            "client_id": client_id,
+            "label": label,
+            "account_type": acct_type,
+            "base_url": base_url,
+        }
+    )
+
+
+@app.delete("/alpaca/clients/{client_id}")
+async def delete_alpaca_client_credentials(
+    client_id: int,
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+):
+    user = _require_user(authorization, session_token, required_scopes={"credentials"})
+    removed = _delete_client_credential(user["id"], int(client_id))
+    if not removed:
+        raise HTTPException(status_code=404, detail="client_not_found")
+    return _json({"ok": True, "client_id": int(client_id)})
 
 # --- account data: positions and P&L ---
 @app.post("/positions")
@@ -5196,7 +5431,19 @@ async def trade_auto(
     if not symbol:
         return _json({"ok": False, "detail": "symbol is required"}, 400)
 
+    client_id = req.client_id
+    client_label = (req.client_label or "").strip() or None
+    selected_client: Optional[Dict[str, Any]] = None
     account_type = "funded" if req.account == "funded" else "paper"
+    if client_id is not None or client_label:
+        selected_client = _fetch_client_credential(
+            user["id"],
+            client_id=client_id if client_id is not None else None,
+            label=None if client_id is not None else client_label,
+        )
+        if selected_client is None:
+            raise HTTPException(status_code=404, detail="client_not_found")
+        account_type = selected_client["account_type"]
     quantity = float(req.quantity)
     price = float(req.price) if req.price is not None else None
     if price is not None and price <= 0:
@@ -5208,6 +5455,7 @@ async def trade_auto(
         "side": req.side,
         "price": round(price, 4) if price is not None else None,
         "instrument": req.instrument,
+        "account": account_type,
     }
 
     ai_payload = {
@@ -5225,21 +5473,30 @@ async def trade_auto(
     ai_decision = _run_ai_trainer(ai_payload)
     if ai_decision.get("action") != "execute":
         detail = ai_decision.get("message") or "Neo Cortex AI parked the order for review."
-        return _json(
-            {
-                "ok": True,
-                "executed": False,
-                "ai": ai_decision,
-                "detail": detail,
-                "account": account_type,
-                "order": order_summary,
-            }
-        )
+        response_payload: Dict[str, Any] = {
+            "ok": True,
+            "executed": False,
+            "ai": ai_decision,
+            "detail": detail,
+            "account": account_type,
+            "order": order_summary,
+        }
+        if selected_client:
+            response_payload["client_id"] = selected_client["id"]
+            response_payload["client_label"] = selected_client["label"]
+        return _json(response_payload)
 
-    creds = _resolve_alpaca_credentials(account_type, user["id"])
-    key = creds.get("key")
-    secret = creds.get("secret")
-    base_url = creds.get("base_url")
+    if selected_client:
+        key = selected_client["key"]
+        secret = selected_client["secret"]
+        base_url = selected_client["base_url"]
+        order_summary["client_id"] = selected_client["id"]
+        order_summary["client_label"] = selected_client["label"]
+    else:
+        creds = _resolve_alpaca_credentials(account_type, user["id"])
+        key = creds.get("key")
+        secret = creds.get("secret")
+        base_url = creds.get("base_url")
     if not key or not secret or not base_url:
         return _json({"ok": False, "detail": "Alpaca credentials not configured"}, 500)
 
@@ -5278,18 +5535,19 @@ async def trade_auto(
             timeout=20,
         )
     except Exception as exc:
-        return _json(
-            {
-                "ok": False,
-                "executed": False,
-                "ai": ai_decision,
-                "detail": f"Failed to submit order: {exc}",
-                "account": account_type,
-                "order": order_summary,
-                "alpaca_order": order_payload,
-            },
-            502,
-        )
+        failure_payload: Dict[str, Any] = {
+            "ok": False,
+            "executed": False,
+            "ai": ai_decision,
+            "detail": f"Failed to submit order: {exc}",
+            "account": account_type,
+            "order": order_summary,
+            "alpaca_order": order_payload,
+        }
+        if selected_client:
+            failure_payload["client_id"] = selected_client["id"]
+            failure_payload["client_label"] = selected_client["label"]
+        return _json(failure_payload, 502)
 
     alpaca_payload: Optional[Any]
     try:
@@ -5317,6 +5575,9 @@ async def trade_auto(
             "alpaca": alpaca_payload,
             "alpaca_order": order_payload,
         }
+        if selected_client:
+            body["client_id"] = selected_client["id"]
+            body["client_label"] = selected_client["label"]
         return _json(body, resp.status_code or 200)
 
     error_detail: Optional[str] = None
@@ -5338,6 +5599,9 @@ async def trade_auto(
         "order": order_summary,
         "alpaca_order": order_payload,
     }
+    if selected_client:
+        error_body["client_id"] = selected_client["id"]
+        error_body["client_label"] = selected_client["label"]
     if alpaca_payload is not None:
         error_body["alpaca"] = alpaca_payload
 

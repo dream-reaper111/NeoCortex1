@@ -38,6 +38,81 @@
         </div>
     </div>
 
+    <section class="dashboard-row">
+        <article class="nc-card dashboard-card dashboard-card-flex">
+            <h2>Auto Algorithmic Trading</h2>
+            <p class="nc-text-muted nc-text-small">
+                Route discretionary orders through NeoCortex Machine Learning. The trainer will score each request
+                in real time and only forward orders that clear its confidence thresholds.
+            </p>
+            <form id="autoTradeForm" class="nc-grid nc-grid-auto dashboard-grid">
+                <div><label for="autoSymbol">Symbol</label><input id="autoSymbol" placeholder="e.g., SPY" required /></div>
+                <div>
+                    <label for="autoSide">Bias</label>
+                    <select id="autoSide"><option value="long" selected>LONG</option><option value="short">SHORT</option></select>
+                </div>
+                <div><label for="autoQty">Quantity</label><input id="autoQty" type="number" step="0.01" min="0" value="1" /></div>
+                <div><label for="autoPrice">Limit Price (optional)</label><input id="autoPrice" type="number" step="0.0001" min="0" placeholder="market" /></div>
+                <div>
+                    <label for="autoAccount">Primary Account</label>
+                    <select id="autoAccount"><option value="paper">Paper</option><option value="funded">Live</option></select>
+                </div>
+                <div>
+                    <label for="autoClientSelect">Client Account</label>
+                    <select id="autoClientSelect">
+                        <option value="" selected>Use my primary credentials</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="autoInstrument">Instrument</label>
+                    <select id="autoInstrument">
+                        <option value="equity" selected>Equity</option>
+                        <option value="option">Option</option>
+                        <option value="future">Future</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="autoOptionType">Option Side</label>
+                    <select id="autoOptionType"><option value="">-</option><option value="call">Call</option><option value="put">Put</option></select>
+                </div>
+                <div><label for="autoExpiry">Expiry</label><input id="autoExpiry" placeholder="YYYY-MM-DD" /></div>
+                <div><label for="autoStrike">Strike</label><input id="autoStrike" type="number" step="0.01" min="0" /></div>
+                <div><label for="autoFutureMonth">Future Month</label><input id="autoFutureMonth" placeholder="e.g., Z" /></div>
+                <div><label for="autoFutureYear">Future Year</label><input id="autoFutureYear" type="number" min="2024" max="2100" /></div>
+            </form>
+            <div class="dashboard-actions">
+                <button class="nc-btn" id="autoTradeSubmit" type="submit" form="autoTradeForm">Route with NeoCortex</button>
+                <span id="autoStatus" class="nc-text-muted nc-text-small">Waiting for input…</span>
+            </div>
+            <pre id="autoAIResult" class="dashboard-pre-small nc-text-small mono" aria-live="polite"></pre>
+        </article>
+
+        <article class="nc-card dashboard-card dashboard-card-flex">
+            <h2>Client Alpaca Accounts</h2>
+            <p class="nc-text-muted nc-text-small">
+                Link follower accounts unlocked via Whop licensing. Credentials are encrypted at rest and scoped per user.
+            </p>
+            <table class="dashboard-table nc-text-small" id="clientCredTable">
+                <thead><tr><th>Label</th><th>Type</th><th>API Key</th><th>Base URL</th><th>Updated</th><th>Actions</th></tr></thead>
+                <tbody id="clientCredTableBody"><tr><td colspan="6" class="nc-text-muted">No client accounts linked.</td></tr></tbody>
+            </table>
+            <form id="clientCredForm" class="nc-grid nc-grid-auto dashboard-grid">
+                <div><label for="clientLabel">Label</label><input id="clientLabel" placeholder="e.g., Team Alpha" required /></div>
+                <div>
+                    <label for="clientAccountType">Account Type</label>
+                    <select id="clientAccountType"><option value="paper" selected>Paper</option><option value="funded">Live</option></select>
+                </div>
+                <div><label for="clientApiKey">API Key</label><input id="clientApiKey" autocomplete="off" required /></div>
+                <div><label for="clientApiSecret">API Secret</label><input id="clientApiSecret" type="password" autocomplete="off" required /></div>
+                <div><label for="clientBaseUrl">Base URL</label><input id="clientBaseUrl" placeholder="auto" /></div>
+            </form>
+            <div class="dashboard-actions">
+                <button class="nc-btn nc-btn--secondary" id="clientCredSave" type="submit" form="clientCredForm">Save Client Account</button>
+                <span id="clientCredStatus" class="nc-text-muted nc-text-small">Use Whop onboarding to unlock access.</span>
+            </div>
+        </article>
+    </section>
+
     <section class="dashboard-row dashboard-media">
         <article class="nc-card dashboard-card dashboard-card-flex">
             <h2>Train Model</h2>
@@ -361,6 +436,298 @@
         refreshArtifacts();
         fetchMetrics();
     });
+
+    const clientTableBody = $('clientCredTableBody');
+    const clientStatus = $('clientCredStatus');
+    const clientForm = $('clientCredForm');
+    const clientAccountType = $('clientAccountType');
+    const clientLabel = $('clientLabel');
+    const clientApiKey = $('clientApiKey');
+    const clientApiSecret = $('clientApiSecret');
+    const clientBaseUrl = $('clientBaseUrl');
+    const autoForm = $('autoTradeForm');
+    const autoSubmit = $('autoTradeSubmit');
+    const autoStatus = $('autoStatus');
+    const autoAIResult = $('autoAIResult');
+    const autoClientSelect = $('autoClientSelect');
+    const autoAccount = $('autoAccount');
+    const autoSymbol = $('autoSymbol');
+    const autoSide = $('autoSide');
+    const autoQty = $('autoQty');
+    const autoPrice = $('autoPrice');
+    const autoInstrument = $('autoInstrument');
+    const autoOptionType = $('autoOptionType');
+    const autoExpiry = $('autoExpiry');
+    const autoStrike = $('autoStrike');
+    const autoFutureMonth = $('autoFutureMonth');
+    const autoFutureYear = $('autoFutureYear');
+
+    let clientEditingId = null;
+    let clientCache = [];
+
+    function maskKey(key) {
+        if (!key) return '-';
+        if (key.length <= 6) return key;
+        return key.slice(0, 4) + '•••' + key.slice(-2);
+    }
+
+    function updateAutoAccountState() {
+        if (!autoClientSelect || !autoAccount) return;
+        const value = autoClientSelect.value || '';
+        if (value.startsWith('client:')) {
+            const id = Number(value.split(':')[1] || '0');
+            const matched = clientCache.find((item) => item.id === id);
+            if (matched && matched.account_type) {
+                autoAccount.value = matched.account_type;
+            }
+            autoAccount.setAttribute('disabled', 'disabled');
+        } else {
+            autoAccount.removeAttribute('disabled');
+        }
+    }
+
+    function populateClientSelect(clients) {
+        if (!autoClientSelect) return;
+        const current = autoClientSelect.value;
+        autoClientSelect.innerHTML = '<option value="">Use my primary credentials</option>';
+        clients.forEach((client) => {
+            const option = document.createElement('option');
+            option.value = 'client:' + client.id;
+            option.textContent = client.label + ' (' + client.account_type + ')';
+            autoClientSelect.appendChild(option);
+        });
+        if (clients.some((client) => 'client:' + client.id === current)) {
+            autoClientSelect.value = current;
+        }
+        updateAutoAccountState();
+    }
+
+    function renderClientRows(clients) {
+        if (!clientTableBody) return;
+        clientTableBody.innerHTML = '';
+        if (!clients.length) {
+            clientTableBody.innerHTML = '<tr><td colspan="6" class="nc-text-muted">No client accounts linked.</td></tr>';
+            return;
+        }
+        clients.forEach((client) => {
+            const tr = document.createElement('tr');
+            tr.dataset.clientId = String(client.id);
+            tr.innerHTML = `
+                <td>${client.label}</td>
+                <td>${client.account_type.toUpperCase()}</td>
+                <td><code class="mono">${maskKey(client.api_key || '')}</code></td>
+                <td>${client.base_url || 'default'}</td>
+                <td>${client.updated_at ? client.updated_at.slice(0, 19) : '-'}</td>
+                <td class="nc-inline">
+                    <button type="button" class="nc-btn nc-btn--ghost nc-btn--xs" data-edit-client="${client.id}">Edit</button>
+                    <button type="button" class="nc-btn nc-btn--danger nc-btn--xs" data-remove-client="${client.id}">Remove</button>
+                </td>
+            `;
+            clientTableBody.appendChild(tr);
+        });
+    }
+
+    async function loadCredentialPanels() {
+        if (!clientTableBody) return;
+        try {
+            const resp = await fetch('/alpaca/credentials/read', { method: 'POST' });
+            const txt = await resp.text();
+            let data;
+            try { data = JSON.parse(txt); } catch (_) { throw new Error(`HTTP ${resp.status} ${resp.statusText}`); }
+            if (!resp.ok || !data.ok) {
+                throw new Error((data && (data.detail || data.reason)) || 'Credential lookup failed');
+            }
+            const clients = Array.isArray(data.clients) ? data.clients : [];
+            clientCache = clients;
+            renderClientRows(clients);
+            populateClientSelect(clients);
+            const account = $('accountStatus');
+            if (account) {
+                const primary = (Array.isArray(data.credentials) && data.credentials.length)
+                    ? data.credentials.map((c) => c.account_type).join(', ')
+                    : 'none';
+                account.textContent = `Primary: ${primary || 'none'} • Clients: ${clients.length}`;
+            }
+            if (clientStatus) {
+                clientStatus.textContent = clients.length
+                    ? 'Click a client to edit or remove credentials.'
+                    : 'No linked clients yet. Add one below.';
+            }
+        } catch (err) {
+            if (clientStatus) {
+                clientStatus.textContent = 'Credential sync failed: ' + (err.message || err);
+            }
+        }
+    }
+
+    function resetClientForm() {
+        if (!clientForm) return;
+        clientEditingId = null;
+        clientForm.reset();
+        if (clientAccountType) clientAccountType.value = 'paper';
+        if (clientStatus) clientStatus.textContent = 'Use Whop onboarding to unlock access.';
+    }
+
+    if (clientForm) {
+        clientForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!clientLabel || !clientApiKey || !clientApiSecret) return;
+            const payload = {
+                label: clientLabel.value.trim(),
+                account_type: clientAccountType ? clientAccountType.value : 'paper',
+                api_key: clientApiKey.value.trim(),
+                api_secret: clientApiSecret.value.trim(),
+                base_url: clientBaseUrl ? clientBaseUrl.value.trim() : '',
+            };
+            if (!payload.label || !payload.api_key || !payload.api_secret) {
+                if (clientStatus) clientStatus.textContent = 'All fields are required except Base URL.';
+                return;
+            }
+            if (clientEditingId) {
+                payload.client_id = clientEditingId;
+            }
+            if (clientStatus) clientStatus.textContent = 'Saving client credentials…';
+            const buttons = clientForm.querySelectorAll('button');
+            buttons.forEach((btn) => { btn.disabled = true; });
+            try {
+                const resp = await fetch('/alpaca/clients', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const txt = await resp.text();
+                let data;
+                try { data = JSON.parse(txt); } catch (_) { throw new Error(`HTTP ${resp.status} ${resp.statusText}`); }
+                if (!resp.ok || !data.ok) {
+                    throw new Error((data && (data.detail || data.reason)) || 'Save failed');
+                }
+                clientEditingId = null;
+                if (clientStatus) clientStatus.textContent = 'Client credentials saved.';
+                clientForm.reset();
+                if (clientAccountType) clientAccountType.value = 'paper';
+                loadCredentialPanels();
+            } catch (err) {
+                if (clientStatus) clientStatus.textContent = 'Save failed: ' + (err.message || err);
+            } finally {
+                buttons.forEach((btn) => { btn.disabled = false; });
+            }
+        });
+    }
+
+    const clientTable = document.getElementById('clientCredTable');
+    if (clientTable) {
+        clientTable.addEventListener('click', async (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (target.dataset.editClient) {
+                const id = Number(target.dataset.editClient);
+                const matched = clientCache.find((item) => item.id === id);
+                if (!matched) return;
+                clientEditingId = matched.id;
+                if (clientLabel) clientLabel.value = matched.label;
+                if (clientAccountType) clientAccountType.value = matched.account_type;
+                if (clientApiKey) clientApiKey.value = matched.api_key || '';
+                if (clientApiSecret) clientApiSecret.value = '';
+                if (clientBaseUrl) clientBaseUrl.value = matched.base_url || '';
+                if (clientStatus) clientStatus.textContent = 'Editing client "' + matched.label + '". Update values and save.';
+            }
+            if (target.dataset.removeClient) {
+                const id = Number(target.dataset.removeClient);
+                if (!Number.isFinite(id)) return;
+                if (!window.confirm('Remove this client credential?')) return;
+                try {
+                    const resp = await fetch(`/alpaca/clients/${id}`, { method: 'DELETE' });
+                    if (!resp.ok) {
+                        const txt = await resp.text();
+                        throw new Error(txt || 'Delete failed');
+                    }
+                    if (clientStatus) clientStatus.textContent = 'Client credentials removed.';
+                    if (clientEditingId === id) {
+                        resetClientForm();
+                    }
+                    loadCredentialPanels();
+                } catch (err) {
+                    if (clientStatus) clientStatus.textContent = 'Delete failed: ' + (err.message || err);
+                }
+            }
+        });
+    }
+
+    if (autoClientSelect) {
+        autoClientSelect.addEventListener('change', updateAutoAccountState);
+    }
+
+    if (autoForm) {
+        autoForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (autoSubmit) autoSubmit.disabled = true;
+            if (autoStatus) autoStatus.textContent = 'Submitting to NeoCortex…';
+            if (autoAIResult) autoAIResult.textContent = '';
+            const payload = {
+                symbol: autoSymbol ? autoSymbol.value.trim().toUpperCase() : '',
+                side: autoSide ? autoSide.value : 'long',
+                quantity: Number(autoQty && autoQty.value ? autoQty.value : '1') || 1,
+                account: autoAccount ? autoAccount.value : 'paper',
+                instrument: autoInstrument ? autoInstrument.value : 'equity',
+            };
+            if (!payload.symbol) {
+                if (autoStatus) autoStatus.textContent = 'Symbol is required.';
+                if (autoSubmit) autoSubmit.disabled = false;
+                return;
+            }
+            const priceValue = autoPrice && autoPrice.value ? Number(autoPrice.value) : NaN;
+            if (Number.isFinite(priceValue) && priceValue > 0) {
+                payload.price = priceValue;
+            }
+            if (autoInstrument && autoInstrument.value === 'option') {
+                const optionType = autoOptionType && autoOptionType.value ? autoOptionType.value : '';
+                if (optionType) payload.option_type = optionType;
+                const expiry = autoExpiry && autoExpiry.value ? autoExpiry.value.trim() : '';
+                if (expiry) payload.expiry = expiry;
+                const strike = autoStrike && autoStrike.value ? Number(autoStrike.value) : NaN;
+                if (Number.isFinite(strike)) payload.strike = strike;
+            } else if (autoInstrument && autoInstrument.value === 'future') {
+                const month = autoFutureMonth && autoFutureMonth.value ? autoFutureMonth.value.trim().toUpperCase() : '';
+                const year = autoFutureYear && autoFutureYear.value ? Number(autoFutureYear.value) : NaN;
+                if (month) payload.future_month = month;
+                if (Number.isFinite(year)) payload.future_year = year;
+            }
+            if (autoClientSelect) {
+                const selected = autoClientSelect.value || '';
+                if (selected.startsWith('client:')) {
+                    payload.client_id = Number(selected.split(':')[1] || '0');
+                }
+            }
+            try {
+                const resp = await fetch('/trade/auto', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const txt = await resp.text();
+                let data;
+                try { data = JSON.parse(txt); } catch (_) { throw new Error(`HTTP ${resp.status} ${resp.statusText}`); }
+                if (!resp.ok || !data.ok) {
+                    throw new Error((data && (data.detail || data.reason)) || 'Auto trade failed');
+                }
+                if (autoStatus) {
+                    autoStatus.textContent = data.executed
+                        ? 'NeoCortex approved and routed the order.'
+                        : (data.detail || 'NeoCortex held the order for review.');
+                }
+                if (autoAIResult) {
+                    autoAIResult.textContent = JSON.stringify(data, null, 2);
+                }
+            } catch (err) {
+                if (autoStatus) autoStatus.textContent = 'Auto trade failed: ' + (err.message || err);
+                if (autoAIResult) autoAIResult.textContent = '';
+            } finally {
+                if (autoSubmit) autoSubmit.disabled = false;
+            }
+        });
+    }
+
+    updateAutoAccountState();
 
     function renderKv(target, rows) {
         if (!target) return;
@@ -723,6 +1090,7 @@
     loadGPU();
     fetchMetrics();
     refreshArtifacts();
+    loadCredentialPanels();
     startTrainSSE();
     loadNNGraph();
     startNNSSE();
