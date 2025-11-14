@@ -102,7 +102,21 @@ services:
       - prometheus
     restart: unless-stopped
 
+  n8n:
+    image: n8nio/n8n:1.43.1
+    environment:
+      - GENERIC_TIMEZONE=UTC
+      - N8N_BASIC_AUTH_ACTIVE=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   redis-data:
   grafana-data:
+  n8n-data:
