@@ -1,0 +1,147 @@
+{
+  "name": "NeoCortex Trade Router",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trade-signal",
+        "options": {
+          "responseData": "{\"status\": \"accepted\"}"
+        }
+      },
+      "id": "Webhook",
+      "name": "Trade Signal Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "webhookId": "neo-trade-signal"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "{{$env.NEOCORTEX_API}}/alpaca/positions",
+        "options": {
+          "useQueryString": false
+        }
+      },
+      "id": "FetchPositions",
+      "name": "Fetch Alpaca Positions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [250, -150],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "alpaca-headers",
+          "name": "Alpaca Headers"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const signal = $json;\nconst positions = items[1].json;\nconst size = signal.confidence ? Math.round(signal.confidence * 10) : 1;\nreturn [{ json: { symbol: signal.symbol, side: signal.side, size, positions } }];"
+      },
+      "id": "Sizing",
+      "name": "Position Sizing",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{$env.NEOCORTEX_API}}/alpaca/trade",
+        "options": {}
+      },
+      "id": "ExecuteTrade",
+      "name": "Execute Trade",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [780, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "alpaca-headers",
+          "name": "Alpaca Headers"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "url": "https://hooks.example.com/discord",
+        "jsonParameters": true,
+        "options": {},
+        "sendBody": true,
+        "bodyParametersJson": "{\n  \"content\": \"Trade {{ $json.symbol }} {{ $json.side }} size {{ $json.size }}\"\n}"
+      },
+      "id": "Notify",
+      "name": "Discord Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [1030, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "discord-webhook",
+          "name": "Discord Webhook"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Trade Signal Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch Alpaca Positions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Position Sizing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Alpaca Positions": {
+      "main": [
+        [
+          {
+            "node": "Position Sizing",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Position Sizing": {
+      "main": [
+        [
+          {
+            "node": "Execute Trade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Trade": {
+      "main": [
+        [
+          {
+            "node": "Discord Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "neo-trade-router"
+}

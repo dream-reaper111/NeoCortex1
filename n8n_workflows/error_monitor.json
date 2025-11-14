@@ -1,0 +1,84 @@
+{
+  "name": "NeoCortex Error Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fastapi-error",
+        "options": {
+          "responseData": "{\"status\": \"logged\"}"
+        }
+      },
+      "id": "ErrorWebhook",
+      "name": "Error Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "webhookId": "neo-error-monitor"
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "sheetId": "{{ $env.ERROR_SHEET_ID }}",
+        "range": "Errors!A:E",
+        "options": {
+          "locationDefine": "range"
+        },
+        "valueInputMode": "RAW"
+      },
+      "id": "GoogleSheets",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 2,
+      "position": [320, -140],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets",
+          "name": "Google Sheets"
+        }
+      },
+      "parametersJson": "{\n  \"values\": [[\n    \"={{$json.timestamp || new Date().toISOString()}}\",\n    \"={{$json.level || 'ERROR'}}\",\n    \"={{$json.message}}\",\n    \"={{$json.service || 'fastapi'}}\",\n    \"={{$json.traceback || ''}}\"\n  ]]\n}"
+    },
+    {
+      "parameters": {
+        "channel": "#neo-alerts",
+        "text": "FastAPI error: {{ $json.message }}",
+        "otherOptions": {}
+      },
+      "id": "SlackAlert",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [320, 120],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-app",
+          "name": "Slack App"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Webhook": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "neo-error-monitor"
+}

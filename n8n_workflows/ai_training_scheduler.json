@@ -1,0 +1,172 @@
+{
+  "name": "AI Training Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "custom",
+        "cronExpression": "0 16 * * *"
+      },
+      "id": "Cron",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{$env.NEOCORTEX_API}}/trainer/run",
+        "jsonParameters": true,
+        "options": {
+          "timeout": 120
+        },
+        "sendBody": true,
+        "bodyParametersJson": "{\n  \"mode\": \"daily\"\n}"
+      },
+      "id": "StartTraining",
+      "name": "Start Training",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [260, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "trainer-api",
+          "name": "Trainer API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "id": "Wait60",
+      "name": "Wait 60 Seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "{{$env.NEOCORTEX_API}}/metrics/latest",
+        "options": {
+          "timeout": 60
+        }
+      },
+      "id": "FetchMetrics",
+      "name": "Fetch Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [780, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "trainer-api",
+          "name": "Trainer API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json[\"accuracy\"]}}",
+              "operation": "smaller",
+              "value2": 0.8
+            }
+          ]
+        }
+      },
+      "id": "CheckAccuracy",
+      "name": "Accuracy < 0.8?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1040, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{ $credentials.telegram.botToken }}/sendMessage",
+        "jsonParameters": true,
+        "options": {},
+        "sendBody": true,
+        "bodyParametersJson": "{\n  \"chat_id\": \"{{ $credentials.telegram.chatId }}\",\n  \"text\": \"Training accuracy dropped below 0.8. Latest: {{ $json.accuracy }}\"\n}"
+      },
+      "id": "TelegramAlert",
+      "name": "Telegram Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [1300, -140],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "telegram-bot",
+          "name": "Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Start Training",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Training": {
+      "main": [
+        [
+          {
+            "node": "Wait 60 Seconds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 60 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Fetch Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Metrics": {
+      "main": [
+        [
+          {
+            "node": "Accuracy < 0.8?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accuracy < 0.8?": {
+      "main": [
+        [
+          {
+            "node": "Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "neo-training-scheduler"
+}
