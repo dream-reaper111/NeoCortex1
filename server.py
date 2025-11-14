@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from services.automation import automation
 fromdy
     digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
     return base64.b64encode(digest).decode("ascii")
@@ -107,6 +108,8 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Depends(csrf_manager)],
 )
+
+app.include_router(automation)
 
 
 @app.get("/csrf-token")
