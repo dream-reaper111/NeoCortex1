@@ -127,8 +127,9 @@ python run_with_ngrok.py
 
 ## Deployment Tooling
 
-- `docker-compose.yml` orchestrates the FastAPI API, Redis, PostgreSQL, Celery workers, and
-  the Prometheus/Grafana monitoring stack. Start everything locally with `docker compose up --build`.
+- `docker-compose.yml` orchestrates the FastAPI API, Redis, PostgreSQL, Celery workers,
+  an embedded n8n automation node, and the Prometheus/Grafana monitoring stack. Start
+  everything locally with `docker compose up --build`.
 - `deploy/k8s/` contains Kubernetes manifests for clustered deployments, including health probes,
   config maps, secrets, and monitoring components.
 - `deploy/fly/fly.toml` provides a ready-to-use Fly.io application definition for quickly pushing
@@ -149,6 +150,25 @@ optionally restrict access to specific client networks via
 `NGROK_ALLOWED_CIDRS="198.51.100.0/24,203.0.113.5/32"`. If you have reserved a
 domain inside the ngrok dashboard, set `NGROK_DOMAIN` accordingly; otherwise
 leave it unset to allow ngrok to allocate a random hostname.
+
+### Workflow automation with n8n
+
+The `services/model_orchestration/n8n_workflow.py` module provides a
+standard-library-friendly REST client for triggering n8n workflows. Supply the
+base URL of your n8n instance and an API key:
+
+```python
+from services.model_orchestration.n8n_workflow import N8nConfig, N8nWorkflowClient
+
+config = N8nConfig(base_url="https://n8n.example.com", api_key="<token>")
+client = N8nWorkflowClient(config)
+result = client.trigger("42", payload={"symbol": "AAPL"})
+```
+
+By default the client polls the execution endpoint until the workflow finishes;
+set `wait=False` to fire-and-forget.  This allows Celery tasks or FastAPI
+endpoints to orchestrate downstream automations without shelling out to the n8n
+CLI.
 
 Additional hardening guidance—including firewall, Fail2Ban, TLS, and DNS
 recommendations—is available in
