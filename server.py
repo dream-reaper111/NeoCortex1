@@ -244,7 +244,7 @@ async def csp_middleware(request: Request, call_next):
     return response
 
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
 app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
 app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
@@ -1200,21 +1200,20 @@ def require_admin(
     user_obj: Any = (
         getattr(request.state, "user", None)
         or getattr(request, "user", None)
-        or None
+        or {}
     )
 
     if not user_obj and user:
         user_obj = user
 
-    roles_iterable: Iterable[Any]
     if isinstance(user_obj, Mapping):
-        roles_iterable = user_obj.get("roles") or []
-    elif user_obj is not None:
-        roles_iterable = getattr(user_obj, "roles", None) or []
+        roles_source: Iterable[Any] = user_obj.get("roles") or []
     else:
-        roles_iterable = []
+        roles_source = getattr(user_obj, "roles", None) or []
 
-    normalized_roles = {str(role).strip().lower() for role in roles_iterable if role is not None}
+    normalized_roles = {
+        str(role).strip().lower() for role in roles_source if role is not None
+    }
     if "admin" not in normalized_roles:
         raise HTTPException(
             status_code=HTTP_403_FORBIDDEN,
@@ -1222,18 +1221,17 @@ def require_admin(
         )
 
     if isinstance(user_obj, Mapping):
-        request.state.user = dict(user_obj)
-        return dict(user_obj)
+        result: Dict[str, Any] = dict(user_obj)
+    elif isinstance(user_obj, dict):
+        result = user_obj
+    else:
+        result = {}
+        if hasattr(user_obj, "__dict__") and isinstance(user_obj.__dict__, Mapping):
+            result.update(user_obj.__dict__)
+        result.setdefault("roles", list(normalized_roles))
 
-    request.state.user = user_obj
-    if isinstance(user_obj, dict):
-        return user_obj
-
-    data = {}
-    if hasattr(user_obj, "__dict__") and isinstance(user_obj.__dict__, Mapping):
-        data.update(user_obj.__dict__)
-    data.setdefault("roles", list(normalized_roles))
-    return data
+    request.state.user = result
+    return result
 
 
 def _require_admin(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
