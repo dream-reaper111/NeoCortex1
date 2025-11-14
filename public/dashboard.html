@@ -4,9 +4,10 @@
         <meta charset="utf-8" />
         <title>Neo Cortex AI Dashboard</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="stylesheet" href="/static/css/theme.css" />
-        <link rel="stylesheet" href="/assets/neocortex-theme.css" />
-        <link rel="stylesheet" href="/public/enduserapp/style.css" />
+        <base href="/" />
+        <link rel="stylesheet" href="/static/css/NEOCORTEX_THEME.css" />
+        <script defer src="/static/js/vendor/chart-lite.js"></script>
+        <script defer src="/static/js/APP_BUNDLE.js"></script>
         <style>
                 body {
                         margin: 0;
@@ -182,6 +183,7 @@
         </style>
 </head>
 <body>
+        <noscript class="nc-noscript">NeoCortex requires JavaScript to operate. Please enable JavaScript to continue.</noscript>
 
         <main class="nc-page dashboard-page">
                 <div class="nc-topbar dashboard-topbar">
@@ -391,7 +393,7 @@
                         </article>
                 </section>
         </main>
-        <script>
+        <script defer>
                 function getCookie(name) {
                         const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
                         return match ? match[2] : null;
