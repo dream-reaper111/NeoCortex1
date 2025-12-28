@@ -11,7 +11,9 @@ from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+from fastapi import status
 
+from services.automation.ict_pipeline import ICTPipelineConfig, build_ict_payload, coerce_config, parse_bars
 automation = APIRouter(prefix="/automation", tags=["automation"])
 
 N8N_URL = os.getenv("N8N_URL", "https://localhost:5678")
@@ -154,3 +156,25 @@ async def workflow_status() -> Dict[str, Any]:
     except httpx.HTTPError as exc:  # pragma: no cover - network failure handling
         await _audit("status_error", payload={}, error=str(exc))
         raise HTTPException(status_code=502, detail="Failed to query n8n workflows") from exc
+
+
+@automation.post("/ict-signals", status_code=status.HTTP_201_CREATED)
+async def ict_signals(payload: Dict[str, Any]) -> Dict[str, Any]:
+    bars_raw = payload.get("bars")
+    if not isinstance(bars_raw, list):
+        raise HTTPException(status_code=400, detail="bars must be a list of candle dictionaries")
+    config = coerce_config(payload.get("config"))
+    include_equations = bool(payload.get("include_equations", False))
+    bars = parse_bars(bars_raw)
+    metrics = build_ict_payload(bars, config, include_equations=include_equations)
+    await _audit(
+        "ict_signals",
+        payload={
+            "bars": len(bars),
+            "config": payload.get("config", {}),
+            "include_equations": include_equations,
+        },
+        response_status=201,
+        response_body=_serialise_payload(metrics),
+    )
+    return {"ok": True, "metrics": metrics}
