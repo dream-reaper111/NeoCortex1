@@ -1,13 +1,15 @@
 :root {
   color-scheme: dark;
-  --nc-gradient: linear-gradient(135deg, #2b0049 0%, #6e1b8f 100%);
-  --nc-panel-sheen: rgba(255, 255, 255, 0.04);
+  --nc-gradient: radial-gradient(circle at 10% 15%, rgba(40, 90, 255, 0.18), transparent 45%),
+    radial-gradient(circle at 85% 10%, rgba(190, 80, 255, 0.22), transparent 40%),
+    linear-gradient(140deg, #04050c 0%, #0a0f1f 45%, #070b18 100%);
+  --nc-panel-sheen: rgba(255, 255, 255, 0.06);
   --nc-text-primary: #ffffff;
-  --nc-text-muted: rgba(255, 255, 255, 0.72);
-  --nc-border-glow: rgba(174, 96, 255, 0.35);
-  --nc-panel-backdrop: rgba(23, 5, 38, 0.65);
-  --nc-panel-highlight: rgba(153, 69, 255, 0.15);
-  --nc-shadow-xl: 0 30px 80px rgba(10, 0, 25, 0.65);
+  --nc-text-muted: rgba(206, 219, 255, 0.7);
+  --nc-border-glow: rgba(84, 167, 255, 0.35);
+  --nc-panel-backdrop: rgba(8, 12, 24, 0.82);
+  --nc-panel-highlight: rgba(99, 140, 255, 0.18);
+  --nc-shadow-xl: 0 32px 90px rgba(2, 8, 30, 0.75);
   --nc-radius-lg: 28px;
   --nc-blur: 28px;
   --nc-transition: 160ms ease;
@@ -34,12 +36,24 @@ body::before {
   content: "";
   position: fixed;
   inset: 0;
-  background: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.14), transparent 60%),
-    radial-gradient(circle at 80% 0%, rgba(212, 117, 255, 0.2), transparent 55%),
-    radial-gradient(circle at 10% 90%, rgba(100, 54, 181, 0.35), transparent 65%);
-  mix-blend-mode: screen;
+  background: radial-gradient(circle at 15% 20%, rgba(82, 132, 255, 0.2), transparent 55%),
+    radial-gradient(circle at 80% 15%, rgba(190, 80, 255, 0.22), transparent 50%),
+    radial-gradient(circle at 15% 85%, rgba(42, 184, 255, 0.18), transparent 60%);
+  mix-blend-mode: lighten;
   pointer-events: none;
   z-index: -1;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: linear-gradient(rgba(90, 140, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(90, 140, 255, 0.08) 1px, transparent 1px);
+  background-size: 60px 60px;
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: -2;
 }
 
 .nc-body,
@@ -57,7 +71,7 @@ footer {
 .shell,
 .nc-panel,
 .nc-surface {
-  background: linear-gradient(145deg, var(--nc-panel-backdrop), transparent 65%)
+  background: linear-gradient(145deg, rgba(11, 16, 32, 0.92), rgba(10, 14, 26, 0.72))
       var(--nc-panel-sheen);
   background-blend-mode: lighten;
   backdrop-filter: blur(var(--nc-blur));
@@ -98,22 +112,22 @@ button:focus {
 }
 :root {
     color-scheme: dark;
-    --nc-bg: #0f0f17;
-    --nc-surface: rgba(20, 20, 32, 0.92);
-    --nc-surface-alt: rgba(18, 18, 28, 0.88);
-    --nc-surface-strong: rgba(28, 28, 44, 0.95);
-    --nc-border: rgba(0, 212, 255, 0.26);
-    --nc-border-strong: rgba(0, 212, 255, 0.48);
-    --nc-border-magenta: rgba(184, 77, 255, 0.6);
-    --nc-text: #d0d0d0;
+    --nc-bg: #05060f;
+    --nc-surface: rgba(10, 14, 26, 0.92);
+    --nc-surface-alt: rgba(12, 16, 30, 0.88);
+    --nc-surface-strong: rgba(16, 20, 36, 0.96);
+    --nc-border: rgba(90, 140, 255, 0.26);
+    --nc-border-strong: rgba(90, 140, 255, 0.5);
+    --nc-border-magenta: rgba(190, 80, 255, 0.62);
+    --nc-text: #cdd7f2;
     --nc-text-strong: #f7f7ff;
-    --nc-text-muted: rgba(208, 208, 224, 0.68);
-    --nc-accent: #00d4ff;
-    --nc-accent-strong: #00f2ff;
-    --nc-secondary: #b84dff;
-    --nc-secondary-strong: #d874ff;
-    --nc-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
-    --nc-shadow-soft: 0 16px 48px rgba(0, 20, 35, 0.45);
+    --nc-text-muted: rgba(195, 210, 245, 0.68);
+    --nc-accent: #4eb4ff;
+    --nc-accent-strong: #68e0ff;
+    --nc-secondary: #b36bff;
+    --nc-secondary-strong: #d194ff;
+    --nc-shadow: 0 30px 70px rgba(1, 6, 20, 0.6);
+    --nc-shadow-soft: 0 20px 50px rgba(2, 12, 30, 0.45);
     --nc-success: #1ed8a5;
     --nc-warning: #f5c451;
     --nc-danger: #ff5f7a;
@@ -132,9 +146,7 @@ html, body {
     margin: 0;
     padding: 0;
     min-height: 100%;
-    background: radial-gradient(circle at -10% -20%, rgba(0, 212, 255, 0.12), transparent 60%),
-        radial-gradient(circle at 110% 20%, rgba(184, 77, 255, 0.16), transparent 65%),
-        linear-gradient(140deg, rgba(11, 12, 24, 0.95), rgba(9, 11, 24, 0.98) 45%, rgba(5, 7, 18, 0.98));
+    background: var(--nc-gradient);
     color: var(--nc-text);
     font-family: 'Inter', 'Roboto', 'Segoe UI', system-ui, -apple-system, sans-serif;
     line-height: 1.6;
@@ -192,10 +204,10 @@ a:focus {
     justify-content: space-between;
     gap: 18px;
     padding: 18px clamp(24px, 6vw, 48px);
-    background: rgba(10, 12, 22, 0.88);
-    border-bottom: 1px solid rgba(0, 212, 255, 0.18);
-    backdrop-filter: blur(16px);
-    box-shadow: 0 18px 44px rgba(4, 6, 12, 0.45);
+    background: linear-gradient(135deg, rgba(6, 10, 22, 0.95), rgba(10, 16, 32, 0.85));
+    border-bottom: 1px solid rgba(90, 140, 255, 0.2);
+    backdrop-filter: blur(18px);
+    box-shadow: 0 18px 44px rgba(2, 8, 24, 0.6);
 }
 
 .nc-nav__brand {
@@ -220,8 +232,8 @@ a:focus {
     height: 40px;
     padding: 10px;
     border-radius: var(--nc-radius-sm);
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(0, 212, 255, 0.2);
+    background: rgba(20, 32, 58, 0.5);
+    border: 1px solid rgba(90, 140, 255, 0.32);
     cursor: pointer;
     transition: background var(--nc-transition), border-color var(--nc-transition);
 }
@@ -284,12 +296,13 @@ a:focus {
 .nc-nav__cta {
     padding: 10px 18px;
     border-radius: 999px;
-    border: 1px solid rgba(0, 212, 255, 0.4);
+    border: 1px solid rgba(90, 140, 255, 0.45);
     color: var(--nc-text-strong);
-    background: linear-gradient(135deg, rgba(0, 212, 255, 0.28), rgba(184, 77, 255, 0.22));
+    background: linear-gradient(135deg, rgba(78, 180, 255, 0.35), rgba(179, 107, 255, 0.3));
     font-size: 0.85rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+    box-shadow: 0 12px 32px rgba(58, 120, 255, 0.25);
 }
 
 .nc-btn {
@@ -299,7 +312,7 @@ a:focus {
     gap: 8px;
     padding: 12px 20px;
     border-radius: var(--nc-radius-sm);
-    background: linear-gradient(135deg, var(--nc-accent), var(--nc-secondary));
+    background: linear-gradient(135deg, rgba(78, 180, 255, 0.95), rgba(179, 107, 255, 0.92));
     color: var(--nc-text-strong);
     font-weight: 600;
     border: none;
@@ -313,7 +326,7 @@ a:focus {
 .nc-btn:hover:not(:disabled),
 .nc-btn:focus-visible:not(:disabled) {
     transform: translateY(-1px);
-    box-shadow: 0 18px 44px rgba(0, 212, 255, 0.35);
+    box-shadow: 0 18px 44px rgba(78, 180, 255, 0.45);
 }
 
 .nc-btn:disabled {
@@ -323,13 +336,13 @@ a:focus {
 
 .nc-btn--ghost {
     background: transparent;
-    border: 1px solid rgba(0, 212, 255, 0.32);
+    border: 1px solid rgba(90, 140, 255, 0.32);
     box-shadow: none;
 }
 
 .nc-btn--ghost:hover,
 .nc-btn--ghost:focus-visible {
-    background: rgba(0, 212, 255, 0.12);
+    background: rgba(90, 140, 255, 0.12);
 }
 
 .nc-btn--secondary {
@@ -349,8 +362,8 @@ a:focus {
     gap: 6px;
     padding: 6px 12px;
     border-radius: 999px;
-    border: 1px solid rgba(0, 212, 255, 0.32);
-    background: rgba(0, 212, 255, 0.08);
+    border: 1px solid rgba(90, 140, 255, 0.32);
+    background: rgba(90, 140, 255, 0.1);
     color: var(--nc-accent-strong);
     font-size: 0.75rem;
     letter-spacing: 0.08em;
