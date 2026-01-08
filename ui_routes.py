@@ -5,8 +5,10 @@ import os
 from typing import Iterable
 
 from fastapi import APIRouter, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from auth import get_current_user
+from fastapi import HTTPException
 
 
 def _is_dev_mode() -> bool:
@@ -18,33 +20,57 @@ def _is_dev_mode() -> bool:
 def build_ui_router(templates: Jinja2Templates) -> APIRouter:
     router = APIRouter()
 
+    async def _maybe_user(request: Request):
+        try:
+            return await get_current_user(request)
+        except HTTPException:
+            return None
+
     @router.get("/login", name="login_page")
-    def login_page(request: Request):
-        return templates.TemplateResponse("login.html", {"request": request})
+    async def login_page(request: Request):
+        user = await _maybe_user(request)
+        return templates.TemplateResponse("login.html", {"request": request, "user": user})
 
     @router.get("/admin/login")
-    def admin_login_page(request: Request):
-        return templates.TemplateResponse("admin_login.html", {"request": request})
+    async def admin_login_page(request: Request):
+        user = await _maybe_user(request)
+        return templates.TemplateResponse("admin_login.html", {"request": request, "user": user})
 
     @router.get("/enduserapp")
-    def enduserapp_page(request: Request):
-        return templates.TemplateResponse("enduserapp.html", {"request": request})
+    async def enduserapp_page(request: Request):
+        user = await _maybe_user(request)
+        if not user:
+            return RedirectResponse(url="/login", status_code=302)
+        return templates.TemplateResponse("enduserapp.html", {"request": request, "user": user})
 
     @router.get("/liquidity")
-    def liquidity_page(request: Request):
-        return templates.TemplateResponse("radar.html", {"request": request})
+    async def liquidity_page(request: Request):
+        user = await _maybe_user(request)
+        if not user:
+            return RedirectResponse(url="/login", status_code=302)
+        return templates.TemplateResponse("radar.html", {"request": request, "user": user})
 
     @router.get("/radar")
-    def radar_page(request: Request):
-        return templates.TemplateResponse("radar.html", {"request": request})
+    async def radar_page(request: Request):
+        user = await _maybe_user(request)
+        if not user:
+            return RedirectResponse(url="/login", status_code=302)
+        return templates.TemplateResponse("radar.html", {"request": request, "user": user})
 
     @router.get("/dashboard")
-    def dashboard_page(request: Request):
-        return templates.TemplateResponse("dashboard.html", {"request": request})
+    async def dashboard_page(request: Request):
+        user = await _maybe_user(request)
+        if not user:
+            return RedirectResponse(url="/login", status_code=302)
+        return templates.TemplateResponse("dashboard.html", {"request": request, "user": user})
 
     @router.get("/admin")
-    def admin_page(request: Request):
-        return templates.TemplateResponse("admin.html", {"request": request})
+    async def admin_page(request: Request):
+        user = await _maybe_user(request)
+        roles = {str(role).strip().lower() for role in (user or {}).get("roles", []) if role is not None}
+        if not user or "admin" not in roles:
+            return RedirectResponse(url="/login?error=not_admin", status_code=302)
+        return templates.TemplateResponse("admin.html", {"request": request, "user": user})
 
     return router
 
