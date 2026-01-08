@@ -1,8 +1,14 @@
 # -*- coding: utf-8 -*-
 import os
+import sys
 from pathlib import Path
 
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+
 from services.automation import automation
+from ui_routes import build_ui_router, register_routes_diagnostics
 fromdy
     digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
     return base64.b64encode(digest).decode("ascii")
@@ -104,6 +110,10 @@ def run_preflight():
 async def lifespan(app: FastAPI):
     theme_path = STATIC_DIR / "css" / "NEOCORTEX_THEME.css"
     print(
+        f"RUNNING APP FROM: {__file__}  app_id={id(app)}",
+        flush=True,
+    )
+    print(
         (
             "[NeoCortex Static] "
             f"directory={STATIC_DIR} exists={STATIC_DIR.exists()} "
@@ -123,6 +133,11 @@ app = FastAPI(
 
 app.include_router(automation)
 
+TEMPLATES_DIR = (Path(__file__).resolve().parent / "templates").resolve()
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+app.include_router(build_ui_router(templates))
+register_routes_diagnostics(app)
+
 
 @app.get("/csrf-token")
 async def get_csrf_token(request: Request, response: Response) -> Dict[str, str]:
@@ -132,6 +147,29 @@ async def get_csrf_token(request: Request, response: Response) -> Dict[str, str]
     response.headers.setdefault("cache-control", "no-store")
     response.headers.setdefault("pragma", "no-cache")
     return {"csrf_token": token}
+
+
+@app.get("/__whoami")
+def whoami():
+    return {
+        "app_id": id(app),
+        "module_file": __file__,
+        "cwd": os.getcwd(),
+        "python": sys.executable,
+    }
+
+
+@app.get("/__routes")
+def list_routes() -> Response:
+    lines = []
+    for route in app.router.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if path and methods:
+            lines.append(f"{','.join(sorted(methods))} {path}")
+        elif path:
+            lines.append(str(path))
+    return PlainTextResponse("\n".join(sorted(lines)))
 
 
 @app.middleware("http")
@@ -260,8 +298,6 @@ STATIC_DIR = Path(os.getenv("NEOCORTEX_STATIC_DIR", Path(__file__).resolve().par
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
-app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
-app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
 
 
 # ---------- normalizers ----------
@@ -544,9 +580,9 @@ def root():
     return {"ok": True, "msg": "Neo Cortex AI API ready"}
 
 
-@app.get("/ngrok/cloud-endpoint", response_class=HTMLResponse)
-async def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
-    '''Render a friendly landing page for ngrok Cloud Endpoints.'''
+@app.get("/ngrok/cloud-endpoint")
+async def ngrok_cloud_endpoint(request: Request):
+    """Render a friendly landing page for ngrok Cloud Endpoints."""
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if not host:
@@ -559,11 +595,10 @@ async def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
     else:
         base_url = f"{proto}://{host}".rstrip("/")
     webhook_url = f"{base_url}/alpaca/webhook"
-    html = (
-        NGROK_ENDPOINT_TEMPLATE.replace("{{WEBHOOK_URL}}", webhook_url)
-        .replace("{{BASE_URL}}", base_url)
+    return templates.TemplateResponse(
+        "ngrok_cloud_endpoint.html",
+        {"request": request, "base_url": base_url, "webhook_url": webhook_url},
     )
-    return HTMLResponse(content=html, status_code=200)
 
 @app.get("/preflight")
 def preflight():
@@ -2568,10 +2603,6 @@ async def stream_training():
     return StreamingResponse(_tail(p,"ping"), media_type="text/event-stream", headers=_nocache())
 
 @app.get("/stream/nn")
-
-
-
-@app.get("/dashboard", response_class=HTMLResponse)
 
         if SSL_KEYFILE_PASSWORD:
             uvicorn_kwargs["ssl_keyfile_password"] = SSL_KEYFILE_PASSWORD
