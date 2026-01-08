@@ -1,8 +1,10 @@
 """Dashboard application factory."""
 from __future__ import annotations
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.templating import Jinja2Templates
 
 try:  # pragma: no cover - optional dependency for lightweight test environments
     from starlette.middleware.cors import CORSMiddleware
@@ -22,6 +24,7 @@ def create_app() -> FastAPI:
     from .frontend import build_dashboard_app
 
     app = FastAPI(title="NeoCortex Analytics Dashboard")
+    templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[2] / "templates"))
     app.include_router(dashboard_router)
     app.add_middleware(
         CORSMiddleware,
@@ -32,9 +35,9 @@ def create_app() -> FastAPI:
     )
     dash_app = build_dashboard_app(app)
 
-    @app.get("/dashboard", response_class=HTMLResponse)
-    async def dashboard_index():
-        return dash_app.index()
+    @app.get("/dashboard")
+    async def dashboard_index(request: Request):
+        return templates.TemplateResponse("dashboard.html", {"request": request})
 
     return app
 

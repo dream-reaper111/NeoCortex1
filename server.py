@@ -2,6 +2,9 @@
 import os
 from pathlib import Path
 
+from fastapi import Request
+from fastapi.templating import Jinja2Templates
+
 from services.automation import automation
 fromdy
     digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
@@ -122,6 +125,44 @@ app = FastAPI(
 )
 
 app.include_router(automation)
+
+TEMPLATES_DIR = (Path(__file__).resolve().parent / "templates").resolve()
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+@app.get("/login", name="login_page")
+def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.get("/admin/login")
+def admin_login_page(request: Request):
+    return templates.TemplateResponse("admin_login.html", {"request": request})
+
+
+@app.get("/enduserapp")
+def enduserapp_page(request: Request):
+    return templates.TemplateResponse("enduserapp.html", {"request": request})
+
+
+@app.get("/liquidity")
+def liquidity_page(request: Request):
+    return templates.TemplateResponse("radar.html", {"request": request})
+
+
+@app.get("/radar")
+def radar_page(request: Request):
+    return templates.TemplateResponse("radar.html", {"request": request})
+
+
+@app.get("/dashboard")
+def dashboard_page(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+
+@app.get("/admin")
+def admin_page(request: Request):
+    return templates.TemplateResponse("admin.html", {"request": request})
 
 
 @app.get("/csrf-token")
@@ -260,8 +301,6 @@ STATIC_DIR = Path(os.getenv("NEOCORTEX_STATIC_DIR", Path(__file__).resolve().par
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
-app.mount("/ui/liquidity", StaticFiles(directory=str(LIQUIDITY_DIR), html=True), name="liquidity-ui")
-app.mount("/ui/enduserapp", StaticFiles(directory=str(ENDUSERAPP_DIR), html=True), name="enduserapp-ui")
 
 
 # ---------- normalizers ----------
@@ -544,9 +583,9 @@ def root():
     return {"ok": True, "msg": "Neo Cortex AI API ready"}
 
 
-@app.get("/ngrok/cloud-endpoint", response_class=HTMLResponse)
-async def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
-    '''Render a friendly landing page for ngrok Cloud Endpoints.'''
+@app.get("/ngrok/cloud-endpoint")
+async def ngrok_cloud_endpoint(request: Request):
+    """Render a friendly landing page for ngrok Cloud Endpoints."""
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if not host:
@@ -559,11 +598,10 @@ async def ngrok_cloud_endpoint(request: Request) -> HTMLResponse:
     else:
         base_url = f"{proto}://{host}".rstrip("/")
     webhook_url = f"{base_url}/alpaca/webhook"
-    html = (
-        NGROK_ENDPOINT_TEMPLATE.replace("{{WEBHOOK_URL}}", webhook_url)
-        .replace("{{BASE_URL}}", base_url)
+    return templates.TemplateResponse(
+        "ngrok_cloud_endpoint.html",
+        {"request": request, "base_url": base_url, "webhook_url": webhook_url},
     )
-    return HTMLResponse(content=html, status_code=200)
 
 @app.get("/preflight")
 def preflight():
@@ -2568,10 +2606,6 @@ async def stream_training():
     return StreamingResponse(_tail(p,"ping"), media_type="text/event-stream", headers=_nocache())
 
 @app.get("/stream/nn")
-
-
-
-@app.get("/dashboard", response_class=HTMLResponse)
 
         if SSL_KEYFILE_PASSWORD:
             uvicorn_kwargs["ssl_keyfile_password"] = SSL_KEYFILE_PASSWORD
