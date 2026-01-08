@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 import os
-import sys
 from pathlib import Path
 
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import PlainTextResponse
 
 from services.automation import automation
-from ui_routes import build_ui_router
+from ui_routes import build_ui_router, register_app_diagnostics
 fromdy
     digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
     return base64.b64encode(digest).decode("ascii")
@@ -133,28 +131,7 @@ app.include_router(automation)
 TEMPLATES_DIR = (Path(__file__).resolve().parent / "templates").resolve()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.include_router(build_ui_router(templates))
-
-
-@app.get("/__whoami")
-def whoami() -> Dict[str, str]:
-    return {
-        "app_id": str(id(app)),
-        "module_file": __file__,
-        "cwd": os.getcwd(),
-        "python": sys.executable,
-    }
-
-
-@app.get("/__routes")
-def list_routes() -> PlainTextResponse:
-    lines = []
-    for route in app.router.routes:
-        path = getattr(route, "path", None)
-        methods = getattr(route, "methods", None)
-        if path:
-            methods_list = ",".join(sorted(methods or []))
-            lines.append(f"{methods_list} {path}")
-    return PlainTextResponse("\n".join(sorted(lines)))
+register_app_diagnostics(app, module_file=__file__, enabled=True)
 
 
 @app.get("/csrf-token")

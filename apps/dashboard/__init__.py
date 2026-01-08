@@ -35,10 +35,11 @@ def create_app() -> FastAPI:
     )
     dash_app = build_dashboard_app(app)
 
-    from ui_routes import build_ui_router, register_routes_diagnostics
+    from ui_routes import build_ui_router, register_app_diagnostics, register_routes_diagnostics
 
     app.include_router(build_ui_router(templates))
     register_routes_diagnostics(app)
+    register_app_diagnostics(app, module_file=__file__, enabled=True)
 
     return app
 

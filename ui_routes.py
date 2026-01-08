@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-from typing import Iterable
+import sys
+from typing import Dict, Iterable
 
 from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
@@ -93,4 +94,32 @@ def register_routes_diagnostics(app, *, enabled: bool | None = None) -> None:
         return \"\\n\".join(sorted(lines))
 
 
-__all__ = [\"build_ui_router\", \"register_routes_diagnostics\"]
+def register_app_diagnostics(app, *, module_file: str, enabled: bool | None = None) -> None:
+    if enabled is None:
+        enabled = _is_dev_mode()
+    if not enabled:
+        return
+    if not any(getattr(route, \"path\", None) == \"/__whoami\" for route in app.router.routes):
+
+        @app.get(\"/__whoami\")
+        def whoami() -> Dict[str, str]:
+            return {
+                \"app_id\": str(id(app)),
+                \"module_file\": module_file,
+                \"cwd\": os.getcwd(),
+                \"python\": sys.executable,
+            }
+
+    if not any(getattr(route, \"path\", None) == \"/__routes\" for route in app.router.routes):
+
+        @app.get(\"/__routes\", response_class=PlainTextResponse)
+        def list_routes() -> str:
+            lines: Iterable[str] = (
+                f\"{','.join(sorted(route.methods or []))} {route.path}\"
+                for route in app.router.routes
+                if hasattr(route, \"path\")
+            )
+            return \"\\n\".join(sorted(lines))
+
+
+__all__ = [\"build_ui_router\", \"register_app_diagnostics\", \"register_routes_diagnostics\"]
