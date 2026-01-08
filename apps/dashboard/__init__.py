@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.templating import Jinja2Templates
 
 try:  # pragma: no cover - optional dependency for lightweight test environments
@@ -35,9 +35,10 @@ def create_app() -> FastAPI:
     )
     dash_app = build_dashboard_app(app)
 
-    @app.get("/dashboard")
-    async def dashboard_index(request: Request):
-        return templates.TemplateResponse("dashboard.html", {"request": request})
+    from ui_routes import build_ui_router, register_routes_diagnostics
+
+    app.include_router(build_ui_router(templates))
+    register_routes_diagnostics(app)
 
     return app
 

@@ -6,6 +6,7 @@ from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
 from services.automation import automation
+from ui_routes import build_ui_router, register_routes_diagnostics
 fromdy
     digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
     return base64.b64encode(digest).decode("ascii")
@@ -128,41 +129,8 @@ app.include_router(automation)
 
 TEMPLATES_DIR = (Path(__file__).resolve().parent / "templates").resolve()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-
-
-@app.get("/login", name="login_page")
-def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
-
-
-@app.get("/admin/login")
-def admin_login_page(request: Request):
-    return templates.TemplateResponse("admin_login.html", {"request": request})
-
-
-@app.get("/enduserapp")
-def enduserapp_page(request: Request):
-    return templates.TemplateResponse("enduserapp.html", {"request": request})
-
-
-@app.get("/liquidity")
-def liquidity_page(request: Request):
-    return templates.TemplateResponse("radar.html", {"request": request})
-
-
-@app.get("/radar")
-def radar_page(request: Request):
-    return templates.TemplateResponse("radar.html", {"request": request})
-
-
-@app.get("/dashboard")
-def dashboard_page(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
-
-
-@app.get("/admin")
-def admin_page(request: Request):
-    return templates.TemplateResponse("admin.html", {"request": request})
+app.include_router(build_ui_router(templates))
+register_routes_diagnostics(app)
 
 
 @app.get("/csrf-token")
