@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 import os
+import sys
 from pathlib import Path
 
-from fastapi import Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from services.automation import automation
@@ -108,6 +110,10 @@ def run_preflight():
 async def lifespan(app: FastAPI):
     theme_path = STATIC_DIR / "css" / "NEOCORTEX_THEME.css"
     print(
+        f"RUNNING APP FROM: {__file__}  app_id={id(app)}",
+        flush=True,
+    )
+    print(
         (
             "[NeoCortex Static] "
             f"directory={STATIC_DIR} exists={STATIC_DIR.exists()} "
@@ -141,6 +147,29 @@ async def get_csrf_token(request: Request, response: Response) -> Dict[str, str]
     response.headers.setdefault("cache-control", "no-store")
     response.headers.setdefault("pragma", "no-cache")
     return {"csrf_token": token}
+
+
+@app.get("/__whoami")
+def whoami():
+    return {
+        "app_id": id(app),
+        "module_file": __file__,
+        "cwd": os.getcwd(),
+        "python": sys.executable,
+    }
+
+
+@app.get("/__routes")
+def list_routes() -> Response:
+    lines = []
+    for route in app.router.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if path and methods:
+            lines.append(f"{','.join(sorted(methods))} {path}")
+        elif path:
+            lines.append(str(path))
+    return PlainTextResponse("\n".join(sorted(lines)))
 
 
 @app.middleware("http")
