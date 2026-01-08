@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+import os
+from pathlib import Path
+
 from services.automation import automation
 fromdy
     digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
@@ -99,6 +102,15 @@ def run_preflight():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    theme_path = STATIC_DIR / "css" / "NEOCORTEX_THEME.css"
+    print(
+        (
+            "[NeoCortex Static] "
+            f"directory={STATIC_DIR} exists={STATIC_DIR.exists()} "
+            f"theme_css={theme_path} exists={theme_path.exists()}"
+        ),
+        flush=True,
+    )
     print(json.dumps(run_preflight(), indent=2), flush=True)
     yield
 
@@ -243,6 +255,8 @@ async def csp_middleware(request: Request, call_next):
     )
     return response
 
+
+STATIC_DIR = Path(os.getenv("NEOCORTEX_STATIC_DIR", Path(__file__).resolve().parent / "static")).resolve()
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="public")
