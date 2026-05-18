@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block title %}NeoCortex Ngrok Endpoint{% endblock %}
+{% block content %}
+<section class="nc-page">
+    <div class="nc-card">
+        <h1>NeoCortex Cloud Endpoint</h1>
+        <p class="nc-text-muted">
+            Your ngrok tunnel is live. Use the webhook URL below to connect Alpaca or other trading
+            integrations to the NeoCortex platform.
+        </p>
+        <div class="nc-inline">
+            <span class="nc-pill">Base URL</span>
+            <code class="mono">{{ base_url }}</code>
+        </div>
+        <div class="nc-inline">
+            <span class="nc-pill">Webhook URL</span>
+            <code class="mono">{{ webhook_url }}</code>
+        </div>
+        <p class="nc-text-muted nc-text-small">
+            Ensure your webhook sender is configured to POST to the URL above. All assets resolve from
+            <code class="mono">/static</code> to keep theme styling consistent across pages.
+        </p>
+    </div>
+</section>
+{% endblock %}
